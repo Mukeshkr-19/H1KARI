@@ -1,0 +1,84 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Old/Deprecated
+js.py
+Main.py
+model_registry.py
+model_switcher.py
+router.py
+
+# Runtime data (local only)
+data/*.json
+data/*.bin
+data/voice_auth.json
+data/voice_prints/
+data/voice_memory/
+data/hf_cache/
+
+# Local brain/runtime stores
+.hikari/
+HIKARI-private/
+.claw-workflow/
+HIKARI_OPERATING_GUIDE.md
+HIKARI_ROADMAP.md
+docs/HIKARI_ROADMAP.md
+docs/WORK_DONE.md
+*.db
+*.sqlite
+*.sqlite3
+
+# Frontend
+hikari-frontend/.next/
+hikari-frontend/node_modules/
+hikari-frontend/out/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

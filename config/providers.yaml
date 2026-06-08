@@ -1,0 +1,101 @@
+# HIKARI v2.0 - Provider Configuration
+# Defines AI providers, models, and routing preferences
+
+providers:
+  google:
+    enabled: true
+    priority: 1
+    models:
+      fast: "gemini-2.0-flash-lite"
+      balanced: "gemini-2.0-flash"
+      smart: "gemini-2.5-pro"
+    rate_limit_rpm: 15
+
+  groq:
+    enabled: true
+    priority: 2
+    models:
+      fast: "llama-3.3-70b-versatile"
+      balanced: "llama-4-scout-17b-16e-instruct"
+      smart: "qwen3-32b"
+    rate_limit_rpm: 30
+
+  openrouter:
+    enabled: true
+    priority: 3
+    models:
+      fast: "meta-llama/llama-3.3-70b-instruct:free"
+      balanced: "google/gemini-2.0-flash-exp:free"
+      smart: "deepseek/deepseek-r1:free"
+    rate_limit_rpm: 20
+
+  cerebras:
+    enabled: true
+    priority: 4
+    models:
+      fast: "llama-3.3-70b"
+      balanced: "qwen3-32b"
+      smart: "qwen3-235b-a22b"
+    rate_limit_rpm: 30
+
+  deepseek:
+    enabled: true
+    priority: 5
+    models:
+      fast: "deepseek-chat"
+      balanced: "deepseek-chat"
+      smart: "deepseek-reasoner"
+    rate_limit_rpm: 50
+
+  nvidia:
+    enabled: true
+    priority: 6
+    models:
+      fast: "meta/llama-3.3-70b-instruct"
+      balanced: "meta/llama-4-maverick-17b-128e-instruct"
+      smart: "deepseek/deepseek-r1"
+    rate_limit_rpm: 40
+
+  cohere:
+    enabled: true
+    priority: 7
+    models:
+      fast: "command-r-plus"
+      balanced: "command-r-plus"
+      smart: "command-r-plus"
+    rate_limit_rpm: 20
+
+  ollama:
+    enabled: true
+    priority: 0
+    models:
+      fast: "gemma4:e4b"
+      balanced: "gemma4:e4b"
+      smart: "gemma4:31b"
+    rate_limit_rpm: 99999
+    local: true
+
+# Task routing
+routing:
+  greeting: fast
+  quick_fact: fast
+  time_date: fast
+  weather: fast
+  chat: balanced
+  general_qa: balanced
+  coding: smart
+  reasoning: smart
+  math: smart
+  analysis: smart
+  file_analysis: smart
+  research: smart
+
+# Fallback chain (order of providers to try)
+fallback_chain:
+  - groq
+  - cerebras
+  - google
+  - openrouter
+  - deepseek
+  - nvidia
+  - cohere

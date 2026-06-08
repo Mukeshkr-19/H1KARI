@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# HIKARI launcher. Install links as hikari/Hikari in a PATH directory.
+set -euo pipefail
+
+unset PYTHONHOME
+unset PYTHONPATH
+unset __PYVENV_LAUNCHER__
+
+if [[ -n "${HIKARI_HOME:-}" ]]; then
+  REPO_ROOT="$(cd "$HIKARI_HOME" && pwd)"
+else
+  _HERE="${BASH_SOURCE[0]}"
+  _REAL="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_HERE")"
+  _BIN="$(dirname "$_REAL")"
+  REPO_ROOT="$(cd "$_BIN/.." && pwd)"
+fi
+
+cd "$REPO_ROOT" || exit 1
+
+PY="$REPO_ROOT/.venv/bin/python"
+if [[ ! -x "$PY" ]]; then
+  echo "HIKARI: no .venv in $REPO_ROOT — run: ./install.sh" >&2
+  exit 1
+fi
+
+exec "$PY" -E "$REPO_ROOT/hikari.py" "$@"
