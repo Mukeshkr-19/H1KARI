@@ -178,9 +178,3 @@ Private-file scan before any public push:
 
 That test must pass (zero denylist hits in tracked and untracked public source).
 
-## Project Direction
-
-The near-term focus is Brain v2 reliability, clean personal-memory behavior,
-guest-safe session boundaries, and repeatable privacy checks. Voice and
-frontend improvements are planned as separate, reviewed slices so memory and
-runtime safety stay easy to verify.
