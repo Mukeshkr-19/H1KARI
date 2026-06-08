@@ -45,25 +45,16 @@ H1KARI/
 - `docs/ARCHITECTURE.md` - current repo layout, commands, and operating model.
 - `docs/NEURAL_MEMORY_ACCEPTANCE.md` - neural memory acceptance criteria.
 
-## Private Local Layout
+## Privacy Model
 
-These are intentionally not in GitHub:
+H1KARI keeps runtime state outside the public repository. Local API keys,
+conversation logs, voice-auth artifacts, SQLite brain databases, and private
+operating notes are intentionally excluded from Git.
 
-```text
-<private-data-directory>/
-├── docs/               # Private operating guide, roadmap, recovery notes
-├── live-brain/         # Live SQLite neural brain
-├── monthly-backups/    # Scheduled brain backups
-├── brain-backups/      # Older/manual backups
-├── legacy-data/        # Legacy local runtime data
-└── scripts/            # Private backup scripts
-```
-
-Compatibility brain path (local machine only):
-
-```text
-<live-brain-directory> -> <private-data-directory>/live-brain
-```
+Brain v2 is the current personal-memory authority. It stores reviewed,
+source-linked memories separately from raw conversation evidence, blocks
+legacy neural personal fallback during normal chat, and keeps guest speaker
+sessions isolated from household-owner memories.
 
 ## Setup
 
@@ -187,22 +178,9 @@ Private-file scan before any public push:
 
 That test must pass (zero denylist hits in tracked and untracked public source).
 
-## Never Push
+## Project Direction
 
-- local environment files with real API keys
-- `data/`
-- `logs/`
-- live brain directories and symlinks
-- private data directories
-- `.venv/`
-- `.idea/`
-- `*.db`, `*.sqlite`, `*.sqlite3`
-- voice auth, voice prints, raw runtime memory, private roadmap, recovery ledger, or operating notes
-
-## Current Near-Term Priorities
-
-1. Keep the current baseline stable.
-2. Keep public code in GitHub and private memory/docs outside GitHub.
-3. Make voice mode reliable and easier to test.
-4. Improve neural memory quality with backup-first cleanup tools.
-5. Add Obsidian as an export/readable layer, not as the source of truth.
+The near-term focus is Brain v2 reliability, clean personal-memory behavior,
+guest-safe session boundaries, and repeatable privacy checks. Voice and
+frontend improvements are planned as separate, reviewed slices so memory and
+runtime safety stay easy to verify.
