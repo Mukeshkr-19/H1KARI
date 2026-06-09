@@ -121,13 +121,13 @@ printf 'status\nexit\n' | .venv/bin/python hikari.py --text
 
 Expected baseline:
 
-- Git branch tracks `mukeshkr19/main`.
-- CLI help works.
-- Doctor quick check works.
+- Git status is clean (or only your intentional local edits).
+- CLI help works (`hikari --help`).
+- Doctor quick check works (`hikari --doctor`).
+- On a source-only H1KARI clone, doctor may warn about optional private data, brain symlink, Brain v2 episode DB (before first chat), and frontend `node_modules` — that is normal.
 - Text `status` works.
-- Neural memory connects when run outside a restricted sandbox.
 - Tests pass.
-- Frontend lint/build pass.
+- Frontend lint/build pass when `hikari-frontend/node_modules` is installed.
 
 ## 9. Private Data Rule
 

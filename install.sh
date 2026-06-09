@@ -5,8 +5,9 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_ROOT"
 
-echo "=== HIKARI setup ==="
+echo "=== H1KARI setup ==="
 echo "Repository: $REPO_ROOT"
+echo "CLI commands remain: hikari / Hikari"
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Error: python3 is required." >&2

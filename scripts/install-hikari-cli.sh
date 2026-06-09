@@ -36,8 +36,9 @@ else
   echo "  (macOS: hikari and Hikari are the same command — one wrapper only)"
 fi
 
-echo "Installed HIKARI CLI:"
-echo "  $CLI_DIR/hikari (wrapper -> $LAUNCHER)"
+echo "Installed HIKARI CLI (repo folder: $(basename "$REPO_ROOT")):"
+echo "  $CLI_DIR/hikari (HIKARI_HOME=$REPO_ROOT)"
+echo "  launcher: $LAUNCHER"
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "  $CLI_DIR/Hikari -> hikari"
 fi
