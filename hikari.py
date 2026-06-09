@@ -381,6 +381,14 @@ def main():
         ),
     )
     parser.add_argument(
+        "--tasks-list",
+        action="store_true",
+        help=(
+            "List recent task intents from the task database (read-only). "
+            "Tasks are separate from Brain v2 memory; scheduling is not wired up yet."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Show internal initialization, routing, scheduler, and memory logs.",
@@ -412,6 +420,11 @@ def main():
 
         print(format_memory_status_report())
         raise SystemExit(0)
+
+    if args.tasks_list:
+        from core.tasks.cli import run_tasks_list_cli
+
+        raise SystemExit(run_tasks_list_cli())
 
     # Isolated Brain v2 modes — do not import core.brain_v2.cli (pulls neural config).
     if args.brain_v2_eval:

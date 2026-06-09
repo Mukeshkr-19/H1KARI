@@ -923,9 +923,10 @@ class HIKARI_Orchestrator:
 
     def _task_intent_service(self):
         if not hasattr(self, "_task_intents"):
+            from core.tasks.factory import open_task_store
             from core.tasks.service import TaskIntentService
 
-            self._task_intents = TaskIntentService()
+            self._task_intents = TaskIntentService(store=open_task_store())
         return self._task_intents
 
     def _record_task_intent(self, user_input: str) -> None:

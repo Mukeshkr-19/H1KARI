@@ -8,8 +8,10 @@ from core.brain import HikariBrain
 from core.brain_v2.consolidation_pipeline import EpisodeConsolidationPipeline
 from core.brain_v2.coordinator import BrainV2Coordinator
 from core.brain_v2.schemas import MemoryCandidateStatus
+from core.tasks.db_paths import ENV_HIKARI_TASKS_DB
 from core.tasks.schemas import TaskStatus
 from core.tasks.service import TaskIntentService
+from core.tasks.store import InMemoryTaskStore
 from tests.test_brain_memory import FakeNeural
 from tests.test_brain_v2_write_authority import _minimal_orchestrator
 
@@ -21,8 +23,13 @@ def episode_db(tmp_path):
     return EpisodeStore(db_path=tmp_path / "task_boundary.db")
 
 
+@pytest.fixture(autouse=True)
+def isolated_tasks_db(tmp_path, monkeypatch):
+    monkeypatch.setenv(ENV_HIKARI_TASKS_DB, str(tmp_path / "tasks.db"))
+
+
 def test_task_intent_service_records_not_scheduled():
-    svc = TaskIntentService()
+    svc = TaskIntentService(store=InMemoryTaskStore())
     record = svc.record_intent("remind me to call Person C tomorrow")
     assert record.kind == "reminder"
     assert record.status == TaskStatus.NOT_SCHEDULED

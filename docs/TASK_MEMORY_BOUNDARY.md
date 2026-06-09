@@ -43,8 +43,13 @@ scheduling is **not wired up yet**, and the utterance is **not** stored as Brain
 | `core/tasks/service.py` | Record task intents without Brain v2 writes |
 | `core/orchestrator.py` | Route task phrasing before consolidation |
 
+## Persistence
+
+- Task intents are stored in a separate SQLite database under the private brain runtime area.
+- Override path for tests or custom installs with `HIKARI_TASKS_DB`.
+- List recent intents: `hikari.py --tasks-list` (read-only; shows `NOT_SCHEDULED`).
+
 ## Future work
 
-- Persistent task store (SQLite) separate from Brain v2 episode storage
-- Scheduler integration with explicit user confirmation
+- Scheduler integration (macOS reminders/calendar) with explicit user confirmation
 - Command center UI for open tasks
