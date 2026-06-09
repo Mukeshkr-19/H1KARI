@@ -1326,6 +1326,12 @@ Adapt your responses to be:
             debug(f"[AI] Error: {e}")
             return "I'm having trouble thinking right now. Try again in a moment."
 
+    def run_voice_loop(self):
+        """Run the menu-bar voice loop using the existing daemon service."""
+        from services.hikari_service import HIKARI_Daemon
+
+        HIKARI_Daemon().run()
+
     def _check_health(self, text: str):
         """Check for health indicators"""
         if self.emotional_iq.detect_emotion(text).get("sick", 0) > 0.5:

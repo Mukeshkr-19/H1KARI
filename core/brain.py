@@ -1,7 +1,9 @@
 """
 Single public memory facade for HIKARI.
 
-SQLite neural memory is the authority. Legacy JSON memory is optional compatibility only.
+Brain v2 is the personal-memory authority when its policy is enabled. The
+SQLite neural graph remains a quarantined legacy surface for explicit legacy
+mode and maintenance tooling.
 """
 
 from __future__ import annotations
