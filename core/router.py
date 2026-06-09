@@ -11,6 +11,7 @@ import hashlib
 import logging
 import contextlib
 import io
+import re
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
@@ -47,7 +48,21 @@ load_dotenv()
 
 def _router_log(*args, **kwargs) -> None:
     if not is_quiet():
-        print(*args, **kwargs)
+        safe_args = tuple(_redact_sensitive_text(arg) for arg in args)
+        print(*safe_args, **kwargs)
+
+
+def _redact_sensitive_text(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = re.sub(r"([?&]key=)[^&\s)]+", r"\1[REDACTED]", value)
+    text = re.sub(
+        r"(Authorization['\"]?\s*[:=]\s*['\"]?Bearer\s+)[^'\"\s,)}]+",
+        r"\1[REDACTED]",
+        text,
+        flags=re.I,
+    )
+    return text
 
 
 # Provider configurations

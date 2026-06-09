@@ -67,6 +67,17 @@ class TestAIRouter(unittest.TestCase):
         stats = router.get_usage_stats()
         self.assertIsInstance(stats, dict)
 
+    def test_router_redacts_api_keys_from_logs(self):
+        from core.router import _redact_sensitive_text
+
+        text = (
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini:generateContent?key=secret-google-key"
+        )
+        redacted = _redact_sensitive_text(text)
+        self.assertNotIn("secret-google-key", redacted)
+        self.assertIn("key=[REDACTED]", redacted)
+
 
 class TestMemorySystem(unittest.TestCase):
     """Test the memory system"""
