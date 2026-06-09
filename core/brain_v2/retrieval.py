@@ -337,7 +337,7 @@ class BrainV2Retrieval:
             semantic = self._filter_semantic_hits_by_person(semantic, requested_people)
 
         if intent == INTENT_IDENTITY_SELF:
-            identity_answer = self._answer_identity_self()
+            identity_answer = self._answer_identity_self(query)
             if identity_answer:
                 return identity_answer
 
@@ -384,13 +384,15 @@ class BrainV2Retrieval:
         ctype = str(meta.get("candidate_type", "fact"))
         if ctype != "identity":
             return False
-        if meta.get("preferred_name"):
+        if meta.get("preferred_name") or meta.get("legal_name") or meta.get("official_name"):
             return True
         return bool(_IDENTITY_NAME_TEXT.search(mem.statement or ""))
 
-    def _answer_identity_self(self) -> Optional[str]:
+    def _answer_identity_self(self, query: str) -> Optional[str]:
         """Merge legal name + preferred/call-me identity into one honest answer."""
         preferred: Optional[str] = None
+        legal: Optional[str] = None
+        official: Optional[str] = None
         statements: List[str] = []
         seen_norms: set[str] = set()
         for mem in self.store.get_active_accepted_memories(limit=200):
@@ -411,6 +413,10 @@ class BrainV2Retrieval:
             stmt = (mem.statement or "").strip()
             if not stmt:
                 continue
+            legal = legal or str(meta.get("legal_name") or "").strip() or None
+            official = official or str(meta.get("official_name") or "").strip() or None
+            legal = legal or self._extract_declared_name(stmt)
+            official = official or self._extract_official_name(stmt)
             norm = normalize_statement(stmt)
             if norm in seen_norms:
                 continue
@@ -419,6 +425,16 @@ class BrainV2Retrieval:
 
         if not preferred and not statements:
             return None
+
+        if self._is_legal_name_query(query):
+            name = official or legal
+            if name:
+                label = "official" if self._asks_official_name(query) else "real"
+                return f"Your {label} name is {name}."
+
+        casual_name = preferred or legal or official
+        if casual_name:
+            return f"Your name is {casual_name}."
 
         parts: List[str] = []
         if preferred:
@@ -431,6 +447,41 @@ class BrainV2Retrieval:
         if not parts:
             return None
         return "From reviewed memory: " + ". ".join(parts) + "."
+
+    @staticmethod
+    def _is_legal_name_query(query: str) -> bool:
+        return bool(re.search(r"\b(?:real|legal|official|full)\s+name\b", query or "", re.I))
+
+    @staticmethod
+    def _asks_official_name(query: str) -> bool:
+        return bool(re.search(r"\bofficial\s+name\b", query or "", re.I))
+
+    @staticmethod
+    def _extract_declared_name(statement: str) -> Optional[str]:
+        m = re.search(r"\bmy\s+name\s+is\s+(.+)", statement or "", re.I)
+        if not m:
+            return None
+        name = m.group(1).strip()
+        name = re.split(
+            r"\s+(?:but|and)\s+(?:you\s+can\s+|u\s+can\s+)?call\s+me\b|\s+but\s+(?:my\s+)?(?:official|legal|real)\s+name\s+is\b|[,.;!?]",
+            name,
+            maxsplit=1,
+            flags=re.I,
+        )[0].strip()
+        if not name:
+            return None
+        return " ".join(piece.capitalize() for piece in name.split())
+
+    @staticmethod
+    def _extract_official_name(statement: str) -> Optional[str]:
+        m = re.search(
+            r"\b(?:official|legal|real)\s+name\s+is\s+([A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*){0,4})",
+            statement or "",
+            re.I,
+        )
+        if not m:
+            return None
+        return " ".join(piece.capitalize() for piece in m.group(1).strip().split())
 
     @staticmethod
     def _memory_matches_relation_intent(mem: SourceLinkedMemory) -> bool:

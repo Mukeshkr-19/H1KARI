@@ -155,7 +155,12 @@ def is_positive_brain_v2_recall_answer(text: Optional[str]) -> bool:
         or "don't have reviewed brain v2" in low
     ):
         return False
-    return "from reviewed memory" in low or "from reviewed brain v2 memories" in low or "from recent session context" in low
+    return (
+        "from reviewed memory" in low
+        or "from reviewed brain v2 memories" in low
+        or "from recent session context" in low
+        or bool(re.search(r"\byour\s+(?:real\s+|legal\s+|official\s+)?name\s+is\b", low))
+    )
 
 
 def is_brain_v2_conflict_review_answer(text: Optional[str]) -> bool:
@@ -324,11 +329,17 @@ def _matches_profile_summary(q: str) -> bool:
 def _matches_identity_self(q: str) -> bool:
     return bool(
         re.search(r"\bwho\s+am\s+i\b", q)
-        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+(?:official\s+)?name\b", q)
-        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+legal\s+name\b", q)
-        or re.search(r"\bwhats?\s+my\s+name\b", q)
-        or re.search(r"\b(?:tell|remind)\s+me\s+my\s+(?:official\s+|legal\s+)?name\b", q)
-        or q in {"my name", "my official name", "my legal name", "my identity"}
+        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
+        or re.search(r"\bwhats?\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
+        or re.search(r"\b(?:tell|remind)\s+me\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
+        or q in {
+            "my name",
+            "my official name",
+            "my legal name",
+            "my real name",
+            "my full name",
+            "my identity",
+        }
     )
 
 

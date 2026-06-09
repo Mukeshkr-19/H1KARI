@@ -191,10 +191,22 @@ def test_identity_merge_preferred_and_legal(episode_db):
     coord.ingest_trusted_owner_declaration("sess-id", "you can call me Person C")
     retrieval = BrainV2Retrieval(episode_db, coord.working)
     answer = retrieval.answer_from_accepted("what is my name?")
-    assert answer
-    low = answer.lower()
-    assert "owner a" in low or "person c" in low
-    assert "call you" in low or "preferred" in low or "name" in low
+    assert answer == "Your name is Person C."
+
+    official = retrieval.answer_from_accepted("what is my official name?")
+    assert official == "Your official name is Person C."
+
+
+def test_identity_prefers_casual_name_but_keeps_real_name(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    coord.ingest_trusted_owner_declaration(
+        "sess-id",
+        "My name is Owner A but you can call me Person C.",
+    )
+    retrieval = BrainV2Retrieval(episode_db, coord.working)
+
+    assert retrieval.answer_from_accepted("whats my name?") == "Your name is Person C."
+    assert retrieval.answer_from_accepted("whats my real name?") == "Your real name is Owner A."
 
 
 def test_person_c_is_my_sister_auto_accept_and_recall(episode_db):

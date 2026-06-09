@@ -248,12 +248,25 @@ class EpisodeConsolidationPipeline:
         if m_call:
             name = m_call.group(1).strip().title()
             stmt = f"My preferred name is {name}."
+            identity_meta = {"preferred_name": name}
+            m_declared = _IDENTITY.search(text)
+            if m_declared:
+                declared = re.split(
+                    r"\s+(?:but|and)\s+(?:you\s+can\s+|u\s+can\s+)?call\s+me\b|[,.;!?]",
+                    m_declared.group(1).strip(),
+                    maxsplit=1,
+                    flags=re.I,
+                )[0].strip()
+                if declared:
+                    identity_meta["legal_name"] = " ".join(
+                        piece.capitalize() for piece in declared.split()
+                    )
             found.append(
                 (
                     stmt,
                     "identity",
                     0.86,
-                    {"preferred_name": name},
+                    identity_meta,
                 )
             )
 

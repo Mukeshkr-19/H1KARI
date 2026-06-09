@@ -22,6 +22,8 @@ _STRUCTURED_META_KEYS = (
     "place",
     "date_text",
     "preferred_name",
+    "legal_name",
+    "official_name",
     "explicit_remember",
     "auto_trusted_owner_assertion",
     "auto_trust_policy",

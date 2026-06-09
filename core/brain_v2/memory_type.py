@@ -86,6 +86,9 @@ def infer_memory_type(
     )
     if call_me:
         meta["preferred_name"] = call_me.group(1).strip().title()
+        declared = _extract_declared_self_name(text)
+        if declared:
+            meta["legal_name"] = declared
         return MemoryTypeInference("identity", 0.84, meta)
 
     m = re.search(r"\bi\s+live\s+in\s+([A-Za-z][\w\s'-]{2,60})", text, re.I)
@@ -100,6 +103,9 @@ def infer_memory_type(
         return MemoryTypeInference("preference", 0.82, meta)
 
     if re.search(r"\bmy\s+name\s+is\b", low):
+        declared = _extract_declared_self_name(text)
+        if declared:
+            meta["legal_name"] = declared
         return MemoryTypeInference("identity", 0.86, meta)
 
     user_edu = normalize_user_education_statement(text)
@@ -208,6 +214,22 @@ def _extract_plan_metadata(text: str, low: str) -> Dict[str, object]:
             break
 
     return meta
+
+
+def _extract_declared_self_name(text: str) -> Optional[str]:
+    m = re.search(r"\bmy\s+name\s+is\s+(.+)", text or "", re.I)
+    if not m:
+        return None
+    raw = re.split(
+        r"\s+(?:but|and)\s+(?:you\s+can\s+|u\s+can\s+)?call\s+me\b|"
+        r"\s+but\s+(?:my\s+)?(?:official|legal|real)\s+name\s+is\b|[,.;!?]",
+        m.group(1).strip(),
+        maxsplit=1,
+        flags=re.I,
+    )[0].strip()
+    if not raw:
+        return None
+    return " ".join(piece.capitalize() for piece in raw.split())
 
 
 def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:

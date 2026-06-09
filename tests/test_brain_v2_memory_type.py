@@ -209,7 +209,6 @@ def test_identity_query_uses_identity_memory_only_when_mixed(episode_db):
 
     reply = BrainV2Retrieval(episode_db).answer_from_accepted("bro whats my name?")
     assert reply
-    assert "reviewed memory" in reply.lower()
     assert "owner a" in reply.lower()
     assert "restaurant" not in reply.lower()
     assert "brother" not in reply.lower()
