@@ -11,6 +11,7 @@ from core.brain_v2.coordinator import BrainV2Coordinator
 from core.brain_v2.location_phrases import (
     is_meta_or_deferred_location_phrase,
     is_valid_place_name,
+    normalize_declared_place,
 )
 from core.brain_v2.memory_type import infer_memory_type
 from core.brain_v2.session_context import register_session_place_provider
@@ -45,6 +46,34 @@ def test_infer_does_not_treat_meta_phrase_as_place():
 def test_valid_place_name():
     assert is_valid_place_name("City B")
     assert not is_valid_place_name("the city im in now")
+
+
+def test_normalize_hometown_phrase_to_city():
+    assert normalize_declared_place("my hometown which is City B for summer vacation") == "City B"
+    assert normalize_declared_place("City B now that my hometown name") == "City B"
+
+
+def test_infer_hometown_presence_sets_clean_session_city(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    register_session_place_provider(
+        lambda: coord.working.get_current_location()[0]
+        if coord.working.get_current_location()
+        else None
+    )
+
+    orch.process_input("I am in my hometown which is City B for summer vacation.")
+    loc = coord.working.get_current_location()
+    assert loc
+    assert loc[0] == "City B"
+
+    from agents.research import ResearchAgent
+
+    agent = ResearchAgent(eager_legacy_brain=False)
+    with patch.object(agent, "get_weather", return_value="Weather in City B: clear") as mock_w:
+        result = agent.handle("whats the weather outside?")
+    assert result == "Weather in City B: clear"
+    mock_w.assert_called_once_with("City B")
 
 
 def test_session_not_overwritten_by_meta_phrase(episode_db):

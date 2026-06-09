@@ -39,3 +39,10 @@ def test_owner_again_resets_guest():
     ctx.update_from_input("it's Owner A again")
     assert ctx.consume_speaker_reset()
     assert not ctx.is_guest_speaker()
+
+
+def test_i_am_doing_is_not_guest_speaker():
+    ctx = SpeakerContext(primary_user="Owner A")
+    ctx.update_from_input("I am doing my bachelors in Topic A at School A")
+    assert ctx.current_speaker is None
+    assert not ctx.is_guest_speaker()

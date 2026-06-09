@@ -6,7 +6,7 @@ import pytest
 
 from core.brain_v2.consolidation_pipeline import EpisodeConsolidationPipeline
 from core.brain_v2.memory_review_gate import MemoryReviewGate
-from core.brain_v2.memory_type import infer_memory_type
+from core.brain_v2.memory_type import infer_memory_type, normalize_user_education_statement
 from core.brain_v2.recall_intent import (
     INTENT_CURRENT_LOCATION,
     INTENT_EDUCATION,
@@ -75,6 +75,20 @@ def test_infer_memory_type(statement, expected_type):
         assert inferred.candidate_type == expected_type
 
 
+def test_degree_statement_normalizes_to_education():
+    normalized = normalize_user_education_statement(
+        "I am doing my bachelors in computer science in university at City A."
+    )
+    assert normalized
+    stmt, extra = normalized
+    assert "computer science" in stmt.lower()
+    assert "city a" in stmt.lower()
+    inferred = infer_memory_type(
+        "I am doing my bachelors in computer science in university at City A."
+    )
+    assert inferred.candidate_type == "education"
+
+
 @pytest.mark.parametrize(
     "remember_body,expected_type",
     [
@@ -114,6 +128,12 @@ def test_plan_recall_intents():
 
 def test_education_recall_intent():
     assert classify_recall_intent("what does Jamie study?") == INTENT_EDUCATION
+    assert classify_recall_intent("what do I study?") == INTENT_EDUCATION
+    assert classify_recall_intent("what did I study?") == INTENT_EDUCATION
+    assert classify_recall_intent("what am I studying?") == INTENT_EDUCATION
+    assert classify_recall_intent("where do I study?") == INTENT_EDUCATION
+    assert classify_recall_intent("what is my major?") == INTENT_EDUCATION
+    assert classify_recall_intent("what university do I attend?") == INTENT_EDUCATION
 
 
 @pytest.mark.parametrize(
@@ -355,6 +375,19 @@ def test_normalize_user_education_statement():
     assert meta.get("field_of_study") or "computer" in stmt.lower()
 
 
+def test_normalize_degree_statement_keeps_university_connector_natural():
+    from core.brain_v2.memory_type import normalize_user_education_statement
+
+    result = normalize_user_education_statement(
+        "I am doing my bachelors in computer science in university at City A"
+    )
+    assert result
+    stmt, meta = result
+    assert "Computer Science" in stmt
+    assert "University at City A" in stmt
+    assert meta.get("organization") == "University at City A"
+
+
 def test_sister_memory_does_not_answer_girlfriend_study_query(episode_db):
     _accept_turn(
         episode_db,
@@ -431,6 +464,8 @@ def test_session_current_location_answers_where_now(episode_db):
     assert reply
     assert "recent session context" in reply.lower()
     assert "city b" in reply.lower()
+    assert "you're in" in reply.lower()
+    assert "summer holidays" not in reply.lower()
     assert "city a" not in reply.lower()
 
 

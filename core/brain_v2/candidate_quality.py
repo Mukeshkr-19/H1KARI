@@ -79,6 +79,11 @@ _DURABLE_PATTERNS = (
     re.compile(r"\bmy\s+(dad|father|mom|mother|sister|brother|gf|girlfriend|partner|wife|husband)\b", re.I),
     re.compile(r"\bi\s+(live|work|study)\s+(?:in|at)\b", re.I),
     re.compile(
+        r"\bi\s+(?:am\s+)?(?:doing|pursuing|getting|completing)\s+my\s+"
+        r"(?:bachelor|master|undergraduate|graduate)\b",
+        re.I,
+    ),
+    re.compile(
         r"\b(?:right\s+now|currently|at\s+the\s+moment)\b.+\b(?:i'?m|i am)\s+in\b", re.I
     ),
     re.compile(r"\b(?:i'?m|i am)\s+currently\s+in\b", re.I),

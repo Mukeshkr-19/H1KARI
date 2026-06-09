@@ -158,7 +158,8 @@ def test_identity_declaration_is_auto_trusted_before_recall(episode_db, neural_d
 
     reply = orch.process_input("My name is Owner A.")
 
-    assert "remember that in brain v2" in reply.lower()
+    assert "brain v2" in reply.lower()
+    assert "remember" in reply.lower()
     assert "do not have a reviewed memory" not in reply.lower()
     brain.answer.assert_not_called()
     brain.remember_fact.assert_not_called()
@@ -170,6 +171,26 @@ def test_identity_declaration_is_auto_trusted_before_recall(episode_db, neural_d
         and "owner a" in memory.statement.lower()
         for memory in accepted
     )
+
+
+def test_education_recall_routes_to_brain_v2_without_llm(episode_db, neural_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    brain = HikariBrain(FakeNeural([]))
+    brain.answer = MagicMock(
+        return_value=BrainAnswer(text="Wrong legacy education.", confidence=0.9)
+    )
+    orch = _minimal_orchestrator(coord, brain)
+    orch._get_ai_response = MagicMock(
+        return_value="I'm having trouble thinking right now."
+    )
+
+    orch.process_input("I am doing my bachelors in Topic A at School A.")
+    answer = orch.process_input("what do I study?")
+
+    assert "topic a" in answer.lower()
+    assert "trouble thinking" not in answer.lower()
+    brain.answer.assert_not_called()
+    orch._get_ai_response.assert_not_called()
 
 
 def test_current_location_is_available_immediately_in_session(episode_db, neural_db):
@@ -293,9 +314,8 @@ def test_conflict_or_no_reviewed_personal_recall_writes_no_neural_turn(
     orch = _minimal_orchestrator(coord, brain)
 
     reply = orch.process_input("where am I right now?")
-    assert reply in (
-        CONFLICT_REVIEW_NEEDED_MESSAGE,
-        "I do not have a reviewed memory for that yet.",
+    assert reply == CONFLICT_REVIEW_NEEDED_MESSAGE or is_brain_v2_no_reviewed_memory_answer(
+        reply
     )
     brain.answer.assert_not_called()
     brain.remember_turn.assert_not_called()

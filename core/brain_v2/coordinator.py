@@ -151,19 +151,31 @@ class BrainV2Coordinator:
             for memory in active_same_type
         )
         preferred_name = str((candidate.metadata or {}).get("preferred_name") or "").strip()
+        legal_name = str((candidate.metadata or {}).get("legal_name") or "").strip()
         alias_identity_update = (
             candidate.candidate_type == "identity" and bool(preferred_name)
+        )
+        identity_legal_correction = (
+            candidate.candidate_type == "identity" and bool(legal_name)
         )
         if (
             candidate.candidate_type in singleton_types
             and active_same_type
             and not has_exact_active
             and not alias_identity_update
+            and not identity_legal_correction
         ):
             return {
                 "status": "pending_conflict",
                 "candidate_type": candidate.candidate_type,
             }
+
+        if identity_legal_correction and active_same_type and not has_exact_active:
+            for mem in active_same_type:
+                self.retire_accepted_memory(
+                    mem.memory_id,
+                    reason="identity_legal_correction",
+                )
 
         trusted_meta = dict(candidate.metadata or {})
         trusted_meta["auto_trusted_owner_assertion"] = True

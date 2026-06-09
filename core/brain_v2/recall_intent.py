@@ -554,10 +554,37 @@ def _matches_plan(q: str) -> bool:
     )
 
 
+def is_casual_greeting(text: str) -> bool:
+    """Short social openers that must not trigger LLM identity hallucination."""
+    q = (text or "").strip().lower().rstrip("?!.").strip()
+    if not q:
+        return False
+    if q in {
+        "hi",
+        "hello",
+        "hey",
+        "hiya",
+        "yo",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "thanks",
+        "thank you",
+    }:
+        return True
+    return bool(re.match(r"^(?:hi|hello|hey)(?:\s+(?:there|hikari))?$", q))
+
+
 def _matches_education_query(q: str) -> bool:
     rel_alt = "|".join(_FAMILY_RELATIONS)
     return bool(
-        re.search(r"\bwhat\s+does\s+(?:my\s+)?(?:\w+\s+)?\w+\s+study\b", q)
+        re.search(r"\bwhat\s+(?:do|did)\s+i\s+stud(?:y|ied)\b", q)
+        or re.search(r"\bwhat\s+am\s+i\s+studying\b", q)
+        or re.search(r"\bwhere\s+do\s+i\s+stud(?:y|ied)\b", q)
+        or re.search(r"\bwhat\s+is\s+my\s+(?:major|degree)\b", q)
+        or re.search(r"\bwhat\s+(?:university|college)\s+do\s+i\s+attend\b", q)
+        or re.search(r"\bwhat\s+degree\s+am\s+i\s+pursuing\b", q)
+        or re.search(r"\bwhat\s+does\s+(?:my\s+)?(?:\w+\s+)?\w+\s+study\b", q)
         or re.search(r"\bwhat\s+is\s+(?:my\s+)?(?:\w+\s+)?\w+\s+studying\b", q)
         or re.search(r"\bwhat\s+(?:school|university|college)\s+does\s+", q)
         or re.search(r"\bwhere\s+did\s+i\s+(?:go\s+to\s+)?(?:school|university|college)\b", q)

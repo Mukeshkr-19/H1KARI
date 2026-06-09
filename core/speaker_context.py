@@ -79,6 +79,17 @@ _NON_NAME_SELF_INTRO_PREFIXES = frozenset(
         "feeling",
         "going",
         "staying",
+        "doing",
+        "studying",
+        "working",
+        "trying",
+        "having",
+        "getting",
+        "looking",
+        "living",
+        "visiting",
+        "traveling",
+        "travelling",
     }
 )
 

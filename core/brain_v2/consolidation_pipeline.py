@@ -12,7 +12,11 @@ from core.brain_v2.candidate_quality import (
     apply_quality_gate,
 )
 from core.brain_v2.candidate_scoring import annotate_and_rank_candidates, normalize_statement
-from core.brain_v2.memory_type import infer_memory_type, normalize_user_education_statement
+from core.brain_v2.memory_type import (
+    extract_owner_identity_names,
+    infer_memory_type,
+    normalize_user_education_statement,
+)
 from core.speaker_context import is_speaker_context_reset, is_temporary_speaker_intro
 from core.brain_v2.episode_store import EpisodeStore
 from core.brain_v2.schemas import (
@@ -326,6 +330,17 @@ class EpisodeConsolidationPipeline:
             found.append(
                 (text.strip(), inferred.candidate_type, inferred.confidence, extra)
             )
+
+        identity = extract_owner_identity_names(text)
+        if identity.get("legal_name") or identity.get("preferred_name"):
+            parts: List[str] = []
+            if identity.get("legal_name"):
+                parts.append(f"My legal name is {identity['legal_name']}.")
+            if identity.get("preferred_name"):
+                parts.append(f"My preferred name is {identity['preferred_name']}.")
+            found = [
+                (" ".join(parts), "identity", 0.88, dict(identity))
+            ] + [item for item in found if item[1] != "identity"]
 
         return self._dedupe_extractions(found)
 

@@ -79,17 +79,17 @@ def infer_memory_type(
         meta["current_location"] = current
         return MemoryTypeInference("current_location", 0.85, meta)
 
-    call_me = re.search(
-        r"\b(?:you can\s+)?call\s+me\s+([A-Za-z][\w'-]*(?:\s+[A-Z])?)\b",
-        text,
-        re.I,
-    )
-    if call_me:
-        meta["preferred_name"] = call_me.group(1).strip().title()
-        declared = _extract_declared_self_name(text)
-        if declared:
-            meta["legal_name"] = declared
-        return MemoryTypeInference("identity", 0.84, meta)
+    identity = extract_owner_identity_names(text)
+    if identity.get("legal_name") or identity.get("preferred_name"):
+        meta.update(identity)
+        parts: List[str] = []
+        if identity.get("legal_name"):
+            parts.append(f"My legal name is {identity['legal_name']}.")
+        if identity.get("preferred_name"):
+            parts.append(f"My preferred name is {identity['preferred_name']}.")
+        if parts:
+            meta["normalized_statement"] = " ".join(parts)
+        return MemoryTypeInference("identity", 0.88, meta)
 
     m = re.search(r"\bi\s+live\s+in\s+([A-Za-z][\w\s'-]{2,60})", text, re.I)
     if m:
@@ -216,6 +216,60 @@ def _extract_plan_metadata(text: str, low: str) -> Dict[str, object]:
     return meta
 
 
+def _title_person_name(name: str) -> str:
+    return " ".join(piece.capitalize() for piece in (name or "").split())
+
+
+def extract_owner_identity_names(text: str) -> Dict[str, str]:
+    """Parse legal/real name and preferred call-name from one owner statement."""
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+
+    out: Dict[str, str] = {}
+
+    m_legal = re.search(
+        r"\b(?:my\s+)?(?:real|legal|official)\s+name\s+is\s+"
+        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*){0,5})",
+        raw,
+        re.I,
+    )
+    if m_legal:
+        legal = _title_person_name(
+            re.split(
+                r"\s+(?:but|and)\s+(?:"
+                r"(?:i\s+)?(?:told\s+(?:you|u)\s+to\s+)?call\s+me|"
+                r"(?:you\s+can\s+|u\s+can\s+)?call\s+me|"
+                r"(?:i\s+)?(?:told|tell)\b"
+                r")\b|[,.;!?]",
+                m_legal.group(1).strip(),
+                maxsplit=1,
+                flags=re.I,
+            )[0].strip()
+        )
+        if legal:
+            out["legal_name"] = legal
+
+    for pat in (
+        r"\b(?:you\s+can\s+|u\s+can\s+|i\s+told\s+(?:you|u)\s+to\s+)?call\s+me\s+"
+        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z])?)",
+        r"\b(?:you\s+can\s+|u\s+can\s+)?call\s+me\s+([A-Za-z][\w'-]*(?:\s+[A-Za-z])?)",
+    ):
+        m_call = re.search(pat, raw, re.I)
+        if m_call:
+            preferred = m_call.group(1).strip().title()
+            if preferred:
+                out["preferred_name"] = preferred
+            break
+
+    if not out.get("legal_name"):
+        declared = _extract_declared_self_name(raw)
+        if declared:
+            out["legal_name"] = declared
+
+    return out
+
+
 def _extract_declared_self_name(text: str) -> Optional[str]:
     m = re.search(r"\bmy\s+name\s+is\s+(.+)", text or "", re.I)
     if not m:
@@ -276,6 +330,35 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
 def normalize_user_education_statement(text: str) -> Optional[tuple[str, Dict[str, object]]]:
     """Normalize first-person study statements (not partner/family education)."""
     low = (text or "").lower()
+    degree = re.search(
+        r"\bi\s+(?:am\s+)?(?:doing|pursuing|getting|completing)\s+my\s+"
+        r"(?:bachelor'?s?|master'?s?|undergraduate|graduate)\s*(?:degree)?"
+        r"(?:\s+in\s+([^.,;]+?))?(?:\s+(?:in|at)\s+(.+?))?(?:\s*\.|$)",
+        text or "",
+        re.I,
+    )
+    if degree:
+        field_raw = (degree.group(1) or "").strip().rstrip(".")
+        org_raw = (degree.group(2) or "").strip().rstrip(".")
+        field = _title_label(field_raw) if field_raw else None
+        org = _title_label(org_raw) if org_raw else _extract_user_school(text, low)
+        parts = ["I study"]
+        if field:
+            parts.append(field)
+        if org:
+            parts.append(f"at {org}")
+        statement = " ".join(parts).strip()
+        if statement == "I study":
+            statement = text.strip().rstrip(".")
+        elif not statement.endswith("."):
+            statement += "."
+        extra: Dict[str, object] = {}
+        if org:
+            extra["organization"] = org
+        if field:
+            extra["field_of_study"] = field
+        return statement, extra
+
     if not re.search(r"\bi\s+study", low):
         return None
     if re.search(
@@ -312,13 +395,25 @@ def normalize_user_education_statement(text: str) -> Optional[tuple[str, Dict[st
     return statement, extra
 
 
+def _title_label(value: str) -> str:
+    """Title-case labels while keeping connector words natural."""
+    words: List[str] = []
+    for index, word in enumerate((value or "").split()):
+        lowered = word.lower()
+        if index > 0 and lowered in {"at", "in", "of", "and", "the", "for"}:
+            words.append(lowered)
+        else:
+            words.append(word[:1].upper() + word[1:].lower())
+    return " ".join(words)
+
+
 def _extract_user_school(text: str, low: str) -> Optional[str]:
     m = re.search(
         r"\b(university\s+at\s+city\s+a|university\s+in\s+city\s+a|north\s+city\s+college)\b",
         low,
     )
     if m:
-        return m.group(1).title()
+        return _title_label(m.group(1))
 
     m = re.search(
         r"\bi\s+study\s+(?:at|in)\s+(?:the\s+)?(?:university\s+at\s+)?(.+?)"
@@ -328,7 +423,7 @@ def _extract_user_school(text: str, low: str) -> Optional[str]:
     if m:
         raw = m.group(1).strip().rstrip(".")
         if raw and "computer science" not in raw.lower():
-            return raw.title()
+            return _title_label(raw)
 
     m = re.search(
         r"\b([A-Z][A-Za-z0-9\s']*(?:University|College|School))\b",

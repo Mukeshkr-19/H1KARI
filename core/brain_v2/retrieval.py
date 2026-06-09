@@ -431,6 +431,12 @@ class BrainV2Retrieval:
             if name:
                 label = "official" if self._asks_official_name(query) else "real"
                 return f"Your {label} name is {name}."
+            if preferred:
+                return (
+                    f"I call you {preferred}, but I do not have your full legal name "
+                    "in reviewed Brain v2 memory yet."
+                )
+            return self._no_reviewed_memory_reply(INTENT_IDENTITY_SELF, query)
 
         casual_name = preferred or legal or official
         if casual_name:
@@ -552,9 +558,11 @@ class BrainV2Retrieval:
         loc_data = self.working.get_current_location()
         if not loc_data:
             return None
-        _loc, stmt = loc_data
-        body = (stmt or "").strip().rstrip(".")
-        return f"From recent session context: {body}."
+        place, _stmt = loc_data
+        place = (place or "").strip()
+        if not place:
+            return None
+        return f"From recent session context: you're in {place}."
 
     def _filter_semantic_hits_by_location_kind(
         self,
@@ -670,19 +678,9 @@ class BrainV2Retrieval:
                 "I don't have a reviewed memory about a HIKARI project decision yet. "
                 "Check pending candidates with `hikari.py --brain-v2-pending`."
             )
-        if intent in (
-            INTENT_PREFERENCE,
-            INTENT_LOCATION,
-            INTENT_CURRENT_LOCATION,
-            INTENT_TRAVEL,
-            INTENT_IDENTITY_SELF,
-            INTENT_PLAN,
-            INTENT_EDUCATION,
-            INTENT_PROFILE_SUMMARY,
-            INTENT_GENERAL_MEMORY,
-        ):
-            return "I do not have a reviewed memory for that yet."
-        return "I do not have a reviewed memory for that yet."
+        from core.brain_v2.no_reviewed_reply import format_no_reviewed_memory_reply
+
+        return format_no_reviewed_memory_reply(query, intent)
 
     def _statement_from_hit(self, hit: BrainV2MemoryHit) -> str:
         text = hit.text

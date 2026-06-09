@@ -65,6 +65,49 @@ def test_owner_relation_auto_accepted(episode_db):
     assert any("person a" in m.statement.lower() for m in accepted)
 
 
+def test_owner_legal_and_preferred_name_stored_separately(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    reply = orch.process_input(
+        "My real name is Owner A but I told you to call me Person B."
+    )
+    assert "legal name" in reply.lower() or "brain v2" in reply.lower()
+
+    legal = coord.retrieval.answer_from_accepted("what is my real name?")
+    casual = coord.retrieval.answer_from_accepted("what is my name?")
+    assert legal
+    assert "owner a" in legal.lower()
+    assert casual
+    assert "person b" in casual.lower()
+
+
+def test_real_name_query_does_not_return_preferred_only(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    coord.ingest_trusted_owner_declaration(
+        "sess-pref-only",
+        "You can call me Person B.",
+    )
+    answer = coord.retrieval.answer_from_accepted("what is my real name?")
+    assert answer
+    assert "person b" not in answer.lower() or "do not have your full legal name" in answer.lower()
+
+
+def test_owner_degree_statement_auto_accepted(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    outcome = coord.ingest_trusted_owner_declaration(
+        "sess-edu",
+        "I am doing my bachelors in computer science in university at City A.",
+    )
+    assert outcome["status"] == "accepted"
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    assert any("computer science" in m.statement.lower() for m in accepted)
+    retrieval = BrainV2Retrieval(episode_db)
+    answer = retrieval.answer_from_accepted("what do I study?")
+    assert answer
+    assert "computer science" in answer.lower()
+
+
 def test_partner_education_stays_review_gated(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(

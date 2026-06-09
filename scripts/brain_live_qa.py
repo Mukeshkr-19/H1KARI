@@ -57,6 +57,13 @@ def _all_of(*checks: Callable[[str], bool]) -> Callable[[str], bool]:
     return _fn
 
 
+def _no_reviewed_memory_yet(reply: str) -> bool:
+    low = (reply or "").lower()
+    return "reviewed memory" in low and (
+        "do not have" in low or "don't have" in low
+    )
+
+
 def _weather_ok(reply: str) -> bool:
     low = (reply or "").lower()
     if "secret" in low or "appid" in low:
@@ -143,7 +150,7 @@ def main() -> int:
             [
                 Turn(
                     "what is my name?",
-                    _has("do not have"),
+                    _no_reviewed_memory_yet,
                     "unknown name before memory",
                 ),
             ],
@@ -263,6 +270,47 @@ def main() -> int:
 
     results.append(
         _run_scenario(
+            "legal_vs_preferred_name",
+            [
+                Turn(
+                    "My real name is Owner Legal but call me Person C",
+                    _all_of(_has("brain v2"), _has("owner legal")),
+                    "dual identity stored",
+                ),
+                Turn(
+                    "what is my real name?",
+                    _all_of(_has("owner legal"), _lacks("person c")),
+                    "real name query returns legal only",
+                ),
+                Turn(
+                    "what is my name?",
+                    _has("person c"),
+                    "display name query returns preferred",
+                ),
+            ],
+        )
+    )
+
+    results.append(
+        _run_scenario(
+            "degree_education",
+            [
+                Turn(
+                    "I am doing my bachelors in Topic A at School A",
+                    _all_of(_has("brain v2"), _has("remember")),
+                    "degree statement auto-trusted",
+                ),
+                Turn(
+                    "what do I study?",
+                    _has("topic a"),
+                    "education recall",
+                ),
+            ],
+        )
+    )
+
+    results.append(
+        _run_scenario(
             "stable_home",
             [
                 Turn(
@@ -303,7 +351,7 @@ def main() -> int:
             [
                 Turn(
                     "where am i now",
-                    _has("do not have"),
+                    _no_reviewed_memory_yet,
                     "no location before declare",
                 ),
                 Turn(
@@ -482,7 +530,7 @@ def main() -> int:
             [
                 Turn(
                     "who is my brother?",
-                    lambda r: "do not have" in r.lower() or "don't have" in r.lower(),
+                    _no_reviewed_memory_yet,
                     "honest unknown",
                 ),
             ],
@@ -495,9 +543,37 @@ def main() -> int:
             [
                 Turn("I am in City B", _has("current location"), "set session city"),
                 Turn(
+                    "whats the weather outside",
+                    lambda r: "city b" in r.lower() and _weather_ok(r),
+                    "weather outside resolves session city",
+                ),
+                Turn(
                     "whats the weather in the city im in now",
                     lambda r: "city b" in r.lower() and _weather_ok(r),
                     "weather resolves city b safely",
+                ),
+            ],
+        )
+    )
+
+    results.append(
+        _run_scenario(
+            "noisy_session_place",
+            [
+                Turn(
+                    "I am in my hometown which is City B for summer vacation",
+                    _has("current location"),
+                    "noisy declare accepted",
+                ),
+                Turn(
+                    "where am i now?",
+                    _all_of(_has("city b"), _lacks("hometown which")),
+                    "where now returns clean city label",
+                ),
+                Turn(
+                    "whats the weather outside",
+                    lambda r: "city b" in r.lower() and _weather_ok(r),
+                    "weather uses refined city",
                 ),
             ],
         )

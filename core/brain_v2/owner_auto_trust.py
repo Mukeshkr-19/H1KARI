@@ -75,7 +75,14 @@ def is_owner_scoped_auto_trust_candidate(
 def pick_trusted_owner_candidate(
     candidates: Sequence[MemoryCandidate], user_text: str
 ) -> Optional[MemoryCandidate]:
+    fallback: Optional[MemoryCandidate] = None
     for cand in candidates:
-        if is_owner_scoped_auto_trust_candidate(cand, user_text):
+        if not is_owner_scoped_auto_trust_candidate(cand, user_text):
+            continue
+        if cand.candidate_type == "identity" and (cand.metadata or {}).get(
+            "legal_name"
+        ):
             return cand
-    return None
+        if fallback is None:
+            fallback = cand
+    return fallback

@@ -74,6 +74,38 @@ def has_owner_presence_anchor(text: str) -> bool:
 _FIXTURE_PLACE = re.compile(r"^City\s+[A-Z]$", re.I)
 _FIXTURE_SCHOOL = re.compile(r"^School\s+[A-Z]$", re.I)
 
+_HOMETOWN_IS = re.compile(
+    r"\bhometown\s+(?:which\s+is|is|named)\s+(.+)$",
+    re.I,
+)
+_SEASONAL_SUFFIX = re.compile(
+    r"\s+for\s+(?:the\s+)?(?:summer|winter|spring|fall|break|holidays|vacation)\b.*$",
+    re.I,
+)
+_TRAILING_GARBAGE = re.compile(r"\s+now\s+that\b.*$", re.I)
+
+
+def _refine_place_label(place: str) -> str:
+    """Pull a real city label out of noisy presence phrases."""
+    cleaned = (place or "").strip().rstrip(".!? ")
+    if not cleaned:
+        return ""
+
+    m = _HOMETOWN_IS.search(cleaned)
+    if m:
+        cleaned = m.group(1).strip()
+
+    cleaned = _SEASONAL_SUFFIX.sub("", cleaned).strip()
+    cleaned = _TRAILING_GARBAGE.sub("", cleaned).strip()
+
+    if re.search(r"\bhometown\b", cleaned, re.I):
+        m_tail = re.search(r"\b(?:which\s+is|is|named)\s+([A-Za-z][\w\s'-]+)$", cleaned, re.I)
+        if m_tail:
+            cleaned = m_tail.group(1).strip()
+            cleaned = _SEASONAL_SUFFIX.sub("", cleaned).strip()
+
+    return cleaned.strip().rstrip(".!? ")
+
 
 def is_valid_place_name(place: str) -> bool:
     """Reject meta phrases and empty tokens masquerading as places."""
@@ -95,6 +127,7 @@ def is_valid_place_name(place: str) -> bool:
 
 
 def normalize_declared_place(place: str) -> Optional[str]:
-    if not is_valid_place_name(place):
+    refined = _refine_place_label(place)
+    if not is_valid_place_name(refined):
         return None
-    return place.strip().rstrip(".!? ")
+    return refined

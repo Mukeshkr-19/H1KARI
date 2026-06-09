@@ -508,6 +508,7 @@ class HIKARI_Orchestrator:
                     source,
                     metadata=task_meta,
                 )
+            self._record_task_intent(user_input)
             return self._reply_and_record_brain_v2_turn(
                 user_input,
                 self._task_action_no_memory_reply(user_input),
@@ -554,22 +555,37 @@ class HIKARI_Orchestrator:
                         source,
                         metadata={"skip_candidate_extraction": True},
                     )
+                identity_meta = inferred.metadata or {}
                 if inferred.candidate_type == "identity" and (
-                    inferred.metadata or {}
-                ).get("preferred_name"):
+                    identity_meta.get("preferred_name")
+                    or identity_meta.get("legal_name")
+                ):
                     outcome = self.brain_v2.ingest_trusted_owner_declaration(
                         self._brain_v2_session,
                         user_input,
                     )
                     if outcome.get("status") == "accepted":
-                        name = str(
-                            (inferred.metadata or {}).get("preferred_name", "")
+                        legal = str(identity_meta.get("legal_name", "")).strip()
+                        preferred = str(
+                            identity_meta.get("preferred_name", "")
                         ).strip()
-                        response = (
-                            f"Got it. I'll call you {name} and remember that in Brain v2."
-                            if name
-                            else "Got it. I will remember that in Brain v2."
-                        )
+                        if legal and preferred:
+                            response = (
+                                f"Got it. Your legal name is {legal} in Brain v2, "
+                                f"and I'll call you {preferred}."
+                            )
+                        elif legal:
+                            response = (
+                                f"Got it. I will remember your legal name as {legal} "
+                                "in Brain v2."
+                            )
+                        elif preferred:
+                            response = (
+                                f"Got it. I'll call you {preferred} and remember "
+                                "that in Brain v2."
+                            )
+                        else:
+                            response = "Got it. I will remember that in Brain v2."
                         return self._reply_and_record_brain_v2_turn(
                             user_input,
                             response,
@@ -687,6 +703,17 @@ class HIKARI_Orchestrator:
                     return response
 
         if not self.legacy_memory_enabled:
+            if self._brain_v2_authority_enabled() and self._is_casual_greeting(
+                lowered
+            ):
+                greeting = self.personality.get_greeting()
+                if guest and self.speaker.current_speaker:
+                    response = f"Hi {self.speaker.current_speaker}! How can I help?"
+                else:
+                    response = f"{greeting}! How can I help?"
+                return self._reply_and_record_brain_v2_turn(
+                    user_input, response, source
+                )
             if self._brain_v2_authority_enabled() and self._should_use_brain_v2_recall(
                 user_input
             ):
@@ -894,6 +921,19 @@ class HIKARI_Orchestrator:
             "Brain v2 memory."
         )
 
+    def _task_intent_service(self):
+        if not hasattr(self, "_task_intents"):
+            from core.tasks.service import TaskIntentService
+
+            self._task_intents = TaskIntentService()
+        return self._task_intents
+
+    def _record_task_intent(self, user_input: str) -> None:
+        try:
+            self._task_intent_service().record_intent(user_input)
+        except Exception as e:
+            debug(f"[TASK] Intent record failed: {e}")
+
     def _task_action_no_memory_reply(self, user_input: str) -> str:
         """Task-like phrasing is not durable memory; avoid pretending it was scheduled."""
         kind = classify_task_action_kind(user_input)
@@ -945,7 +985,11 @@ class HIKARI_Orchestrator:
 
         return BRAIN_V2_UNAVAILABLE_MESSAGE
 
-    def _brain_v2_no_reviewed_message(self) -> str:
+    def _brain_v2_no_reviewed_message(self, query: str = "") -> str:
+        from core.brain_v2.no_reviewed_reply import format_no_reviewed_memory_reply
+
+        if (query or "").strip():
+            return format_no_reviewed_memory_reply(query)
         from core.brain_v2.recall_intent import BRAIN_V2_NO_REVIEWED_MEMORY_MESSAGE
 
         return BRAIN_V2_NO_REVIEWED_MEMORY_MESSAGE
@@ -1006,8 +1050,8 @@ class HIKARI_Orchestrator:
             return self._brain_v2_unavailable_message()
         v2_answer = self._try_brain_v2_recall_answer(user_input)
         if not self._is_brain_v2_authoritative_personal_recall_answer(v2_answer):
-            return self._brain_v2_no_reviewed_message()
-        return v2_answer or self._brain_v2_no_reviewed_message()
+            return self._brain_v2_no_reviewed_message(user_input)
+        return v2_answer or self._brain_v2_no_reviewed_message(user_input)
 
     def _try_brain_v2_recall_answer(self, user_input: str) -> Optional[str]:
         if not self.brain_v2:
@@ -1264,24 +1308,28 @@ class HIKARI_Orchestrator:
         )
         return m.group("school").strip().title() if m else ""
 
+    def _is_casual_greeting(self, text: str) -> bool:
+        from core.brain_v2.recall_intent import is_casual_greeting
+
+        return is_casual_greeting(text)
+
     def _looks_like_smalltalk_name(self, text: str) -> bool:
-        return (text or "").strip().lower() in {
-            "hi",
-            "hello",
+        return self._is_casual_greeting(text) or (text or "").strip().lower() in {
             "yes",
             "yeah",
             "ok",
             "okay",
             "no",
             "bro",
-            "thanks",
         }
 
     def _get_ai_response(self, user_input: str, emotion: str = "neutral", emotion_score: float = 0.0) -> str:
         """Get AI response for general queries"""
         authority_on = self._brain_v2_authority_enabled()
         if authority_on and self._requires_brain_v2_personal_answer(user_input):
-            return self._brain_v2_personal_recall_answer(user_input) or self._brain_v2_no_reviewed_message()
+            return self._brain_v2_personal_recall_answer(user_input) or self._brain_v2_no_reviewed_message(
+                user_input
+            )
 
         # Build context (speaker-aware; avoid leaking primary-only prefs to guests)
         persona_ctx = self.personality.get_prompt_context(
