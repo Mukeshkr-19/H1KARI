@@ -162,8 +162,11 @@ npm run doctor:full
 bash scripts/doctor.sh --full
 ```
 
-Quick doctor checks repo layout, Git cleanliness, Python version, private brain paths,
-public Git privacy, duplicate tracked content, and frontend dependency presence.
+Quick doctor checks repo layout, Git cleanliness, Python version, optional private
+brain paths, public Git privacy, duplicate tracked content, and frontend dependency
+presence. A clean H1KARI clone may show warnings for optional private data, brain
+symlink, Brain v2 episode DB (before first chat), or `node_modules` until you set
+those up — that is expected.
 Full doctor additionally runs CLI help, text status, Python tests, frontend lint,
 and frontend build.
 

@@ -330,8 +330,46 @@ class TestDoctor(unittest.TestCase):
 
         self.assertIn("Python version", names)
         self.assertIn("Git status", names)
+        self.assertIn("Repo root", names)
         self.assertIn("Public Git privacy scan", names)
         self.assertIn("Tracked duplicate scan", names)
+
+    def test_doctor_clean_clone_private_folder_message(self):
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from core.doctor import _check_private_layout, _check_neural_memory_readonly
+
+        missing = Path("/tmp/h1kari-missing-private-for-test")
+        with patch("core.doctor.PRIVATE_ROOT", missing):
+            layout = _check_private_layout()
+            neural = _check_neural_memory_readonly()
+
+        self.assertFalse(missing.exists())
+        private = next(c for c in layout if c.name == "Private data folder")
+        self.assertEqual(private.status, "warn")
+        self.assertIn("optional", private.detail.lower())
+        self.assertIn("h1kari", private.detail.lower())
+        self.assertNotIn("Live brain DB", {c.name for c in layout})
+        self.assertEqual(neural.status, "ok")
+        self.assertIn("optional", neural.detail.lower())
+
+    def test_install_cli_script_uses_hikari_home(self):
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent.parent / "scripts" / "install-hikari-cli.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("HIKARI_HOME", text)
+        self.assertIn("REPO_ROOT", text)
+        self.assertIn("Darwin", text)
+
+    def test_install_sh_identifies_h1kari_repo(self):
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent.parent / "install.sh"
+        text = script.read_text(encoding="utf-8")
+        self.assertIn("H1KARI setup", text)
+        self.assertIn("hikari / Hikari", text)
 
 
 if __name__ == "__main__":

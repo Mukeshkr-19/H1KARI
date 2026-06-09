@@ -174,29 +174,48 @@ def _check_required_paths() -> list[Check]:
 
 def _check_private_layout() -> list[Check]:
     checks: list[Check] = []
+    private_ready = PRIVATE_ROOT.exists()
 
-    if PRIVATE_ROOT.exists():
-        checks.append(_ok("Private folder", str(PRIVATE_ROOT)))
+    if private_ready:
+        checks.append(_ok("Private data folder", str(PRIVATE_ROOT)))
     else:
-        checks.append(_warn("Private folder", f"Missing: {PRIVATE_ROOT}"))
+        checks.append(
+            _warn(
+                "Private data folder",
+                (
+                    f"Not found at {PRIVATE_ROOT} "
+                    f"(optional for a source-only H1KARI clone; add sibling "
+                    f"{HIKARI_PRIVATE}/ when you need a live neural brain)"
+                ),
+            )
+        )
 
     brain_link = Path.home() / ".hikari" / "brain"
     if brain_link.is_symlink():
         target = brain_link.resolve()
-        if target == EXPECTED_BRAIN_TARGET:
+        if private_ready and target == EXPECTED_BRAIN_TARGET:
             checks.append(_ok("Brain symlink", f"{brain_link} -> {target}"))
+        elif private_ready:
+            checks.append(
+                _warn(
+                    "Brain symlink",
+                    f"{brain_link} -> {target} (expected {EXPECTED_BRAIN_TARGET})",
+                )
+            )
         else:
-            checks.append(_warn("Brain symlink", f"{brain_link} points to {target}"))
+            checks.append(_ok("Brain symlink", f"{brain_link} -> {target}"))
     elif brain_link.exists():
         checks.append(_warn("Brain symlink", f"{brain_link} exists but is not a symlink"))
     else:
-        checks.append(_warn("Brain symlink", f"Missing: {brain_link}"))
+        checks.append(
+            _warn(
+                "Brain symlink",
+                f"Not configured ({brain_link}); optional until you link a live brain",
+            )
+        )
 
-    db_path = EXPECTED_BRAIN_TARGET / HIKARI_MEMORY_DB
-    if db_path.exists():
-        checks.append(_ok("Live brain DB", str(db_path)))
-    else:
-        checks.append(_warn("Live brain DB", f"Missing: {db_path}"))
+    if not private_ready:
+        return checks
 
     backup_script = PRIVATE_ROOT / "scripts" / "backup-hikari-brain.sh"
     if backup_script.exists() and os.access(backup_script, os.X_OK):
@@ -204,7 +223,12 @@ def _check_private_layout() -> list[Check]:
     elif backup_script.exists():
         checks.append(_warn("Brain backup script", f"Exists but is not executable: {backup_script}"))
     else:
-        checks.append(_warn("Brain backup script", f"Missing: {backup_script}"))
+        checks.append(
+            _warn(
+                "Brain backup script",
+                f"Not found at {backup_script} (add when private data folder is set up)",
+            )
+        )
 
     return checks
 
@@ -250,7 +274,10 @@ def _check_brain_v2_episode_store() -> Check:
     if not stats.get("db_exists"):
         return _warn(
             "Brain v2",
-            f"enabled; DB not created yet at {stats.get('db_path')}",
+            (
+                f"enabled; episode DB not created yet at {stats.get('db_path')} "
+                "(normal until first chat session or brain-v2 CLI)"
+            ),
         )
     return _ok(
         "Brain v2",
@@ -268,7 +295,15 @@ def _check_neural_memory_readonly() -> Check:
     """Read-only probe of the live brain DB (no writes)."""
     db_path = EXPECTED_BRAIN_TARGET / HIKARI_MEMORY_DB
     if not db_path.is_file():
-        return _warn("Neural memory DB", f"Missing: {db_path}")
+        if not PRIVATE_ROOT.exists():
+            return _ok(
+                "Neural memory DB",
+                "Not configured (optional until private live-brain is set up; Brain v2 still works)",
+            )
+        return _warn(
+            "Neural memory DB",
+            f"Not initialized yet at {db_path} (normal before first private brain setup)",
+        )
 
     try:
         import sqlite3
@@ -318,10 +353,16 @@ def _check_frontend_layout() -> list[Check]:
     return checks
 
 
+def _check_repo_root() -> Check:
+    name = REPO_ROOT.name
+    return _ok("Repo root", f"{REPO_ROOT} ({name})")
+
+
 def collect_checks(full: bool = False) -> list[Check]:
     checks: list[Check] = []
     checks.append(_check_python_version())
     checks.append(_check_git_status())
+    checks.append(_check_repo_root())
     checks.extend(_check_required_paths())
     checks.extend(_check_private_layout())
     checks.append(_check_neural_memory_readonly())

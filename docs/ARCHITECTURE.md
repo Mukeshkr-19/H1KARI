@@ -113,10 +113,11 @@ npm run build
 - `pytest tests -q` passes.
 - `hikari.py --help` and `hikari --help` work.
 - `hikari.py --doctor` and `hikari --doctor` work.
+- On a source-only H1KARI clone, doctor may warn about optional private data, Brain v2 episode DB, or frontend `node_modules`.
 - text mode status works.
 - server `/api/status` works.
-- frontend lint/build passes.
-- neural memory connects outside restricted sandbox.
+- frontend lint/build passes when dependencies are installed.
+- neural memory connects after private live-brain is configured.
 
 ## Important Caution
 
