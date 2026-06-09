@@ -388,9 +388,9 @@ class VoiceMemory:
         norm_avg = np.linalg.norm(normalized_avg)
 
         if norm_current == 0 or norm_avg == 0:
-            return 0.0
-
-        cosine_sim = dot_product / (norm_current * norm_avg)
+            cosine_sim = 0.0
+        else:
+            cosine_sim = dot_product / (norm_current * norm_avg)
 
         # Also compute Euclidean distance similarity
         euclidean_dist = np.linalg.norm(current_vector - avg_vector)

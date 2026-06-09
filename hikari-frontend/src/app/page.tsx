@@ -1,6 +1,18 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { VoiceCompanionOverlay, type CompanionCaption } from "@/components/VoiceCompanionOverlay";
+import { CompanionSettings } from "@/components/CompanionSettings";
+import {
+  type CompanionState,
+  type CompanionType,
+  type Presentation,
+} from "@/utils/companion/constants";
+import { loadCompanionPrefs, saveCompanionPrefs } from "@/utils/companion/storage";
+
+/** Off by default; set NEXT_PUBLIC_HIKARI_VOICE_COMPANION=1 at build time to enable overlay UI. */
+const VOICE_COMPANION_UI_ENABLED =
+  process.env.NEXT_PUBLIC_HIKARI_VOICE_COMPANION === "1";
 
 interface Message {
   id: string;
@@ -26,6 +38,8 @@ type BrowserSpeechRecognition = {
   onerror: (() => void) | null;
   onend: (() => void) | null;
   start: () => void;
+  stop?: () => void;
+  abort?: () => void;
 };
 
 type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
@@ -44,6 +58,24 @@ type SpeechRecognitionWindow = Window & {
   SpeechRecognition?: SpeechRecognitionConstructor;
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
+
+function terminateSpeechRecognition(recognition: BrowserSpeechRecognition): void {
+  if (typeof recognition.abort === "function") {
+    try {
+      recognition.abort();
+      return;
+    } catch {
+      // fall through to stop when abort fails
+    }
+  }
+  if (typeof recognition.stop === "function") {
+    try {
+      recognition.stop();
+    } catch {
+      // preserve generation invalidation even if termination throws
+    }
+  }
+}
 
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -64,8 +96,20 @@ export default function Home() {
   ]);
   const [serverUrl, setServerUrl] = useState("");
   const [orbState, setOrbState] = useState<"idle" | "listening" | "thinking" | "speaking">("idle");
+  const [companionState, setCompanionState] = useState<CompanionState>("hidden");
+  const [companionCaption, setCompanionCaption] = useState<CompanionCaption | null>(null);
+  const [companionType, setCompanionType] = useState<CompanionType>("cat");
+  const [presentation, setPresentation] = useState<Presentation>("non-binary");
+  const [voiceSessionActive, setVoiceSessionActive] = useState(false);
+  const [voiceTurnActive, setVoiceTurnActive] = useState(false);
+  const [recognitionCaptureActive, setRecognitionCaptureActive] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const voiceTurnActiveRef = useRef(false);
+  const voiceSessionActiveRef = useRef(false);
+  const voiceErrorResetRef = useRef<number | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const voiceCaptureGenerationRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +120,165 @@ export default function Home() {
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  useEffect(() => {
+    const prefs = loadCompanionPrefs();
+    setCompanionType(prefs.companionType);
+    setPresentation(prefs.presentation);
+  }, []);
+
+  const resetVoiceCompanion = useCallback(() => {
+    if (voiceErrorResetRef.current !== null) {
+      window.clearTimeout(voiceErrorResetRef.current);
+      voiceErrorResetRef.current = null;
+    }
+    voiceSessionActiveRef.current = false;
+    voiceTurnActiveRef.current = false;
+    setVoiceSessionActive(false);
+    setVoiceTurnActive(false);
+    setCompanionState("hidden");
+    setCompanionCaption(null);
+    setOrbState("idle");
+    setIsListening(false);
+    setIsTyping(false);
+  }, []);
+
+  const releaseRecognitionInstance = useCallback(
+    (recognition: BrowserSpeechRecognition | null) => {
+      if (recognition && recognitionRef.current === recognition) {
+        recognitionRef.current = null;
+        setRecognitionCaptureActive(false);
+      }
+    },
+    [],
+  );
+
+  const cancelVoiceCapture = useCallback(() => {
+    voiceCaptureGenerationRef.current += 1;
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    setRecognitionCaptureActive(false);
+    if (recognition) {
+      terminateSpeechRecognition(recognition);
+    }
+    resetVoiceCompanion();
+  }, [resetVoiceCompanion]);
+
+  const canStartMicrophoneCapture = useCallback((): boolean => {
+    if (!isConnected) {
+      return false;
+    }
+    if (voiceSessionActiveRef.current || voiceTurnActiveRef.current) {
+      return false;
+    }
+    if (recognitionRef.current !== null || isListening) {
+      return false;
+    }
+    return true;
+  }, [isConnected, isListening]);
+
+  const beginVoiceCapture = useCallback(() => {
+    if (voiceErrorResetRef.current !== null) {
+      window.clearTimeout(voiceErrorResetRef.current);
+      voiceErrorResetRef.current = null;
+    }
+    voiceSessionActiveRef.current = true;
+    voiceTurnActiveRef.current = false;
+    setVoiceSessionActive(true);
+    setVoiceTurnActive(false);
+    setCompanionCaption(null);
+    setCompanionState("listening");
+  }, []);
+
+  const submitVoiceRequest = useCallback(
+    (transcript: string, captureToken: number): boolean => {
+      if (
+        captureToken !== voiceCaptureGenerationRef.current ||
+        !voiceSessionActiveRef.current
+      ) {
+        return false;
+      }
+      const trimmed = transcript.trim();
+      if (!trimmed) {
+        cancelVoiceCapture();
+        return false;
+      }
+      const ws = wsRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        cancelVoiceCapture();
+        return false;
+      }
+      try {
+        ws.send(JSON.stringify({ type: "voice", text: trimmed }));
+      } catch {
+        cancelVoiceCapture();
+        return false;
+      }
+      addMessage(trimmed, "user");
+      voiceTurnActiveRef.current = true;
+      setVoiceTurnActive(true);
+      setIsTyping(true);
+      setOrbState("thinking");
+      return true;
+    },
+    [cancelVoiceCapture],
+  );
+
+  const syncCompanionPrefs = useCallback(
+    (type: CompanionType, pres: Presentation) => {
+      saveCompanionPrefs({ companionType: type, presentation: pres });
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(
+          JSON.stringify({
+            type: "companion_preferences",
+            companion_type: type,
+            presentation: pres,
+          }),
+        );
+      }
+    },
+    [],
+  );
+
+  const applyCompanionUpdate = useCallback((companion: Record<string, unknown>) => {
+    const prefs = companion.preferences as
+      | { companion_type?: string; presentation?: string }
+      | undefined;
+    if (prefs?.companion_type === "cat" || prefs?.companion_type === "dog" || prefs?.companion_type === "bird") {
+      setCompanionType(prefs.companion_type);
+    }
+    if (
+      prefs?.presentation === "male" ||
+      prefs?.presentation === "female" ||
+      prefs?.presentation === "non-binary"
+    ) {
+      setPresentation(prefs.presentation);
+    }
+
+    if (!voiceSessionActiveRef.current) {
+      return;
+    }
+
+    const state = companion.state as CompanionState | undefined;
+    if (state === "idle" || state === "hidden") {
+      resetVoiceCompanion();
+      return;
+    }
+    if (state) setCompanionState(state);
+    const cap = companion.caption as CompanionCaption | undefined;
+    if (state === "listening") {
+      setCompanionCaption(null);
+    } else if (cap?.text) {
+      setCompanionCaption(cap);
+    }
+    if (state === "listening") {
+      setOrbState("listening");
+    } else if (state === "thinking") {
+      setOrbState("thinking");
+    } else if (state === "speaking") {
+      setOrbState("speaking");
+    }
+  }, [resetVoiceCompanion]);
 
   const connect = useCallback(() => {
     if (!serverUrl) return;
@@ -98,23 +301,35 @@ export default function Home() {
       const data = JSON.parse(event.data);
       if (data.type === "paired") {
         setIsPaired(true);
+        if (VOICE_COMPANION_UI_ENABLED) {
+          resetVoiceCompanion();
+          const prefs = loadCompanionPrefs();
+          syncCompanionPrefs(prefs.companionType, prefs.presentation);
+        }
         addMessage("Connected to HIKARI! Ask me anything.", "ai");
+      } else if (data.type === "companion_update" && data.companion) {
+        applyCompanionUpdate(data.companion as Record<string, unknown>);
       } else if (data.type === "response") {
         setIsTyping(false);
-        setOrbState("speaking");
         addMessage(data.text, "ai");
-        setTimeout(() => setOrbState("idle"), 2000);
+        if (voiceTurnActiveRef.current || voiceSessionActiveRef.current) {
+          voiceTurnActiveRef.current = false;
+          setVoiceTurnActive(false);
+        } else {
+          setOrbState("idle");
+        }
       } else if (data.type === "pair_error") {
         alert("Invalid pairing code");
       }
     };
 
     ws.onclose = () => {
+      cancelVoiceCapture();
       setIsConnected(false);
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -131,6 +346,7 @@ export default function Home() {
   const sendMessage = () => {
     if (!input.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
+    cancelVoiceCapture();
     addMessage(input, "user");
     wsRef.current.send(JSON.stringify({ type: "message", text: input }));
     setIsTyping(true);
@@ -139,6 +355,63 @@ export default function Home() {
   };
 
   const startListening = () => {
+    if (!VOICE_COMPANION_UI_ENABLED) {
+      const speechWindow = window as SpeechRecognitionWindow;
+      const SpeechRecognition =
+        speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+      if (!SpeechRecognition) {
+        alert("Speech recognition not supported in this browser");
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onstart = () => {
+        setIsListening(true);
+        setOrbState("listening");
+      };
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+        setIsListening(false);
+        setOrbState("idle");
+
+        if (transcript.trim()) {
+          setTimeout(() => {
+            setInput(transcript);
+            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+              addMessage(transcript, "user");
+              wsRef.current.send(JSON.stringify({ type: "message", text: transcript }));
+              setIsTyping(true);
+              setOrbState("thinking");
+            }
+          }, 100);
+        }
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+        setOrbState("idle");
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+        setOrbState("idle");
+      };
+
+      recognition.start();
+      return;
+    }
+
+    if (!canStartMicrophoneCapture()) {
+      return;
+    }
+
     const speechWindow = window as SpeechRecognitionWindow;
     const SpeechRecognition =
       speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
@@ -149,44 +422,73 @@ export default function Home() {
     }
 
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    setRecognitionCaptureActive(true);
+    voiceCaptureGenerationRef.current += 1;
+    const captureToken = voiceCaptureGenerationRef.current;
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = "en-US";
 
     recognition.onstart = () => {
+      if (captureToken !== voiceCaptureGenerationRef.current) {
+        return;
+      }
       setIsListening(true);
       setOrbState("listening");
-    };
-
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setInput(transcript);
-      setIsListening(false);
-      setOrbState("idle");
-
-      // Auto-send
-      if (transcript.trim()) {
-        setTimeout(() => {
-          setInput(transcript);
-          // We need to send after state update
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            addMessage(transcript, "user");
-            wsRef.current.send(JSON.stringify({ type: "message", text: transcript }));
-            setIsTyping(true);
-            setOrbState("thinking");
-          }
-        }, 100);
+      beginVoiceCapture();
+      if (wsRef.current?.readyState === WebSocket.OPEN) {
+        try {
+          wsRef.current.send(JSON.stringify({ type: "voice", listening: true }));
+        } catch {
+          cancelVoiceCapture();
+        }
       }
     };
 
-    recognition.onerror = () => {
+    recognition.onresult = (event) => {
+      if (captureToken !== voiceCaptureGenerationRef.current) {
+        return;
+      }
+      const transcript = event.results[0][0].transcript;
+      setInput(transcript);
       setIsListening(false);
-      setOrbState("idle");
+      submitVoiceRequest(transcript, captureToken);
+    };
+
+    recognition.onerror = () => {
+      if (captureToken !== voiceCaptureGenerationRef.current) {
+        return;
+      }
+      setIsListening(false);
+      releaseRecognitionInstance(recognition);
+      if (voiceSessionActiveRef.current) {
+        setOrbState("idle");
+        setCompanionState("error");
+        setCompanionCaption({
+          role: "system",
+          text: "Voice input error",
+          is_final: true,
+          timestamp: new Date().toISOString(),
+        });
+        voiceErrorResetRef.current = window.setTimeout(() => {
+          cancelVoiceCapture();
+          voiceErrorResetRef.current = null;
+        }, 1500);
+      } else {
+        setOrbState("idle");
+      }
     };
 
     recognition.onend = () => {
+      if (captureToken !== voiceCaptureGenerationRef.current) {
+        return;
+      }
       setIsListening(false);
-      setOrbState("idle");
+      releaseRecognitionInstance(recognition);
+      if (!voiceTurnActiveRef.current && voiceSessionActiveRef.current) {
+        cancelVoiceCapture();
+      }
     };
 
     recognition.start();
@@ -217,6 +519,14 @@ export default function Home() {
         return "pulse-idle 3s ease-in-out infinite";
     }
   };
+
+  const microphoneDisabled = VOICE_COMPANION_UI_ENABLED
+    ? !isConnected ||
+      voiceSessionActive ||
+      voiceTurnActive ||
+      recognitionCaptureActive ||
+      isListening
+    : !isConnected || isListening;
 
   if (!isPaired) {
     return (
@@ -292,10 +602,14 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <button
             onClick={startListening}
+            disabled={microphoneDisabled}
+            aria-disabled={microphoneDisabled}
             className={`p-2.5 rounded-full transition-all ${
               isListening
                 ? "bg-red-500/20 text-red-400 animate-pulse"
-                : "bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700"
+                : microphoneDisabled
+                  ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
+                  : "bg-gray-800 text-gray-400 hover:text-white hover:bg-gray-700"
             }`}
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -442,6 +756,17 @@ export default function Home() {
         {activeTab === "settings" && (
           <div className="p-4 space-y-4 overflow-y-auto h-full">
             <h2 className="text-xl font-bold mb-4">Settings</h2>
+            {VOICE_COMPANION_UI_ENABLED && (
+              <CompanionSettings
+                companionType={companionType}
+                presentation={presentation}
+                onChange={(type, pres) => {
+                  setCompanionType(type);
+                  setPresentation(pres);
+                }}
+                onSyncServer={syncCompanionPrefs}
+              />
+            )}
             <div className="space-y-3">
               <div className="p-4 bg-[#1a1a2e] border border-gray-800 rounded-xl">
                 <p className="font-medium mb-1">Server</p>
@@ -469,6 +794,20 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <VoiceCompanionOverlay
+        visible={
+          VOICE_COMPANION_UI_ENABLED &&
+          isPaired &&
+          voiceSessionActive &&
+          companionState !== "hidden" &&
+          companionState !== "idle"
+        }
+        state={companionState}
+        companionType={companionType}
+        presentation={presentation}
+        caption={companionCaption}
+      />
 
       {/* Bottom Navigation */}
       <nav className="flex border-t border-gray-800 bg-[#0a0a0f]/90 backdrop-blur-xl">

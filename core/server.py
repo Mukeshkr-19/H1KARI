@@ -15,6 +15,10 @@ from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
 
+from core.voice_companion.bridge import VoiceCompanionBridge, VOICE_PROCESSING_ERROR_MESSAGE
+from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
+from core.voice_companion.status import is_voice_companion_enabled
+
 try:
     import websockets
     from websockets.server import serve
@@ -46,6 +50,10 @@ class WebSocketServer:
         self._running = False
         self._loop = None
         self.pairing_code = self._generate_pairing_code()
+        self._companion_bridges: Dict[str, VoiceCompanionBridge] = {}
+
+    def _voice_companion_enabled(self) -> bool:
+        return is_voice_companion_enabled()
 
     def _generate_pairing_code(self) -> str:
         """Generate a 6-digit pairing code"""
@@ -114,6 +122,8 @@ class WebSocketServer:
         }
 
         print(f"[WS] Client connected ({len(self.connected_clients)} total)")
+        if self._voice_companion_enabled():
+            self._companion_for(websocket)
 
         try:
             async for message in websocket:
@@ -122,7 +132,37 @@ class WebSocketServer:
             print(f"[WS] Client error: {e}")
         finally:
             self.connected_clients.discard(websocket)
+            self._companion_bridges.pop(str(id(websocket)), None)
             print(f"[WS] Client disconnected ({len(self.connected_clients)} total)")
+
+    def _companion_for(self, websocket) -> VoiceCompanionBridge:
+        key = str(id(websocket))
+        if key not in self._companion_bridges:
+
+            async def send_companion(payload: Dict[str, Any]) -> None:
+                await websocket.send(json.dumps(payload))
+
+            bridge = VoiceCompanionBridge()
+            bridge.set_async_send(send_companion)
+            self._companion_bridges[key] = bridge
+        return self._companion_bridges[key]
+
+    async def _handle_voice_turn(self, websocket, user_input: str) -> str:
+        """Voice-only companion lifecycle with awaited, ordered companion_update events."""
+        bridge = self._companion_for(websocket)
+        try:
+            full_text = await bridge.run_voice_turn_async(
+                user_input,
+                lambda: self.orchestrator.process_input(user_input, source="voice_remote"),
+            )
+        except Exception:
+            await bridge.emit_voice_processing_failure_async()
+            safe_text = VOICE_PROCESSING_ERROR_MESSAGE
+            await websocket.send(json.dumps({"type": "response", "text": safe_text}))
+            return safe_text
+        await websocket.send(json.dumps({"type": "response", "text": full_text}))
+        await bridge.finish_voice_turn_async()
+        return full_text
 
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
@@ -181,21 +221,59 @@ class WebSocketServer:
                     )
 
             elif msg_type == "voice":
-                # Handle voice data from device
-                audio_data = data.get("audio", "")
                 text = data.get("text", "")
                 if text:
-                    response = self.orchestrator.process_input(
-                        text, source="voice_remote"
-                    )
+                    if self._voice_companion_enabled():
+                        await self._handle_voice_turn(websocket, text)
+                    else:
+                        response = self.orchestrator.process_input(
+                            text, source="voice_remote"
+                        )
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "response",
+                                    "text": response or "",
+                                }
+                            )
+                        )
+                elif data.get("listening") and self._voice_companion_enabled():
+                    await self._companion_for(websocket).on_voice_listening_async()
+
+            elif msg_type == WS_EVENT_COMPANION_PREFERENCES:
+                if not self._voice_companion_enabled():
                     await websocket.send(
                         json.dumps(
                             {
-                                "type": "response",
-                                "text": response or "",
+                                "type": "companion_preferences_error",
+                                "message": "Voice companion is disabled on this server.",
                             }
                         )
                     )
+                else:
+                    bridge = self._companion_for(websocket)
+                    try:
+                        bridge.apply_preferences(
+                            str(data.get("companion_type", "")),
+                            str(data.get("presentation", "")),
+                        )
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "companion_preferences_ack",
+                                    "preferences": bridge.preferences.to_dict(),
+                                }
+                            )
+                        )
+                    except ValueError as exc:
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "companion_preferences_error",
+                                    "message": str(exc),
+                                }
+                            )
+                        )
 
             elif msg_type == "status":
                 status = self.orchestrator._get_status_report()
