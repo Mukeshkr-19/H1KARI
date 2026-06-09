@@ -357,6 +357,27 @@ def main():
         help="Show correction/supersession history for an accepted memory id.",
     )
     parser.add_argument(
+        "--brain-v2-repair-show",
+        metavar="MEMORY_ID",
+        help="Read-only detail for an accepted memory (statement, evidence, audit).",
+    )
+    parser.add_argument(
+        "--repair-preview",
+        action="store_true",
+        help=(
+            "With --brain-v2-retire, --brain-v2-supersede, or --brain-v2-edit-metadata: "
+            "show what would change without writing."
+        ),
+    )
+    parser.add_argument(
+        "--confirm-repair",
+        metavar="TOKEN",
+        help=(
+            "Required on the live Brain v2 DB for repair apply: RETIRE, SUPERSEDE, or EDIT "
+            "(exact, case-sensitive). Back up the private brain directory first."
+        ),
+    )
+    parser.add_argument(
         "--brain-v2-reconcile-status",
         action="store_true",
         help="Read-only reconciliation report (redacted statements by default).",
@@ -416,6 +437,24 @@ def main():
             )
             raise SystemExit(1)
 
+    _repair_apply_flags = (
+        args.brain_v2_retire,
+        args.brain_v2_supersede,
+        args.brain_v2_edit_metadata,
+    )
+    if args.confirm_repair is not None and not any(_repair_apply_flags):
+        parser.error(
+            "--confirm-repair requires --brain-v2-retire, --brain-v2-supersede, "
+            "or --brain-v2-edit-metadata"
+        )
+    if args.repair_preview and not any(_repair_apply_flags):
+        parser.error(
+            "--repair-preview requires --brain-v2-retire, --brain-v2-supersede, "
+            "or --brain-v2-edit-metadata"
+        )
+    if args.repair_preview and args.confirm_repair:
+        parser.error("--repair-preview cannot be combined with --confirm-repair")
+
     if args.verbose:
         os.environ["HIKARI_VERBOSE"] = "1"
         os.environ["HIKARI_QUIET"] = "0"
@@ -474,6 +513,7 @@ def main():
         args.brain_v2_supersede,
         args.brain_v2_edit_metadata,
         args.brain_v2_memory_history,
+        args.brain_v2_repair_show,
         args.brain_v2_reconcile_status,
         args.brain_v2_repair_plan,
         args.brain_v2_live_qa_checklist,
@@ -482,6 +522,7 @@ def main():
         from core.brain_v2.cli import (
             run_brain_v2_cli,
             run_brain_v2_cli_edit_metadata,
+            run_brain_v2_cli_retire,
             run_brain_v2_cli_supersede,
         )
 
@@ -513,8 +554,16 @@ def main():
             raise SystemExit(run_brain_v2_cli("consolidate"))
         if args.brain_v2_retag_accepted:
             raise SystemExit(run_brain_v2_cli("retag_accepted"))
+        if args.brain_v2_repair_show:
+            raise SystemExit(run_brain_v2_cli("repair_show", args.brain_v2_repair_show))
         if args.brain_v2_retire:
-            raise SystemExit(run_brain_v2_cli("retire", args.brain_v2_retire))
+            raise SystemExit(
+                run_brain_v2_cli_retire(
+                    args.brain_v2_retire,
+                    preview=args.repair_preview,
+                    confirm_repair=args.confirm_repair,
+                )
+            )
         if args.brain_v2_supersede:
             if not args.brain_v2_statement:
                 parser.error("--brain-v2-supersede requires --brain-v2-statement")
@@ -523,6 +572,8 @@ def main():
                     args.brain_v2_supersede,
                     args.brain_v2_statement,
                     candidate_type=args.brain_v2_memory_type,
+                    preview=args.repair_preview,
+                    confirm_repair=args.confirm_repair,
                 )
             )
         if args.brain_v2_edit_metadata:
@@ -530,6 +581,8 @@ def main():
                 run_brain_v2_cli_edit_metadata(
                     args.brain_v2_edit_metadata,
                     candidate_type=args.brain_v2_memory_type,
+                    preview=args.repair_preview,
+                    confirm_repair=args.confirm_repair,
                 )
             )
         if args.brain_v2_memory_history:

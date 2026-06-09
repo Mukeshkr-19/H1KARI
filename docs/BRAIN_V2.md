@@ -108,9 +108,10 @@ Rejected patterns include: assistant filler (“okay”, “got it”), vague st
 .venv/bin/python hikari.py --brain-v2-reject <candidate_id>
 .venv/bin/python hikari.py --brain-v2-memories
 .venv/bin/python hikari.py --brain-v2-retag-accepted   # optional metadata refresh
-.venv/bin/python hikari.py --brain-v2-retire <memory_id>
-.venv/bin/python hikari.py --brain-v2-supersede <memory_id> --brain-v2-statement "<corrected statement>"
-.venv/bin/python hikari.py --brain-v2-edit-metadata <memory_id> [--brain-v2-memory-type <type>]
+.venv/bin/python hikari.py --brain-v2-repair-show <memory_id>
+.venv/bin/python hikari.py --brain-v2-retire <memory_id> [--repair-preview] [--confirm-repair RETIRE]
+.venv/bin/python hikari.py --brain-v2-supersede <memory_id> --brain-v2-statement "<corrected>" [--repair-preview] [--confirm-repair SUPERSEDE]
+.venv/bin/python hikari.py --brain-v2-edit-metadata <memory_id> [--brain-v2-memory-type <type>] [--repair-preview] [--confirm-repair EDIT]
 .venv/bin/python hikari.py --brain-v2-memory-history <memory_id>
 .venv/bin/python hikari.py --brain-v2-reconcile-status
 .venv/bin/python hikari.py --brain-v2-repair-plan
@@ -127,10 +128,15 @@ Reviewed memories use metadata lifecycle status (`active`, `retired`, `supersede
 
 | Command | Effect |
 |---------|--------|
+| `--brain-v2-repair-show` | Read-only detail: statement, evidence segments, audit tail |
 | `--brain-v2-retire` | Marks memory retired; excluded from current recall; audit preserved |
-| `--brain-v2-supersede` | Retires old row, creates new active replacement linked to original evidence |
+| `--brain-v2-supersede` | Supersedes old row; new active replacement with operator provenance |
 | `--brain-v2-edit-metadata` | Safe metadata/type edits only (statement unchanged) |
-| `--brain-v2-memory-history` | Shows supersession chain and audit entries |
+| `--brain-v2-memory-history` | Shows supersession chain and recent audit entries |
+| `--repair-preview` | With retire/supersede/edit: print planned change only (no write) |
+| `--confirm-repair` | On live DB: `RETIRE`, `SUPERSEDE`, or `EDIT` (exact tokens; backup first) |
+
+See `docs/MEMORY_REPAIR.md` for the full owner-safe repair workflow.
 
 Retired and superseded memories are not returned as current semantic truth. Pending/rejected candidates remain non-truth.
 
@@ -164,7 +170,7 @@ Normal chat and orchestrator runtime use `allow_neural_conflict_reads=False`, so
 1. Backup the private brain directory (operator script outside this repo).
 2. Run redacted commands: `--brain-v2-readiness`, `--brain-v2-reconcile-status`, `--brain-v2-repair-plan`, `--brain-v2-conflicts`.
 3. Privately review any guarded queue IDs with `--brain-v2-pending` / `--brain-v2-show` — **PRIVATE LOCAL OUTPUT - DO NOT COMMIT OR SHARE**. Clear direct owner self-disclosures (such as identity, stable location, education, and preferences) are accepted into Brain v2 automatically when they do not conflict with existing reviewed truth.
-4. Accept or reject guarded candidates; use `--brain-v2-retire` / `--brain-v2-supersede` on conflicting Brain v2 memories only after review.
+4. Accept or reject guarded candidates; preview then apply `--brain-v2-retire` / `--brain-v2-supersede` with backup + `--confirm-repair` on the live DB.
 5. Repair apply is not available in this release; optional private cleanup uses read-only plan output only.
 6. Re-run `--brain-v2-readiness` until `READY` before declaring Brain phase complete.
 

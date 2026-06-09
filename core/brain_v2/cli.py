@@ -414,13 +414,68 @@ def cmd_memories() -> int:
     return 0
 
 
-def cmd_retire(memory_id: str) -> int:
-    coord = _coordinator_readonly(write=True)
+def _load_accepted_memory(memory_id: str):
+    coord = _coordinator_readonly(write=False)
+    resolved = coord.store.resolve_source_linked_memory_id(memory_id)
+    memory = coord.store.get_source_linked_memory(resolved)
+    if not memory:
+        raise KeyError(memory_id)
+    return coord, memory
+
+
+def _guard_repair_apply(action: str, *, confirm_repair: Optional[str]) -> Optional[int]:
+    from core.brain_v2.repair_safety import validate_repair_confirmation
+
+    err = validate_repair_confirmation(action, confirm_repair)
+    if err:
+        print(err, file=sys.stderr)
+        return 1
+    return None
+
+
+def cmd_repair_show(memory_id: str) -> int:
     try:
-        retired = coord.retire_accepted_memory(memory_id)
+        coord, memory = _load_accepted_memory(memory_id)
     except KeyError:
         print(f"Accepted memory not found: {memory_id}", file=sys.stderr)
         return 1
+    from core.brain_v2.repair_preview import format_accepted_memory_detail
+
+    print("Accepted memory detail (read-only):")
+    for line in format_accepted_memory_detail(coord, memory):
+        print(line)
+    return 0
+
+
+def cmd_retire(
+    memory_id: str,
+    *,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
+) -> int:
+    try:
+        _coord, memory = _load_accepted_memory(memory_id)
+    except KeyError:
+        print(f"Accepted memory not found: {memory_id}", file=sys.stderr)
+        return 1
+
+    from core.brain_v2.repair_preview import preview_retire
+    from core.brain_v2.repair_safety import repair_confirmation_required
+
+    if preview:
+        for line in preview_retire(
+            memory, live_warning=repair_confirmation_required()
+        ):
+            print(line)
+        return 0
+
+    blocked = _guard_repair_apply("retire", confirm_repair=confirm_repair)
+    if blocked is not None:
+        return blocked
+
+    coord = _coordinator_readonly(write=True)
+    try:
+        retired = coord.retire_accepted_memory(memory.memory_id)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -428,15 +483,42 @@ def cmd_retire(memory_id: str) -> int:
     return 0
 
 
-def cmd_supersede(memory_id: str, statement: str, *, candidate_type: Optional[str] = None) -> int:
-    coord = _coordinator_readonly(write=True)
+def cmd_supersede(
+    memory_id: str,
+    statement: str,
+    *,
+    candidate_type: Optional[str] = None,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
+) -> int:
     try:
-        old, new = coord.supersede_accepted_memory(
-            memory_id, statement=statement, candidate_type=candidate_type
-        )
+        _coord, memory = _load_accepted_memory(memory_id)
     except KeyError:
         print(f"Accepted memory not found: {memory_id}", file=sys.stderr)
         return 1
+
+    from core.brain_v2.repair_preview import preview_supersede
+    from core.brain_v2.repair_safety import repair_confirmation_required
+
+    if preview:
+        for line in preview_supersede(
+            memory,
+            statement=statement,
+            candidate_type=candidate_type,
+            live_warning=repair_confirmation_required(),
+        ):
+            print(line)
+        return 0
+
+    blocked = _guard_repair_apply("supersede", confirm_repair=confirm_repair)
+    if blocked is not None:
+        return blocked
+
+    coord = _coordinator_readonly(write=True)
+    try:
+        old, new = coord.supersede_accepted_memory(
+            memory.memory_id, statement=statement, candidate_type=candidate_type
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -448,15 +530,43 @@ def cmd_edit_metadata(
     memory_id: str,
     *,
     candidate_type: Optional[str] = None,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
 ) -> int:
-    coord = _coordinator_readonly(write=True)
     try:
-        updated = coord.edit_accepted_memory_metadata(
-            memory_id, candidate_type=candidate_type
-        )
+        _coord, memory = _load_accepted_memory(memory_id)
     except KeyError:
         print(f"Accepted memory not found: {memory_id}", file=sys.stderr)
         return 1
+
+    from core.brain_v2.repair_preview import preview_edit_metadata
+    from core.brain_v2.repair_safety import repair_confirmation_required
+
+    if preview:
+        for line in preview_edit_metadata(
+            memory,
+            candidate_type=candidate_type,
+            live_warning=repair_confirmation_required(),
+        ):
+            print(line)
+        return 0
+
+    if candidate_type is None:
+        print(
+            "No metadata change requested. Pass --brain-v2-memory-type <type> or use --repair-preview.",
+            file=sys.stderr,
+        )
+        return 1
+
+    blocked = _guard_repair_apply("edit_metadata", confirm_repair=confirm_repair)
+    if blocked is not None:
+        return blocked
+
+    coord = _coordinator_readonly(write=True)
+    try:
+        updated = coord.edit_accepted_memory_metadata(
+            memory.memory_id, candidate_type=candidate_type
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -489,6 +599,13 @@ def cmd_memory_history(memory_id: str) -> int:
         pred = (mem.metadata or {}).get("predecessor_evidence_segment_ids")
         if pred:
             print(f"    predecessor_evidence_segment_ids: {len(pred)} (history only)")
+        audit = (mem.metadata or {}).get("correction_audit") or []
+        if audit:
+            last = audit[-1]
+            print(
+                f"    last_audit: {last.get('action')} at {last.get('at')} "
+                f"reason={last.get('reason', 'n/a')}"
+            )
     return 0
 
 
@@ -523,7 +640,12 @@ def cmd_live_qa_checklist() -> int:
         "       --brain-v2-pending, --brain-v2-memories, --brain-v2-show, --brain-v2-memory-history",
         "  6. hikari.py --brain-v2-eval               (synthetic fixtures only)",
         "  7. Re-run --brain-v2-status; confirm counts unchanged unless you accepted/reviewed",
-        "  8. Brain v2 corrections: --brain-v2-retire / --brain-v2-supersede (owner approval on live DB)",
+        "  8. Brain v2 corrections (preview first, backup, then confirm):",
+        "       --brain-v2-repair-show <id>",
+        "       --brain-v2-retire <id> --repair-preview",
+        "       --brain-v2-retire <id> --confirm-repair RETIRE",
+        "       --brain-v2-supersede <id> --brain-v2-statement \"...\" --repair-preview",
+        "       --brain-v2-supersede <id> --brain-v2-statement \"...\" --confirm-repair SUPERSEDE",
         "  9. Neural promotion still requires --confirm-promote PROMOTE exactly",
         " 10. Legacy personal recall is quarantined; copy-only repair is optional migration only",
     ]
@@ -583,6 +705,11 @@ def run_brain_v2_cli(
             print("--brain-v2-reject requires <candidate_id>", file=sys.stderr)
             return 1
         return cmd_reject(arg)
+    if action == "repair_show":
+        if not arg:
+            print("--brain-v2-repair-show requires <accepted_memory_id>", file=sys.stderr)
+            return 1
+        return cmd_repair_show(arg)
     if action == "retire":
         if not arg:
             print("--brain-v2-retire requires <accepted_memory_id>", file=sys.stderr)
@@ -613,18 +740,44 @@ def run_brain_v2_cli(
     return 1
 
 
+def run_brain_v2_cli_retire(
+    memory_id: str,
+    *,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
+) -> int:
+    return cmd_retire(
+        memory_id, preview=preview, confirm_repair=confirm_repair
+    )
+
+
 def run_brain_v2_cli_supersede(
     memory_id: str,
     statement: str,
     *,
     candidate_type: Optional[str] = None,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
 ) -> int:
-    return cmd_supersede(memory_id, statement, candidate_type=candidate_type)
+    return cmd_supersede(
+        memory_id,
+        statement,
+        candidate_type=candidate_type,
+        preview=preview,
+        confirm_repair=confirm_repair,
+    )
 
 
 def run_brain_v2_cli_edit_metadata(
     memory_id: str,
     *,
     candidate_type: Optional[str] = None,
+    preview: bool = False,
+    confirm_repair: Optional[str] = None,
 ) -> int:
-    return cmd_edit_metadata(memory_id, candidate_type=candidate_type)
+    return cmd_edit_metadata(
+        memory_id,
+        candidate_type=candidate_type,
+        preview=preview,
+        confirm_repair=confirm_repair,
+    )
