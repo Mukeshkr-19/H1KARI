@@ -55,8 +55,9 @@ git diff --check
 
 ## Known non-blocking test noise
 
-Pytest may print `httpx` / `LiteLLM` `close.complete` debug lines during teardown.
-`tests/conftest.py` lowers those log levels. This does not affect production runtime.
+Pytest currently reports dependency deprecation warnings from the voice/browser stack
+(`aifc`, `audioop`, and `websockets.legacy`). These do not affect the Brain v2 or
+task-boundary gates, but they should be handled before a Python 3.13 runtime move.
 
 ## Definition of done
 

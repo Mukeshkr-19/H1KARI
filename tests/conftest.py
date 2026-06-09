@@ -26,7 +26,9 @@ import logging
 import pytest
 
 # Reduce noisy httpx/litellm teardown logs during pytest (non-blocking for CI).
+logging.raiseExceptions = False
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 

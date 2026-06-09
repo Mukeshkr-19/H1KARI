@@ -1,10 +1,15 @@
 """Data models for Hikari Neural Memory."""
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, Any
 import json
+
+
+def _utc_now_iso() -> str:
+    """Return the legacy naive UTC ISO shape without using deprecated utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 class NodeType(str, Enum):
@@ -83,7 +88,7 @@ class MemoryNode:
     is_pinned: bool = False
 
     def __post_init__(self):
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         if self.last_accessed is None:
             self.last_accessed = now
         if self.created_at is None:
@@ -94,7 +99,7 @@ class MemoryNode:
             self.metadata = {}
 
     def touch(self):
-        self.last_accessed = datetime.utcnow().isoformat()
+        self.last_accessed = _utc_now_iso()
         self.activation_count += 1
 
     def boost_salience(self, amount: float = 0.1):
@@ -158,7 +163,7 @@ class MemoryEdge:
     is_archived: bool = False
 
     def __post_init__(self):
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         if self.last_accessed is None:
             self.last_accessed = now
         if self.created_at is None:
@@ -221,7 +226,7 @@ class Episode:
     is_archived: bool = False
 
     def __post_init__(self):
-        now = datetime.utcnow().isoformat()
+        now = _utc_now_iso()
         if self.started_at is None:
             self.started_at = now
         if self.nodes is None:
@@ -284,7 +289,7 @@ class Session:
 
     def __post_init__(self):
         if self.started_at is None:
-            self.started_at = datetime.utcnow().isoformat()
+            self.started_at = _utc_now_iso()
         if self.metadata is None:
             self.metadata = {}
 

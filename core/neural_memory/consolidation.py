@@ -1,7 +1,7 @@
 """Multi-level consolidation for Hikari Neural Memory."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from .storage import storage
@@ -10,6 +10,11 @@ from .models import Episode, NodeType
 from .sqlite_rows import row_as_dict
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return legacy naive UTC datetime without deprecated utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class ConsolidationEngine:
@@ -112,7 +117,7 @@ class ConsolidationEngine:
 
     def full_consolidation(self, force: bool = False):
         """Daily: Merge duplicates, resolve contradictions, archive stale."""
-        now = datetime.utcnow()
+        now = _utc_now()
 
         if not force and self.last_daily:
             if now - self.last_daily < self.daily_interval:
@@ -135,7 +140,7 @@ class ConsolidationEngine:
 
             self.storage.vacuum()
 
-            result["completed_at"] = datetime.utcnow().isoformat()
+            result["completed_at"] = _utc_now().isoformat()
             logger.info(f"Full consolidation completed: {result}")
             return result
 
@@ -155,7 +160,7 @@ class ConsolidationEngine:
 
         if (
             self.last_daily is None
-            or datetime.utcnow() - self.last_daily >= self.daily_interval
+            or _utc_now() - self.last_daily >= self.daily_interval
         ):
             daily_result = self.full_consolidation()
             if daily_result["status"] == "completed":

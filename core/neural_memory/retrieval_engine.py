@@ -2,13 +2,18 @@
 
 import logging
 from typing import List, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .storage import storage
 from .models import MemoryNode, MemoryEdge, Episode, ContextPacket, NodeType, EdgeType
 from .config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _utc_now() -> datetime:
+    """Return legacy naive UTC datetime without deprecated utcnow()."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 FAMILY_QUERY_WORDS = frozenset(
     {
@@ -192,7 +197,7 @@ class RetrievalEngine:
         edges = []
 
         recent = self.storage.get_recent_nodes(user_id, limit=20)
-        recent_cutoff = datetime.utcnow() - timedelta(hours=24)
+        recent_cutoff = _utc_now() - timedelta(hours=24)
 
         for node in recent:
             if node.last_accessed:
