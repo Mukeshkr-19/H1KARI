@@ -15,7 +15,7 @@ from core.brain_v2.recall_intent import (
 from core.brain_v2.retrieval import BrainV2Retrieval
 from core.brain_v2.schemas import MemoryCandidateStatus
 from core.brain_v2.working_memory import WorkingMemory
-from tests.test_brain_v2_write_authority import _minimal_orchestrator
+from tests.test_brain_v2_write_authority import _minimal_orchestrator, _teach_long_term
 from tests.test_brain_memory import FakeNeural
 from core.brain import HikariBrain
 
@@ -38,7 +38,7 @@ def test_session_location_before_general_memory_firewall(episode_db):
     retrieval = BrainV2Retrieval(episode_db, working)
     answer = retrieval.answer_from_accepted("where am I?")
     assert answer
-    assert "recent session context" in answer.lower()
+    assert "for this session" in answer.lower()
     assert "city b" in answer.lower()
 
 
@@ -69,10 +69,11 @@ def test_owner_legal_and_preferred_name_stored_separately(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input(
-        "My real name is Owner A but I told you to call me Person B."
+    reply = _teach_long_term(
+        orch,
+        "My real name is Owner A but I told you to call me Person B.",
     )
-    assert "legal name" in reply.lower() or "brain v2" in reply.lower()
+    assert "legal name" in reply.lower() or "brain v2" in reply.lower() or "saved" in reply.lower()
 
     legal = coord.retrieval.answer_from_accepted("what is my real name?")
     casual = coord.retrieval.answer_from_accepted("what is my name?")
@@ -108,6 +109,17 @@ def test_owner_degree_statement_auto_accepted(episode_db):
     assert "computer science" in answer.lower()
 
 
+def test_owner_graduation_statement_auto_accepted(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    outcome = coord.ingest_trusted_owner_declaration(
+        "sess-grad",
+        "I am a rising senior and I will be graduating in May 2027.",
+    )
+    assert outcome["status"] == "accepted"
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    assert any("graduat" in m.statement.lower() for m in accepted)
+
+
 def test_partner_education_stays_review_gated(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
@@ -124,7 +136,7 @@ def test_where_am_i_after_i_am_in_city(episode_db):
 
     orch.process_input("I am in City B.")
     answer = orch.process_input("where am I?")
-    assert "recent session context" in answer.lower()
+    assert "for this session" in answer.lower()
     assert "city b" in answer.lower()
 
 

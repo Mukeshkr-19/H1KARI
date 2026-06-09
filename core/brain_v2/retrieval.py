@@ -284,6 +284,12 @@ class BrainV2Retrieval:
 
     def answer_from_accepted(self, query: str) -> Optional[str]:
         """Direct answer from accepted source-linked memories only."""
+        session_fact = self.working.answer_from_session_facts(query)
+        if session_fact:
+            from core.brain_v2.natural_replies import format_reviewed_memory_recall
+
+            return format_reviewed_memory_recall(session_fact)
+
         intent = classify_recall_intent(query)
         if intent == INTENT_PROFILE_SUMMARY:
             summary = self.build_profile_summary_context(query, limit=8)
@@ -350,9 +356,11 @@ class BrainV2Retrieval:
         if top.score < _SEMANTIC_MIN_SCORE:
             return self._no_reviewed_memory_reply(intent, query)
 
-        prefix = "Yes. " if intent == INTENT_FAMILY_PERSON and "know" in query.lower() else ""
+        from core.brain_v2.natural_replies import format_reviewed_memory_recall
+
+        prefix_yes = intent == INTENT_FAMILY_PERSON and "know" in query.lower()
         body = self._statement_from_hit(top)
-        return f"{prefix}From reviewed memory: {body}"
+        return format_reviewed_memory_recall(body, prefix_yes=prefix_yes)
 
     def best_stable_home_place(self) -> Optional[str]:
         """Best-effort stable home city label from accepted memories."""
@@ -452,7 +460,9 @@ class BrainV2Retrieval:
             parts.append(stmt)
         if not parts:
             return None
-        return "From reviewed memory: " + ". ".join(parts) + "."
+        from core.brain_v2.natural_replies import format_reviewed_memory_recall
+
+        return format_reviewed_memory_recall(". ".join(parts))
 
     @staticmethod
     def _is_legal_name_query(query: str) -> bool:
@@ -562,7 +572,9 @@ class BrainV2Retrieval:
         place = (place or "").strip()
         if not place:
             return None
-        return f"From recent session context: you're in {place}."
+        from core.brain_v2.natural_replies import format_session_location_recall
+
+        return format_session_location_recall(place)
 
     def _filter_semantic_hits_by_location_kind(
         self,

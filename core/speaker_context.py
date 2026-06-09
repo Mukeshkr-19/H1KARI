@@ -4,11 +4,44 @@ from __future__ import annotations
 
 import os
 import re
+from dataclasses import dataclass
 from typing import Any, Optional
 
 _UNSET_PRIMARY = object()
 
-_NAME_TOKEN = r"[A-Z][a-z]+(?:\s+[A-Z][a-z]*)?"
+_NAME_TOKEN = r"[A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)*"
+
+_BLOCKED_NAME_SUFFIX = frozenset(
+    {
+        "talking",
+        "here",
+        "again",
+        "back",
+        "just",
+        "testing",
+        "visiting",
+        "calling",
+        "speaking",
+    }
+)
+
+_OWNER_RELATION_RE = re.compile(
+    r"\b(?:i\s+am|i'm)\s+(?:your\s+)?(?:owner'?s?|household\s+owner'?s?)\s+"
+    r"(sister|brother|mother|father|son|daughter|wife|husband|parent|cousin)\b",
+    re.I,
+)
+
+_GUEST_VISIT_RECALL = re.compile(
+    r"\b(?:did|has|have)\s+(?:my\s+)?(?:(sister|brother|mother|father|mom|dad|"
+    r"wife|husband|partner|guest)\s+)?(?:talk|spoke|spoken|chat)\w*\s+"
+    r"(?:to\s+)?(?:you|u)\b",
+    re.I,
+)
+_GUEST_WHO_VISITED = re.compile(
+    r"\b(?:who\s+(?:talked|spoke|visited|was\s+here|came\s+by)|"
+    r"did\s+anyone\s+(?:talk|speak|visit)|any\s+guests?)\b",
+    re.I,
+)
 
 _SELF_INTRO_RE = re.compile(
     rf"(?:^|\.\s*|\b)(?:i am|i'm|my name is)\s+({_NAME_TOKEN})\b",
@@ -27,12 +60,18 @@ _CALL_ME_NAME_RE = re.compile(
 
 _SESSION_SPEAKER_PATTERNS = (
     re.compile(
-        rf"\b(?:i\s+am|i'm)\s+({_NAME_TOKEN})\s+talking\s+to\s+you\s+now\b",
+        rf"\b(?:i\s+am|i'm)\s+({_NAME_TOKEN})\s+talking\s+to\s+you(?:\s+now)?\b",
         re.I,
     ),
     re.compile(rf"\bthis\s+is\s+({_NAME_TOKEN})\b", re.I),
     re.compile(rf"\b({_NAME_TOKEN})\s+here\b", re.I),
 )
+
+
+@dataclass
+class GuestVisitRecord:
+    guest_name: str
+    relation: Optional[str] = None
 
 _SPEAKER_RESET_CLEAR = (
     re.compile(r"\bi'?m\s+just\s+testing\b", re.I),
@@ -119,6 +158,26 @@ def is_speaker_context_reset(text: str) -> bool:
     return False
 
 
+def is_guest_visit_recall_question(text: str) -> bool:
+    """Owner asking whether a guest spoke with HIKARI recently."""
+    if not (text or "").strip():
+        return False
+    q = text.strip()
+    if _GUEST_WHO_VISITED.search(q):
+        return True
+    return bool(_GUEST_VISIT_RECALL.search(q))
+
+
+def extract_guest_visit_relation_asked(text: str) -> Optional[str]:
+    m = _GUEST_VISIT_RECALL.search(text or "")
+    if not m or not m.group(1):
+        return None
+    rel = m.group(1).lower()
+    if rel in ("mom", "dad"):
+        return "mother" if rel == "mom" else "father"
+    return rel
+
+
 def is_guest_scoped_personal_question(text: str) -> bool:
     """Personal/family questions that must not use the household owner's memory."""
     if not (text or "").strip():
@@ -166,6 +225,8 @@ class SpeakerContext:
         self.last_was_session_intro: bool = False
         self.session_speaker_mode: bool = False
         self._speaker_reset_pending: bool = False
+        self._active_guest_relation: Optional[str] = None
+        self.last_guest_visit: Optional[GuestVisitRecord] = None
 
     def consume_speaker_reset(self) -> bool:
         """True once after a phrase reset cleared or restored the active speaker."""
@@ -194,9 +255,11 @@ class SpeakerContext:
         self.current_speaker = None
         self.last_was_session_intro = False
         self.session_speaker_mode = False
+        self._active_guest_relation = None
         self._clear_contact_context()
 
     def reset_to_primary(self) -> None:
+        self.finalize_guest_visit()
         if self.primary_user:
             self.current_speaker = self.primary_user
         else:
@@ -206,18 +269,45 @@ class SpeakerContext:
         self._clear_contact_context()
 
     def _normalize_name(self, name: str) -> Optional[str]:
-        n = (name or "").strip().title()
-        if not n or len(n) < 2 or n.lower() in CASUAL_NAMES:
+        parts = [p for p in (name or "").strip().split() if p]
+        while parts and parts[-1].lower() in _BLOCKED_NAME_SUFFIX:
+            parts.pop()
+        if not parts:
             return None
-        if n.split()[0].lower() in _NON_NAME_SELF_INTRO_PREFIXES:
+        n = " ".join(piece.title() for piece in parts)
+        if len(n) < 2 or n.lower() in CASUAL_NAMES:
+            return None
+        if parts[0].lower() in _NON_NAME_SELF_INTRO_PREFIXES:
             return None
         return n
+
+    def note_guest_relation_from_input(self, text: str) -> None:
+        """Capture guest-only relation hints (not stored in owner Brain v2)."""
+        if not self.is_guest_speaker():
+            return
+        m = _OWNER_RELATION_RE.search(text or "")
+        if m:
+            self._active_guest_relation = m.group(1).lower()
+
+    def finalize_guest_visit(self) -> None:
+        """Remember the last guest for owner recall after returning from guest mode."""
+        if (
+            self.current_speaker
+            and self.primary_user
+            and self.current_speaker.lower() != self.primary_user.lower()
+        ):
+            self.last_guest_visit = GuestVisitRecord(
+                guest_name=self.current_speaker,
+                relation=self._active_guest_relation,
+            )
+        self._active_guest_relation = None
 
     def _apply_reset(self, text: str) -> bool:
         if not text:
             return False
         for pat in _SPEAKER_RESET_CLEAR:
             if pat.search(text):
+                self.finalize_guest_visit()
                 self.clear_current_speaker()
                 self._speaker_reset_pending = True
                 return True

@@ -352,7 +352,9 @@ class TestDoctor(unittest.TestCase):
         from core.doctor import _check_private_layout, _check_neural_memory_readonly
 
         missing = Path("/tmp/h1kari-missing-private-for-test")
-        with patch("core.doctor.PRIVATE_ROOT", missing):
+        with patch("core.doctor.PRIVATE_ROOT", missing), patch(
+            "core.doctor.EXPECTED_BRAIN_TARGET", missing / "live-brain"
+        ):
             layout = _check_private_layout()
             neural = _check_neural_memory_readonly()
 

@@ -106,13 +106,15 @@ def _case_stable_vs_current(
     live = retrieval.answer_from_accepted("where do I live?")
     if not live or CITY_A.lower() not in live.lower():
         return False
-    if "reviewed memory" not in live.lower():
+    from core.brain_v2.recall_intent import is_positive_brain_v2_recall_answer
+
+    if not is_positive_brain_v2_recall_answer(live):
         return False
 
     now = retrieval.answer_from_accepted("where am I now?")
     if not now or CITY_B.lower() not in now.lower():
         return False
-    if "recent session context" not in now.lower():
+    if "for this session" not in now.lower():
         return False
     if CITY_A.lower() in now.lower():
         return False
@@ -154,8 +156,10 @@ def _case_plan_recall(store: EpisodeStore, _coord: BrainV2Coordinator) -> bool:
         "what are my plans for Sunday?",
         "where am I meeting Jamie?",
     ):
+        from core.brain_v2.recall_intent import is_positive_brain_v2_recall_answer
+
         reply = retrieval.answer_from_accepted(query)
-        if not reply or "reviewed memory" not in reply.lower():
+        if not reply or not is_positive_brain_v2_recall_answer(reply):
             return False
         low = reply.lower()
         if RESTAURANT_A.lower() not in low and JAMIE.lower() not in low:
@@ -165,8 +169,10 @@ def _case_plan_recall(store: EpisodeStore, _coord: BrainV2Coordinator) -> bool:
 
 def _case_education_recall(store: EpisodeStore, _coord: BrainV2Coordinator) -> bool:
     _accept_turn(store, f"Remember this: {EDU_STATEMENT}.", "edu-ep")
+    from core.brain_v2.recall_intent import is_positive_brain_v2_recall_answer
+
     reply = isolated_retrieval(store).answer_from_accepted("what does Jamie study?")
-    if not reply or "reviewed memory" not in reply.lower():
+    if not reply or not is_positive_brain_v2_recall_answer(reply):
         return False
     low = reply.lower()
     return SCHOOL_A.lower() in low or "medical" in low
@@ -252,8 +258,10 @@ def _case_pending_rejected_not_truth(
     if not accepted_any:
         return False
 
+    from core.brain_v2.recall_intent import is_positive_brain_v2_recall_answer
+
     reply = isolated_retrieval(store).answer_from_accepted("where does my mom live?")
-    if not reply or "reviewed memory" not in reply.lower():
+    if not reply or not is_positive_brain_v2_recall_answer(reply):
         return False
     low = reply.lower()
     if "rejected" in low or "dad" in low:
@@ -262,7 +270,7 @@ def _case_pending_rejected_not_truth(
         return False
 
     dad_reply = isolated_retrieval(store).answer_from_accepted("where does my dad live?")
-    if dad_reply and "reviewed memory" in dad_reply.lower():
+    if dad_reply and is_positive_brain_v2_recall_answer(dad_reply):
         if "rejected" in dad_reply.lower() or "dad" in dad_reply.lower():
             return False
 

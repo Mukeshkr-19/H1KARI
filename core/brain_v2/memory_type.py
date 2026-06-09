@@ -115,6 +115,12 @@ def infer_memory_type(
         meta["normalized_statement"] = stmt
         return MemoryTypeInference("education", 0.86, meta)
 
+    grad = _extract_graduation_metadata(text, low)
+    if grad:
+        meta.update(grad)
+        meta["normalized_statement"] = text.strip().rstrip(".") + "."
+        return MemoryTypeInference("education", 0.84, meta)
+
     rel = _extract_relation_metadata(text, low)
     if rel:
         meta.update(rel)
@@ -324,6 +330,29 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
             for name in extract_person_names(text):
                 meta["person"] = name
                 break
+    return meta
+
+
+def _extract_graduation_metadata(text: str, low: str) -> Optional[Dict[str, object]]:
+    """Owner graduation / class-standing facts (not third-party education)."""
+    if re.search(
+        r"\bmy\s+(?:girlfriend|gf|partner|boyfriend|wife|husband|"
+        r"sister|brother|dad|father|mom|mother)\b",
+        low,
+    ):
+        return None
+    if not re.search(r"\b(?:graduat(?:e|ing|ion)|rising\s+senior|senior\s+year)\b", low):
+        return None
+    meta: Dict[str, object] = {"education_kind": "graduation"}
+    date_m = re.search(
+        rf"\b(?:in\s+)?(?:{_MONTH_PATTERN})\s+(\d{{4}})\b",
+        text,
+        re.I,
+    )
+    if date_m:
+        meta["graduation_date"] = f"{date_m.group(0).strip().title()}"
+    if re.search(r"\brising\s+senior\b", low):
+        meta["class_standing"] = "rising senior"
     return meta
 
 

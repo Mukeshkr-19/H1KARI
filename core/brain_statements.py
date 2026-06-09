@@ -60,6 +60,13 @@ def is_declarative_memory_statement(text: str) -> bool:
     raw = (text or "").strip().lower()
     if not raw or _looks_like_question_text(raw):
         return False
+    try:
+        from core.speaker_context import is_temporary_speaker_intro
+
+        if is_temporary_speaker_intro(text):
+            return False
+    except ImportError:
+        pass
     if is_task_or_action_statement(raw):
         return False
     try:

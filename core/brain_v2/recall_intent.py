@@ -146,21 +146,36 @@ def should_skip_external_research(query: str) -> bool:
 
 def is_positive_brain_v2_recall_answer(text: Optional[str]) -> bool:
     """True when Brain v2 returned a reviewed memory answer (not a missing-memory fallback)."""
-    if not (text or "").strip():
+    if is_brain_v2_no_reviewed_memory_answer(text):
         return False
-    low = text.lower()
+    low = (text or "").lower()
     if (
-        "don't have a reviewed memory" in low
-        or "do not have a reviewed memory" in low
-        or "don't have reviewed brain v2" in low
-    ):
-        return False
-    return (
         "from reviewed memory" in low
         or "from reviewed brain v2 memories" in low
         or "from recent session context" in low
-        or bool(re.search(r"\byour\s+(?:real\s+|legal\s+|official\s+)?name\s+is\b", low))
-    )
+        or bool(
+            re.search(
+                r"\b(?:my|your)\s+(?:real\s+|legal\s+|official\s+)?name\s+is\b",
+                low,
+            )
+        )
+        or bool(re.search(r"\b(?:legal|real|official)\s+name\s+is\b", low))
+        or bool(re.search(r"\byou(?:'re| are)\s+in\s+.+\s+for\s+this\s+session\b", low))
+        or bool(re.search(r"\bi\s+call\s+you\s+\w+", low))
+        or bool(re.search(r"\byes\s+-\s+.+\s+visited\s+as\s+a\s+guest\b", low))
+    ):
+        return True
+    if low.startswith("yes."):
+        return True
+    if re.search(
+        r"\b(?:live in|study|studies|bachelors?|degree|major|prefer|graduat|"
+        r"rising senior|meet|meeting|will be|"
+        r"works?|worked|medical student|girlfriend|boyfriend|my sister|my brother|"
+        r"my dad|my mom)\b",
+        low,
+    ):
+        return True
+    return False
 
 
 def is_brain_v2_conflict_review_answer(text: Optional[str]) -> bool:

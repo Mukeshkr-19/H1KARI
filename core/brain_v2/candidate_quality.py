@@ -95,9 +95,13 @@ _DURABLE_PATTERNS = (
     re.compile(r"\b(?:return\s+)?flights?\b", re.I),
     re.compile(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+\d{1,2}\b", re.I),
     re.compile(r"\bis\s+my\s+(sister|brother|dad|mom|gf|girlfriend|partner)\b", re.I),
+    re.compile(
+        r"\b(?:graduat(?:e|ing|ion)|rising\s+senior|senior\s+year)\b",
+        re.I,
+    ),
 )
 
-# Case-sensitive capitalized tokens only (no re.I — avoids matching every English word).
+# Case-sensitive capitalized tokens only (no re.I - avoids matching every English word).
 _CAPITALIZED_WORD = re.compile(r"\b[A-Z][a-z]{2,}\b")
 
 # Sentence-initial / function words that are capitalized in English but not entities.

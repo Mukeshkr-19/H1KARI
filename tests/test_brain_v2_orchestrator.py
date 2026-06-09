@@ -71,9 +71,11 @@ def test_build_memory_first_context_without_brain_v2(monkeypatch):
 
 def test_is_positive_brain_v2_recall_answer():
     assert is_positive_brain_v2_recall_answer("From reviewed memory: I live in City A.")
+    assert is_positive_brain_v2_recall_answer("I live in City A.")
     assert is_positive_brain_v2_recall_answer(
         "From recent session context: Right now I'm in City B for summer holidays."
     )
+    assert is_positive_brain_v2_recall_answer("You're in City B for this session.")
     assert not is_positive_brain_v2_recall_answer(
         "I don't have a reviewed memory for that yet."
     )
@@ -193,6 +195,7 @@ def _minimal_orchestrator(brain_v2: BrainV2Coordinator, brain: HikariBrain, *, s
     orch._record_brain_v2_turn = MagicMock(
         side_effect=_record_turn
     )
+    orch._pending_memory_choice = None
     return orch
 
 
@@ -277,7 +280,7 @@ def test_orchestrator_production_chat_returns_no_reviewed_not_conflict_review(
     reply = orch.process_input("where am I right now?")
     assert reply
     assert reply != CONFLICT_REVIEW_NEEDED_MESSAGE
-    assert "reviewed memory" in reply.lower()
+    assert "have a reviewed memory" in reply.lower()
     stale_brain.answer.assert_not_called()
 
 
@@ -292,7 +295,7 @@ def test_personal_recall_no_reviewed_memory_quarantines_neural_home(episode_db):
     orch = _minimal_orchestrator(coord, stale_brain)
 
     reply = orch.process_input("where do I live?")
-    assert "reviewed memory" in reply.lower()
+    assert "have a reviewed memory" in reply.lower()
     assert "city b" not in reply.lower()
     stale_brain.answer.assert_not_called()
 
@@ -311,12 +314,12 @@ def test_personal_recall_quarantines_stale_neural_family_and_education(episode_d
     orch = _minimal_orchestrator(coord, stale_brain)
 
     family = orch.process_input("who is my brother?")
-    assert "reviewed memory" in family.lower()
+    assert "have a reviewed memory" in family.lower()
     assert "person c" not in family.lower()
     assert "school b" not in family.lower()
 
     education = orch.process_input("where did I go to school?")
-    assert "reviewed memory" in education.lower()
+    assert "have a reviewed memory" in education.lower()
     assert "school b" not in education.lower()
     assert stale_brain.answer.call_count == 0
 
@@ -470,7 +473,7 @@ def test_guest_speaker_intro_does_not_update_owner_name(episode_db):
     orch.personality.user_prefs = {"name": "Owner A"}
 
     reply = orch.process_input("I am Guest B talking to you now")
-    assert "temporary guest session" in reply.lower()
+    assert "guest mode" in reply.lower()
     orch.personality.learn_from_interaction.assert_not_called()
     assert orch.speaker.current_speaker == "Guest B"
     assert orch.personality.user_prefs["name"] == "Owner A"
@@ -666,7 +669,7 @@ def test_owner_current_location_then_where_am_i_now(episode_db):
     after = orch.process_input("where am I now?")
     assert after
     assert "city b" in after.lower()
-    assert "recent session context" in after.lower()
+    assert "for this session" in after.lower()
 
 
 def test_what_do_you_remember_returns_profile_not_random_semantic_hit(episode_db):
@@ -707,7 +710,7 @@ def test_owner_current_location_restored_after_guest_reset(episode_db):
     orch.process_input("back to owner")
     owner_reply = orch.process_input("where am I now?")
     assert "city b" in (owner_reply or "").lower()
-    assert "recent session context" in (owner_reply or "").lower()
+    assert "for this session" in (owner_reply or "").lower()
 
 
 def test_guest_general_chat_does_not_inject_owner_brain_v2_context(episode_db):
@@ -740,7 +743,7 @@ def test_guest_intro_gets_deterministic_no_owner_memory_reply(episode_db):
     assert reply
     low = reply.lower()
     assert "guest b" in low
-    assert "temporary guest session" in low
+    assert "guest mode" in low
     assert "owner" in low
     orch.router.generate.assert_not_called()
 

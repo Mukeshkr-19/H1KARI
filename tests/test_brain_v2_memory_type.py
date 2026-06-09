@@ -15,6 +15,7 @@ from core.brain_v2.recall_intent import (
     INTENT_LOCATION,
     INTENT_PLAN,
     classify_recall_intent,
+    is_positive_brain_v2_recall_answer,
     memory_person_names,
     requested_person_names,
 )
@@ -274,17 +275,17 @@ def test_both_memories_choose_correct_answer(episode_db):
     retrieval = BrainV2Retrieval(episode_db)
 
     study = retrieval.answer_from_accepted("what does Jamie study?")
-    assert study and "reviewed memory" in study.lower()
+    assert study and is_positive_brain_v2_recall_answer(study)
     assert "river medical" in study.lower() or "medical" in study.lower()
     assert "restaurant" not in study.lower()
 
     meeting = retrieval.answer_from_accepted("where am I meeting Jamie?")
-    assert meeting and "reviewed memory" in meeting.lower()
+    assert meeting and is_positive_brain_v2_recall_answer(meeting)
     assert "restaurant" in meeting.lower()
     assert "river medical" not in meeting.lower()
 
     plans = retrieval.answer_from_accepted("what are my plans for Sunday?")
-    assert plans and "reviewed memory" in plans.lower()
+    assert plans and is_positive_brain_v2_recall_answer(plans)
     assert "restaurant" in plans.lower() or "sunday" in plans.lower()
     assert "river medical" not in plans.lower()
 
@@ -298,13 +299,12 @@ def test_plan_memory_answers_plan_queries(episode_db):
     retrieval = BrainV2Retrieval(episode_db)
     sunday = retrieval.answer_from_accepted("what are my plans for Sunday?")
     assert sunday
-    assert "reviewed memory" in sunday.lower()
-    assert "don't have a reviewed memory" not in sunday.lower()
+    assert is_positive_brain_v2_recall_answer(sunday)
     assert "restaurant" in sunday.lower() or "jamie" in sunday.lower()
 
     reply = retrieval.answer_from_accepted("what are my plans for Sunday May 24?")
     assert reply
-    assert "reviewed memory" in reply.lower()
+    assert is_positive_brain_v2_recall_answer(reply)
     assert "restaurant" in reply.lower() or "jamie" in reply.lower()
 
     where = retrieval.answer_from_accepted("where am I meeting Jamie?")
@@ -320,7 +320,7 @@ def test_education_memory_answers_study_query(episode_db):
     )
     reply = BrainV2Retrieval(episode_db).answer_from_accepted("what does Jamie study?")
     assert reply
-    assert "reviewed memory" in reply.lower()
+    assert is_positive_brain_v2_recall_answer(reply)
     assert "medical" in reply.lower() or "river medical" in reply.lower()
 
 
@@ -447,7 +447,7 @@ def test_stable_location_answers_where_live_not_where_now(episode_db):
 
     live = retrieval.answer_from_accepted("where do I live?")
     assert live and "city a" in live.lower()
-    assert "reviewed memory" in live.lower()
+    assert is_positive_brain_v2_recall_answer(live)
 
     now = retrieval.answer_from_accepted("where am I now?")
     assert now
@@ -462,7 +462,7 @@ def test_session_current_location_answers_where_now(episode_db):
 
     reply = retrieval.answer_from_accepted("where am I now?")
     assert reply
-    assert "recent session context" in reply.lower()
+    assert "for this session" in reply.lower()
     assert "city b" in reply.lower()
     assert "you're in" in reply.lower()
     assert "summer holidays" not in reply.lower()

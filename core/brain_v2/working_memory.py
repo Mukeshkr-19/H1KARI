@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional
@@ -24,6 +25,7 @@ class WorkingMemory:
         self.speaker_context: Dict[str, str] = {}
         self.current_location: Optional[str] = None
         self.current_location_statement: Optional[str] = None
+        self._session_facts: Deque[WorkingMemoryItem] = deque(maxlen=24)
 
     def clear(self) -> None:
         """Drop session turns and speaker context (e.g. after guest session ends)."""
@@ -33,6 +35,7 @@ class WorkingMemory:
         self.speaker_context = {}
         self.current_location = None
         self.current_location_statement = None
+        self._session_facts.clear()
 
     def set_session(self, session_id: str) -> None:
         self.clear()
@@ -78,6 +81,51 @@ class WorkingMemory:
             return None
         stmt = self.current_location_statement or f"I'm in {self.current_location}."
         return self.current_location, stmt
+
+    def note_session_fact(self, statement: str, **meta: Any) -> None:
+        stmt = (statement or "").strip()
+        if not stmt:
+            return
+        self._session_facts.append(
+            WorkingMemoryItem(
+                key="session_fact",
+                value=stmt,
+                kind="session_fact",
+                metadata=dict(meta),
+            )
+        )
+
+    def session_facts(self) -> List[str]:
+        return [item.value for item in self._session_facts if item.value]
+
+    def answer_from_session_facts(self, query: str) -> Optional[str]:
+        """Best-effort recall from session-only facts (not durable Brain v2)."""
+        q = (query or "").lower()
+        if not q or not self._session_facts:
+            return None
+        for item in reversed(self._session_facts):
+            stmt = item.value
+            low = stmt.lower()
+            if not stmt:
+                continue
+            if "study" in q or "major" in q or "degree" in q:
+                if any(w in low for w in ("study", "student", "bachelor", "major", "graduat")):
+                    return stmt.rstrip(".") + "."
+            if "live" in q or "home" in q:
+                if "live in" in low:
+                    return stmt.rstrip(".") + "."
+            if "name" in q and ("my name" in low or "call me" in low or "legal name" in low):
+                return stmt.rstrip(".") + "."
+            if "graduat" in q and "graduat" in low:
+                return stmt.rstrip(".") + "."
+        latest = self._session_facts[-1].value if self._session_facts else ""
+        if latest and any(
+            token in latest.lower()
+            for token in re.findall(r"[a-z]{4,}", q)
+            if token not in {"what", "does", "know", "about", "tell", "that", "this", "have"}
+        ):
+            return latest.rstrip(".") + "."
+        return None
 
     def recent_items(self, limit: int = 8) -> List[WorkingMemoryItem]:
         return list(self._items)[-limit:]

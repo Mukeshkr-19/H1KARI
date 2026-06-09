@@ -17,7 +17,7 @@ from core.brain_v2.memory_type import infer_memory_type
 from core.brain_v2.session_context import register_session_place_provider
 from core.brain_statements import is_declarative_memory_statement
 from tests.test_brain_memory import FakeNeural
-from tests.test_brain_v2_write_authority import _minimal_orchestrator
+from tests.test_brain_v2_write_authority import _minimal_orchestrator, _teach_long_term
 from core.brain import HikariBrain
 
 
@@ -101,9 +101,8 @@ def test_call_me_identity_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("you can call me Person C")
-    assert "brain v2" in reply.lower() or "call you" in reply.lower()
-    assert "okay" not in reply.lower() or "remember" in reply.lower()
+    reply = _teach_long_term(orch, "you can call me Person C")
+    assert "brain v2" in reply.lower() or "call you" in reply.lower() or "saved" in reply.lower()
 
 
 def test_weather_resolves_session_city(episode_db):

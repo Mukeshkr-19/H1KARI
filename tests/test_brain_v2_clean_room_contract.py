@@ -19,7 +19,7 @@ from core.brain_v2.session_context import register_session_place_provider
 from core.brain_v2.working_memory import WorkingMemory
 from core.brain import HikariBrain
 from tests.test_brain_memory import FakeNeural
-from tests.test_brain_v2_write_authority import _minimal_orchestrator
+from tests.test_brain_v2_write_authority import _minimal_orchestrator, _teach_long_term
 
 
 @pytest.fixture
@@ -213,8 +213,8 @@ def test_person_c_is_my_sister_auto_accept_and_recall(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("Person C is my sister")
-    assert "brain v2" in reply.lower() or "remember" in reply.lower()
+    reply = _teach_long_term(orch, "Person C is my sister")
+    assert "brain v2" in reply.lower() or "saved" in reply.lower()
 
     answer = orch.process_input("who is my sister?")
     assert "person c" in answer.lower()
@@ -224,8 +224,8 @@ def test_bare_my_name_is_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("My name is Owner A.")
-    assert "brain v2" in reply.lower()
+    reply = _teach_long_term(orch, "My name is Owner A.")
+    assert "brain v2" in reply.lower() or "saved" in reply.lower()
     answer = orch.process_input("what is my name?")
     assert "owner a" in answer.lower()
 
@@ -234,8 +234,8 @@ def test_bare_preference_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("I prefer Topic A.")
-    assert "brain v2" in reply.lower()
+    reply = _teach_long_term(orch, "I prefer Topic A.")
+    assert "brain v2" in reply.lower() or "saved" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic a" in profile.lower()
 
@@ -244,8 +244,8 @@ def test_bare_dislike_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("I don't like Topic B.")
-    assert "brain v2" in reply.lower()
+    reply = _teach_long_term(orch, "I don't like Topic B.")
+    assert "brain v2" in reply.lower() or "saved" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic b" in profile.lower()
 
@@ -254,8 +254,8 @@ def test_bare_education_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("I study at School A.")
-    assert "brain v2" in reply.lower()
+    reply = _teach_long_term(orch, "I study at School A.")
+    assert "brain v2" in reply.lower() or "saved" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "school a" in profile.lower()
 
@@ -270,7 +270,7 @@ def test_guest_restore_owner_session_location(episode_db):
     assert "city b" not in guest_where.lower()
 
     reset = orch.process_input("back to owner")
-    assert "owner mode" in reset.lower()
+    assert "back to you" in reset.lower()
     owner_where = orch.process_input("where am I now?")
     assert "city b" in owner_where.lower()
 

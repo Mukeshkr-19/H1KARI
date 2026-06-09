@@ -54,8 +54,25 @@ if TYPE_CHECKING:
 from core.speaker_context import (
     get_speaker_context,
     is_guest_scoped_personal_question,
+    is_guest_visit_recall_question,
     is_temporary_speaker_intro,
 )
+from core.brain_v2.memory_save_prompt import (
+    PendingMemoryChoice,
+    format_memory_scope_question,
+    format_save_needs_review_reply,
+    format_saved_to_memory_reply,
+    format_saved_to_session_reply,
+    is_save_to_memory_confirmation,
+    is_session_only_confirmation,
+    should_ask_memory_scope,
+)
+from core.brain_v2.natural_replies import (
+    format_guest_intro_reply,
+    format_guest_visit_recall,
+    format_owner_reset_reply,
+)
+from core.brain_v2.owner_auto_trust import is_explicit_remember_command
 from core.family_memory import (
     format_family_memory_confirmation,
     ingest_family_statement,
@@ -90,6 +107,7 @@ class HIKARI_Orchestrator:
         self.brain_v2: Optional[BrainV2Coordinator] = None
         self._brain_v2_session: Optional[str] = None
         self._owner_session_current_location: Optional[tuple[str, str]] = None
+        self._pending_memory_choice: Optional[PendingMemoryChoice] = None
         self.legacy_memory_enabled = os.getenv("HIKARI_ENABLE_LEGACY_MEMORY", "0") == "1"
 
         # Personality & emotions
@@ -270,6 +288,7 @@ class HIKARI_Orchestrator:
             self._brain_v2_session = self.brain_v2.start_session()
         else:
             self._brain_v2_session = None
+        self._pending_memory_choice = None
         self.speaker.clear_current_speaker()
 
     def _is_active_guest_speaker(self) -> bool:
@@ -401,7 +420,11 @@ class HIKARI_Orchestrator:
 
         debug(f"\n[INPUT] ({source}): {user_input}")
 
+        if not hasattr(self, "_pending_memory_choice"):
+            self._pending_memory_choice = None
+
         self.speaker.update_from_input(user_input)
+        self.speaker.note_guest_relation_from_input(user_input)
         reset_check = getattr(self.speaker, "consume_speaker_reset", None)
         speaker_reset = reset_check() is True if callable(reset_check) else False
         if speaker_reset and self._brain_v2_runtime_ready():
@@ -424,17 +447,23 @@ class HIKARI_Orchestrator:
         brain_memory_text = self._normalize_brain_memory_statement(user_input)
 
         if guest and getattr(self.speaker, "last_was_session_intro", False):
-            guest_name = self.speaker.current_speaker or "guest speaker"
-            return (
-                f"Hi {guest_name}. I will treat this as a temporary guest session "
-                "and will not use or store the household owner's personal memories."
-            )
+            guest_name = self.speaker.current_speaker or "guest"
+            return format_guest_intro_reply(guest_name)
 
         if speaker_reset:
-            return (
-                "Back to owner mode. I will use the household owner's Brain v2 "
-                "memories again."
-            )
+            return format_owner_reset_reply(self.speaker.primary_user)
+
+        if not guest and is_guest_visit_recall_question(user_input):
+            visit_reply = self._try_guest_visit_recall_answer(user_input)
+            if visit_reply:
+                return self._reply_and_record_brain_v2_turn(
+                    user_input, visit_reply, source
+                )
+
+        if self._brain_v2_authority_enabled() and not guest:
+            scope_reply = self._try_resolve_pending_memory_choice(user_input, source)
+            if scope_reply is not None:
+                return scope_reply
 
         if (
             guest
@@ -567,72 +596,33 @@ class HIKARI_Orchestrator:
                         source,
                         metadata={"skip_candidate_extraction": True},
                     )
-                identity_meta = inferred.metadata or {}
-                if inferred.candidate_type == "identity" and (
-                    identity_meta.get("preferred_name")
-                    or identity_meta.get("legal_name")
+                explicit_remember = is_explicit_remember_command(brain_memory_text)
+                if should_ask_memory_scope(
+                    statement=brain_memory_text,
+                    candidate_type=inferred.candidate_type,
+                    explicit_remember=explicit_remember,
                 ):
-                    outcome = self.brain_v2.ingest_trusted_owner_declaration(
-                        self._brain_v2_session,
-                        user_input,
+                    self._pending_memory_choice = PendingMemoryChoice(
+                        statement=brain_memory_text,
+                        candidate_type=inferred.candidate_type,
                     )
-                    if outcome.get("status") == "accepted":
-                        legal = str(identity_meta.get("legal_name", "")).strip()
-                        preferred = str(
-                            identity_meta.get("preferred_name", "")
-                        ).strip()
-                        if legal and preferred:
-                            response = (
-                                f"Got it. Your legal name is {legal} in Brain v2, "
-                                f"and I'll call you {preferred}."
-                            )
-                        elif legal:
-                            response = (
-                                f"Got it. I will remember your legal name as {legal} "
-                                "in Brain v2."
-                            )
-                        elif preferred:
-                            response = (
-                                f"Got it. I'll call you {preferred} and remember "
-                                "that in Brain v2."
-                            )
-                        else:
-                            response = "Got it. I will remember that in Brain v2."
-                        return self._reply_and_record_brain_v2_turn(
-                            user_input,
-                            response,
-                            source,
-                            metadata={"skip_candidate_extraction": True},
-                        )
-                outcome = self.brain_v2.ingest_trusted_owner_declaration(
-                    self._brain_v2_session,
-                    user_input,
-                )
-                if outcome.get("status") == "accepted":
-                    response = "Got it. I will remember that in Brain v2."
+                    response = format_memory_scope_question(brain_memory_text)
                     return self._reply_and_record_brain_v2_turn(
                         user_input,
                         response,
                         source,
                         metadata={"skip_candidate_extraction": True},
                     )
-                if outcome.get("status") == "pending_conflict":
-                    response = (
-                        "I already have a different reviewed memory for that. "
-                        "I kept your update for confirmation instead of silently replacing it."
-                    )
-                    return self._reply_and_record_brain_v2_turn(
-                        user_input,
-                        response,
-                        source,
-                        metadata={"skip_candidate_extraction": True},
-                    )
-                response = (
-                    "Got it. I recorded that for Brain v2 review because it needs "
-                    "extra care before becoming memory."
-                )
                 return self._reply_and_record_brain_v2_turn(
-                    user_input, response, source
+                    user_input,
+                    self._commit_owner_memory_declaration(
+                        user_input,
+                        brain_memory_text,
+                        source,
+                        inferred=inferred,
+                    ),
+                    source,
+                    metadata={"skip_candidate_extraction": True},
                 )
             response = self._brain_v2_unavailable_message()
             return self._reply_and_record_brain_v2_turn(user_input, response, source)
@@ -1088,12 +1078,110 @@ class HIKARI_Orchestrator:
         except Exception:
             return False
 
+    def _commit_owner_memory_declaration(
+        self,
+        user_input: str,
+        brain_memory_text: str,
+        source: str,
+        *,
+        inferred: Optional[Any] = None,
+    ) -> str:
+        from core.brain_v2.memory_type import infer_memory_type
+
+        if not self._brain_v2_runtime_ready():
+            return self._brain_v2_unavailable_message()
+
+        inferred = inferred or infer_memory_type(brain_memory_text)
+        outcome = self.brain_v2.ingest_trusted_owner_declaration(
+            self._brain_v2_session,
+            user_input,
+        )
+        if outcome.get("status") == "accepted":
+            identity_meta = inferred.metadata or {}
+            if inferred.candidate_type == "identity" and (
+                identity_meta.get("preferred_name") or identity_meta.get("legal_name")
+            ):
+                legal = str(identity_meta.get("legal_name", "")).strip()
+                preferred = str(identity_meta.get("preferred_name", "")).strip()
+                if legal and preferred:
+                    return (
+                        f"Got it. Your legal name is {legal} in Brain v2, "
+                        f"and I'll call you {preferred}."
+                    )
+                if legal:
+                    return f"Got it. I will remember your legal name as {legal} in Brain v2."
+                if preferred:
+                    return f"Got it. I'll call you {preferred} and remember that in Brain v2."
+            if is_explicit_remember_command(brain_memory_text):
+                return "Got it. I will remember that in Brain v2."
+            return format_saved_to_memory_reply()
+        if outcome.get("status") == "pending_conflict":
+            return (
+                "I already have a different reviewed memory for that. "
+                "I kept your update for confirmation instead of silently replacing it."
+            )
+        if outcome.get("status") == "pending_review":
+            return format_save_needs_review_reply()
+        return format_save_needs_review_reply()
+
+    def _try_resolve_pending_memory_choice(
+        self, user_input: str, source: str
+    ) -> Optional[str]:
+        pending = self._pending_memory_choice
+        if not pending:
+            return None
+        if is_save_to_memory_confirmation(user_input):
+            self._pending_memory_choice = None
+            response = self._commit_owner_memory_declaration(
+                pending.statement,
+                pending.statement,
+                source,
+            )
+            return self._reply_and_record_brain_v2_turn(
+                user_input,
+                response,
+                source,
+                metadata={"skip_candidate_extraction": True},
+            )
+        if is_session_only_confirmation(user_input):
+            self._pending_memory_choice = None
+            if self._brain_v2_runtime_ready():
+                self.brain_v2.working.note_session_fact(pending.statement)
+            return self._reply_and_record_brain_v2_turn(
+                user_input,
+                format_saved_to_session_reply(),
+                source,
+                metadata={"skip_candidate_extraction": True},
+            )
+        return None
+
+    def _try_guest_visit_recall_answer(self, user_input: str) -> Optional[str]:
+        from core.speaker_context import extract_guest_visit_relation_asked
+
+        visit = self.speaker.last_guest_visit
+        if not visit:
+            return "No guest has checked in since you came back to owner mode."
+        asked = extract_guest_visit_relation_asked(user_input)
+        if asked and visit.relation and asked != visit.relation:
+            return (
+                f"I haven't had your {asked} visit as a guest. "
+                f"{visit.guest_name} stopped by earlier."
+            )
+        return format_guest_visit_recall(
+            visit.guest_name,
+            relation=visit.relation,
+            asked_relation=asked,
+        )
+
     def _brain_v2_personal_recall_answer(self, user_input: str) -> str:
         """Personal recall under Brain v2 authority; never falls through to legacy neural."""
         if self.speaker.is_guest_speaker():
             return self._guest_personal_no_memory_reply(user_input)
         if not self._brain_v2_runtime_ready():
             return self._brain_v2_unavailable_message()
+        visit_answer = self._try_guest_visit_recall_answer(user_input)
+        if visit_answer and is_guest_visit_recall_question(user_input):
+            return visit_answer
         v2_answer = self._try_brain_v2_recall_answer(user_input)
         if not self._is_brain_v2_authoritative_personal_recall_answer(v2_answer):
             return self._brain_v2_no_reviewed_message(user_input)

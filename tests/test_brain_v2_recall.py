@@ -17,6 +17,7 @@ from core.brain_v2.recall_intent import (
     INTENT_PREFERENCE,
     INTENT_PROFILE_SUMMARY,
     classify_recall_intent,
+    is_positive_brain_v2_recall_answer,
     requested_relations,
     should_skip_external_research,
 )
@@ -160,7 +161,7 @@ def test_answer_from_accepted_with_sister_memory(episode_db):
     _accept_turn(episode_db, "My sister Maya studies at North Valley University.")
     reply = BrainV2Retrieval(episode_db).answer_from_accepted("do you know my sister?")
     assert reply
-    assert "reviewed memory" in reply.lower()
+    assert is_positive_brain_v2_recall_answer(reply)
     assert "maya" in reply.lower()
 
 
@@ -189,7 +190,7 @@ def test_gf_memory_answers_gf_query(episode_db):
     )
     reply = BrainV2Retrieval(episode_db).answer_from_accepted("what does my gf do?")
     assert reply
-    assert "reviewed memory" in reply.lower()
+    assert is_positive_brain_v2_recall_answer(reply)
     assert "priya" in reply.lower() or "clinic" in reply.lower()
 
 
@@ -258,7 +259,7 @@ def test_orchestrator_brain_v2_recall_before_ai(monkeypatch):
     orch.brain_v2_enabled = True
     orch.brain_v2 = MagicMock()
     orch.brain_v2.try_answer_from_accepted_memories.return_value = (
-        "From reviewed memory: I prefer local-first private tools."
+        "I prefer local-first private tools."
     )
     orch.brain = MagicMock()
     orch.brain.answer.return_value = None
@@ -274,4 +275,4 @@ def test_orchestrator_brain_v2_recall_before_ai(monkeypatch):
     brain_answer = orch.brain.answer(user_input)
     assert brain_answer is None
     v2 = orch._try_brain_v2_recall_answer(user_input)
-    assert v2 and "reviewed memory" in v2.lower()
+    assert v2 and is_positive_brain_v2_recall_answer(v2)

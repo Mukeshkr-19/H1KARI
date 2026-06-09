@@ -8,6 +8,7 @@ from core.speaker_context import SpeakerContext, is_temporary_speaker_intro
 def test_guest_intro_patterns():
     for phrase in (
         "I am Guest B talking to you now",
+        "i am guest b talking to you",
         "this is Guest B",
         "Guest B here",
     ):
@@ -46,3 +47,21 @@ def test_i_am_doing_is_not_guest_speaker():
     ctx.update_from_input("I am doing my bachelors in Topic A at School A")
     assert ctx.current_speaker is None
     assert not ctx.is_guest_speaker()
+
+
+def test_guest_intro_without_now_lowercase():
+    ctx = SpeakerContext(primary_user="Owner A")
+    ctx.update_from_input("i am guest c talking to you")
+    assert ctx.current_speaker == "Guest C"
+    assert ctx.is_guest_speaker()
+    assert ctx.last_was_session_intro
+
+
+def test_guest_visit_recall_after_owner_reset():
+    ctx = SpeakerContext(primary_user="Owner A")
+    ctx.update_from_input("I am Guest B talking to you")
+    ctx.note_guest_relation_from_input("I am your owner's sister")
+    ctx.update_from_input("back to owner")
+    assert ctx.last_guest_visit is not None
+    assert ctx.last_guest_visit.guest_name == "Guest B"
+    assert ctx.last_guest_visit.relation == "sister"
