@@ -10,6 +10,8 @@ import subprocess
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
+from core.os_side_effects import osascript_disabled
+
 class MacControl:
     """Complete Mac integration - controls everything on your Mac"""
 
@@ -18,6 +20,9 @@ class MacControl:
 
     async def run_applescript(self, script: str, timeout: float = 15.0) -> Dict[str, Any]:
         """Run AppleScript and return result"""
+        if osascript_disabled():
+            return {"success": False, "error": "osascript_disabled"}
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 "osascript", "-e", script,

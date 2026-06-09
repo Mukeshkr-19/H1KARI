@@ -92,6 +92,7 @@ def _run_scenario(
     os.environ.pop("HIKARI_NEURAL_MEMORY_DB", None)
     os.environ.pop("HIKARI_DISABLE_BRAIN_V2", None)
     os.environ["HIKARI_DISABLE_PROACTIVE_SCHEDULER"] = "1"
+    os.environ["HIKARI_DISABLE_OSASCRIPT"] = "1"
     os.environ.setdefault("HIKARI_PRIMARY_USER", "Owner A")
 
     from core.brain_v2.consolidation_pipeline import EpisodeConsolidationPipeline
@@ -614,7 +615,7 @@ def main() -> int:
                 Turn(
                     "remind me to call Person C tomorrow",
                     lambda r: _task_reply_ok(r)
-                    and "reminder scheduling is not wired up yet" in r.lower(),
+                    and "not scheduled yet" in r.lower(),
                     "remind me not stored",
                 ),
                 Turn(

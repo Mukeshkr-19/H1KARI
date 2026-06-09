@@ -47,6 +47,17 @@ git diff --check
 - Use fake fixtures: Owner A, Person B, City A, School A, Topic A, Guest B.
 - Never commit: `.env*`, `*.db`, live-brain paths, private data trees, API keys.
 
+## Task scheduling env vars
+
+- `HIKARI_TASKS_DB` — override task SQLite path (tests use isolated temp files).
+- `HIKARI_ENABLE_TASK_SCHEDULER=1` — opt in to macOS Reminders via osascript.
+- `HIKARI_DISABLE_OSASCRIPT=1` — disable macOS osascript side effects (tests/live QA).
+
+## Known non-blocking test noise
+
+Pytest may print `httpx` / `LiteLLM` `close.complete` debug lines during teardown.
+`tests/conftest.py` lowers those log levels. This does not affect production runtime.
+
 ## Definition of done
 
 - Scope is narrow and named.

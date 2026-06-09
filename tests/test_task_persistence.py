@@ -105,7 +105,7 @@ def test_tasks_list_cli_against_isolated_db(tasks_db_path):
     out = proc.stdout.lower()
     assert "not scheduled" in out
     assert "topic a" in out
-    assert "scheduling is not wired up yet" in out
+    assert "separate from brain v2 memory" in out
 
 
 def test_tasks_list_cli_does_not_create_missing_db(tasks_db_path):

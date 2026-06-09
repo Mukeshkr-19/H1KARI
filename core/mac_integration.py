@@ -14,11 +14,16 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
+from core.os_side_effects import osascript_disabled
+
 log = logging.getLogger("hikari.mac_integration")
 
 
 async def run_applescript(script: str, timeout: float = 15.0) -> Dict[str, Any]:
     """Run AppleScript and return success/failure."""
+    if osascript_disabled():
+        return {"success": False, "error": "osascript_disabled"}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "osascript",

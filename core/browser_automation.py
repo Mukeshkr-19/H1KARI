@@ -7,11 +7,16 @@ import logging
 from typing import Optional, Dict, Any, List
 from urllib.parse import quote
 
+from core.os_side_effects import osascript_disabled
+
 log = logging.getLogger("hikari.browser")
 
 
 async def run_applescript(script: str, timeout: float = 10.0) -> Dict[str, Any]:
     """Run AppleScript and return success/failure."""
+    if osascript_disabled():
+        return {"success": False, "error": "osascript_disabled"}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "osascript",

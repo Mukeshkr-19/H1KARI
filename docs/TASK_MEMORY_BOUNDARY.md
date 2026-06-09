@@ -47,7 +47,16 @@ scheduling is **not wired up yet**, and the utterance is **not** stored as Brain
 
 - Task intents are stored in a separate SQLite database under the private brain runtime area.
 - Override path for tests or custom installs with `HIKARI_TASKS_DB`.
-- List recent intents: `hikari.py --tasks-list` (read-only; shows `NOT_SCHEDULED`).
+- List recent intents: `hikari.py --tasks-list` (read-only; does not create a missing DB).
+- Use `hikari.py --tasks-list --all` to include every speaker/session scope.
+- Records include `speaker_label`, `session_id`, and `source` (owner vs guest).
+
+## Scheduling (opt-in)
+
+- macOS Reminders scheduling is **disabled by default**.
+- Set `HIKARI_ENABLE_TASK_SCHEDULER=1`, record a reminder task, then say `schedule that reminder`.
+- Status becomes `SCHEDULED` only after osascript succeeds; failures become `SCHEDULE_FAILED`.
+- Tasks remain outside Brain v2 memory even when scheduled.
 
 ## Future work
 

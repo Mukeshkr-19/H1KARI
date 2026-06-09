@@ -79,7 +79,7 @@ def test_task_action_not_stored_as_candidate(episode_db):
         (
             "remind me to call Person C tomorrow",
             "reminder",
-            "reminder scheduling is not wired up yet",
+            "not scheduled yet",
         ),
         (
             "schedule my meeting with Person C",

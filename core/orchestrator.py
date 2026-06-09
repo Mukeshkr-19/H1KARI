@@ -498,6 +498,18 @@ class HIKARI_Orchestrator:
                 return f"Hi {self.speaker.current_speaker}! How can I help?"
             return greeting + "! How can I help?"
 
+        if self._brain_v2_authority_enabled():
+            from core.tasks.scheduling_commands import is_task_schedule_confirmation
+
+            if is_task_schedule_confirmation(user_input):
+                reply = self._handle_task_schedule_confirmation(source)
+                return self._reply_and_record_brain_v2_turn(
+                    user_input,
+                    reply,
+                    source,
+                    metadata={"skip_candidate_extraction": True, "task_action": True},
+                )
+
         if self._brain_v2_authority_enabled() and is_task_or_action_statement(user_input):
             task_meta = {"skip_candidate_extraction": True, "task_action": True}
             agent_response = self._route_to_agent(lowered)
@@ -508,7 +520,7 @@ class HIKARI_Orchestrator:
                     source,
                     metadata=task_meta,
                 )
-            self._record_task_intent(user_input)
+            self._record_task_intent(user_input, source_channel=source)
             return self._reply_and_record_brain_v2_turn(
                 user_input,
                 self._task_action_no_memory_reply(user_input),
@@ -929,11 +941,43 @@ class HIKARI_Orchestrator:
             self._task_intents = TaskIntentService(store=open_task_store())
         return self._task_intents
 
-    def _record_task_intent(self, user_input: str) -> None:
+    def _task_record_context(self, source_channel: str):
+        from core.tasks.context import TaskRecordContext
+
+        guest = self.speaker.is_guest_speaker()
+        label = self.speaker.current_speaker or self.speaker.primary_user or "owner"
+        if guest:
+            return TaskRecordContext(
+                speaker_label=label,
+                session_id=self._brain_v2_session,
+                source="guest",
+                is_guest=True,
+            )
+        return TaskRecordContext(
+            speaker_label=label,
+            session_id=self._brain_v2_session,
+            source=source_channel,
+            is_guest=False,
+        )
+
+    def _record_task_intent(self, user_input: str, *, source_channel: str = "text") -> None:
         try:
-            self._task_intent_service().record_intent(user_input)
+            self._task_intent_service().record_intent(
+                user_input,
+                context=self._task_record_context(source_channel),
+            )
         except Exception as e:
             debug(f"[TASK] Intent record failed: {e}")
+
+    def _handle_task_schedule_confirmation(self, source_channel: str) -> str:
+        try:
+            _task, reply = self._task_intent_service().schedule_latest_reminder(
+                context=self._task_record_context(source_channel),
+            )
+            return reply
+        except Exception as e:
+            debug(f"[TASK] Schedule confirmation failed: {e}")
+            return "I could not schedule that reminder right now."
 
     def _task_action_no_memory_reply(self, user_input: str) -> str:
         """Task-like phrasing is not durable memory; avoid pretending it was scheduled."""
@@ -941,7 +985,8 @@ class HIKARI_Orchestrator:
         if kind == "reminder":
             return (
                 "I will not store that as a Brain v2 memory. "
-                "Reminder scheduling is not wired up yet, so please set this reminder separately for now."
+                "I recorded it as a task intent (not scheduled yet). "
+                "Say 'schedule that reminder' after enabling task scheduling if you want macOS Reminders."
             )
         if kind == "schedule":
             return (

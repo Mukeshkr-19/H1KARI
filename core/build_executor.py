@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
+from core.os_side_effects import osascript_disabled
+
 log = logging.getLogger("hikari.build")
 
 log = logging.getLogger("hikari.build")
@@ -89,6 +91,9 @@ class BuildPlan:
 
 async def run_applescript(script: str, timeout: float = 10.0) -> Dict[str, Any]:
     """Run AppleScript."""
+    if osascript_disabled():
+        return {"success": False, "error": "osascript_disabled"}
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "osascript",

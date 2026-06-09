@@ -121,6 +121,11 @@ async def capture_region(x: int, y: int, width: int, height: int) -> Dict[str, A
 
 async def get_active_window() -> Optional[Dict[str, str]]:
     """Get the currently active window information."""
+    from core.os_side_effects import osascript_disabled
+
+    if osascript_disabled():
+        return None
+
     script = """
 tell application "System Events"
     set frontApp to first application process whose frontmost is true
@@ -161,6 +166,11 @@ end tell
 
 async def list_windows() -> List[Dict[str, str]]:
     """List all open windows."""
+    from core.os_side_effects import osascript_disabled
+
+    if osascript_disabled():
+        return []
+
     script = """
 tell application "System Events"
     set windowList to {}
@@ -207,6 +217,11 @@ end tell
 
 async def get_running_apps() -> List[str]:
     """Get list of running applications."""
+    from core.os_side_effects import osascript_disabled
+
+    if osascript_disabled():
+        return []
+
     script = """
 tell application "System Events"
     set appList to name of every application process whose background only is false

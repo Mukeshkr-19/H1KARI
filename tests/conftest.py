@@ -21,7 +21,19 @@ _NEURAL_TEST_DB = _BRAIN_V2_TEST_ROOT / "neural" / HIKARI_MEMORY_DB
 _NEURAL_TEST_DB.parent.mkdir(parents=True, exist_ok=True)
 os.environ["HIKARI_NEURAL_MEMORY_DB"] = str(_NEURAL_TEST_DB)
 
+import logging
+
 import pytest
+
+# Reduce noisy httpx/litellm teardown logs during pytest (non-blocking for CI).
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_osascript_in_tests() -> None:
+    os.environ.setdefault("HIKARI_DISABLE_OSASCRIPT", "1")
 
 
 @pytest.fixture(scope="session", autouse=True)

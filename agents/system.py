@@ -18,6 +18,7 @@ from core.command_intent import (
     phone_call_target,
     system_agent_confidence,
 )
+from core.os_side_effects import osascript_disabled
 
 
 class SystemAgent(BaseAgent):
@@ -116,6 +117,8 @@ class SystemAgent(BaseAgent):
     def control_music(self, command: str) -> str:
         """Control Spotify/Music playback - fixed to actually search and play"""
         cmd = command.lower()
+        if osascript_disabled():
+            return "Music control is disabled during QA."
 
         try:
             # Make sure Spotify is running
@@ -333,6 +336,8 @@ class SystemAgent(BaseAgent):
             url = f"https://{site}" if not site.startswith("http") else site
 
         try:
+            if osascript_disabled():
+                return f"Opening {site}..."
             webbrowser.open(url)
             return f"Opening {site}..."
         except Exception as e:
@@ -374,6 +379,8 @@ class SystemAgent(BaseAgent):
         lookup = app_map.get(app_name, app_name.title())
 
         try:
+            if osascript_disabled():
+                return f"App control is disabled during QA for {lookup}."
             script = f'tell application "{lookup}" to quit'
             subprocess.run(["osascript", "-e", script], timeout=10)
             return f"Quit {lookup}."
@@ -398,12 +405,16 @@ class SystemAgent(BaseAgent):
                 )
                 return "Locking screen..."
             elif "restart" in cmd or "reboot" in cmd:
+                if osascript_disabled():
+                    return "Restart is disabled during QA."
                 subprocess.run(
                     ["osascript", "-e", 'tell app "System Events" to restart'],
                     timeout=5,
                 )
                 return "Restarting..."
             elif "shutdown" in cmd or "shut down" in cmd:
+                if osascript_disabled():
+                    return "Shutdown is disabled during QA."
                 subprocess.run(
                     ["osascript", "-e", 'tell app "System Events" to shutdown'],
                     timeout=5,
@@ -425,6 +436,8 @@ class SystemAgent(BaseAgent):
                     return "Trash is already empty."
 
                 # Try AppleScript - this is the proper macOS way
+                if osascript_disabled():
+                    return "Empty trash is disabled during QA."
                 try:
                     result = subprocess.run(
                         ["osascript", "-e", 'tell app "Finder" to empty trash'],
@@ -501,6 +514,8 @@ class SystemAgent(BaseAgent):
             return "Who would you like to call?"
 
         name = name.strip().lower()
+        if osascript_disabled():
+            return "FaceTime calling is disabled during QA."
 
         # Open FaceTime with the name - it will search your Contacts
         try:
