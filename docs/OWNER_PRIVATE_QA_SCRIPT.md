@@ -1,84 +1,70 @@
 # Owner private QA script (copy-paste)
 
-No more hunting `--brain-v2-pending` for normal facts. HIKARI **asks you** before saving.
+Use your real names/places locally only. Never commit these facts to the repo.
 
-## How memory works now
+## How memory works
 
 | You say | HIKARI does |
 |---------|-------------|
-| `Remember this: ...` | Saves to **long-term memory** immediately (no ask) |
-| `I am in <CITY>` | **Session only** (trip city - no ask) |
-| Any other personal fact | **Asks:** save in long-term memory or session only? |
-| `save in memory` / `save it` | Saves the last fact to long-term memory |
-| `session only` | Keeps last fact for this chat only |
+| Name, home, school, graduation, preferences | **Auto-saves** (no ask) |
+| `Remember this: ...` | **Auto-saves** immediately |
+| `I am in <TRIP_CITY>` | **Session only** (trip city) |
+| Vague / ambiguous chat | **Asks:** save in memory or session only? |
+| Family / third-party facts | **Asks:** save in memory or session only? |
+| Guest intro (`i am X talking to you`) | Guest mode - not owner memory |
 
 Voice answers are natural - no `From reviewed memory:` prefix.
 
 ---
 
-## A. Teach with ask flow (recommended)
-
-| # | You say | Expect HIKARI |
-|---|---------|---------------|
-| A1 | `My real name is <LEGAL> but you can call me <PREFERRED>` | Asks save vs session |
-| A2 | `save in memory` | Saved in long-term memory |
-| A3 | `what is my name?` | `<PREFERRED>` naturally |
-| A4 | `I am a rising senior and I will be graduating in May 2027` | Asks save vs session |
-| A5 | `save in memory` | Saved (not pending mystery) |
-| A6 | `when do I graduate?` | May 2027 / rising senior |
-
-**Fast path (skip ask):** `Remember this: I live in <HOME_CITY>`
-
----
-
-## B. Session-only path
+## A. Core facts (should NOT ask)
 
 | # | You say | Expect |
 |---|---------|--------|
-| B1 | `I prefer cold coffee` | Asks save vs session |
-| B2 | `session only` | Okay - this session only |
-| B3 | `what do I prefer?` | cold coffee (this session) |
-| B4 | *(new chat / back to owner)* | May not recall - that is correct for session-only |
+| A1 | `My real name is <LEGAL> but you can call me <PREFERRED>` | Got it - legal + preferred saved (no ask) |
+| A2 | `what is my real name?` | `<LEGAL>` |
+| A3 | `what is my name?` | `<PREFERRED>` |
+| A4 | `I live in <HOME_CITY>` | Saved (no ask) |
+| A5 | `where do I live?` | `<HOME_CITY>` naturally |
+| A6 | `I am doing my bachelors in <MAJOR> at <SCHOOL>` | Saved (no ask) |
+| A7 | `I am a rising senior and I will be graduating in May 2027` | Saved (no ask) |
 
 ---
 
-## C. Trip city (auto session)
+## B. Session vs long-term
 
 | # | You say | Expect |
 |---|---------|--------|
-| C1 | `I am in <TRIP_CITY>` | Session location for this chat - no ask |
-| C2 | `where am I?` | You're in `<TRIP_CITY>` for this session |
-| C3 | `where do I live?` | `<HOME_CITY>` from long-term memory |
+| B1 | `I am in <TRIP_CITY>` | Session location (no ask) |
+| B2 | `where am I?` | `<TRIP_CITY>` for this session |
+| B3 | `where do I live?` | Still `<HOME_CITY>` |
 
 ---
 
-## D. Guest mode
+## C. Guest mode
 
 | # | You say | Expect |
 |---|---------|--------|
-| D1 | `i am <GUEST> talking to you` | Short guest mode hi |
-| D2 | `i am your owners sister` | Not stored in owner memory |
-| D3 | `back to owner` | Back to you, `<PREFERRED>` |
-| D4 | `did my sister talk to you?` | Yes - guest visited |
+| C1 | `i am <GUEST> talking to you` | Short guest hi |
+| C2 | `back to owner` | Back to you, `<PREFERRED>` |
+| C3 | `did my sister talk to you?` | Guest visited (if she said she is your sister) |
 
 ---
 
-## E. Must NOT happen
+## D. Must NOT happen
 
-- Guest intro stored as owner pending memory
-- Robotic `From reviewed memory:` in voice/chat
-- Silent auto-save without ask (unless `Remember this:` or trip city)
+- Ask to save name or home
+- Legal name includes "But You Can Call"
+- Guest intro in pending queue as owner memory
 
 ---
 
 ## Paste-back for Codex
 
 ```
-Commit: <git rev-parse --short HEAD>
-A1-A6: PASS/FAIL
-B1-B4: PASS/FAIL
+A1-A7: PASS/FAIL
+B1-B3: PASS/FAIL
 C1-C3: PASS/FAIL
-D1-D4: PASS/FAIL
-E: PASS/FAIL
+D: PASS/FAIL
 Notes:
 ```

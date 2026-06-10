@@ -74,6 +74,13 @@ def _saved_long_term(reply: str) -> bool:
     return "saved in long-term" in low or "brain v2" in low or "remember" in low
 
 
+def _auto_saved_core(reply: str) -> bool:
+    low = (reply or "").lower()
+    if "save in memory" in low and "session only" in low:
+        return False
+    return _saved_long_term(reply)
+
+
 def _weather_ok(reply: str) -> bool:
     low = (reply or "").lower()
     if "secret" in low or "appid" in low:
@@ -190,8 +197,7 @@ def main() -> int:
         _run_scenario(
             "bare_identity",
             [
-                Turn("My name is Owner A.", _asks_save_scope, "asks save scope"),
-                Turn("save in memory", _saved_long_term, "bare my name is accepted"),
+                Turn("My name is Owner A.", _auto_saved_core, "bare my name is accepted"),
                 Turn("what is my name?", _has("owner a"), "recall bare identity"),
             ],
         )
@@ -201,8 +207,7 @@ def main() -> int:
         _run_scenario(
             "bare_preference",
             [
-                Turn("I prefer Topic A.", _asks_save_scope, "asks save scope"),
-                Turn("save in memory", _saved_long_term, "bare preference accepted"),
+                Turn("I prefer Topic A.", _auto_saved_core, "bare preference accepted"),
                 Turn("what do you know about me?", _has("topic a"), "preference in profile"),
             ],
         )
@@ -212,8 +217,7 @@ def main() -> int:
         _run_scenario(
             "bare_dislike",
             [
-                Turn("I don't like Topic B.", _asks_save_scope, "asks save scope"),
-                Turn("save in memory", _saved_long_term, "bare dislike accepted"),
+                Turn("I don't like Topic B.", _auto_saved_core, "bare dislike accepted"),
                 Turn("what do you know about me?", _has("topic b"), "dislike in profile"),
             ],
         )
@@ -223,8 +227,7 @@ def main() -> int:
         _run_scenario(
             "bare_education",
             [
-                Turn("I study at School A.", _asks_save_scope, "asks save scope"),
-                Turn("save in memory", _saved_long_term, "bare education accepted"),
+                Turn("I study at School A.", _auto_saved_core, "bare education accepted"),
                 Turn("what do you know about me?", _has("school a"), "education in profile"),
             ],
         )
@@ -234,10 +237,9 @@ def main() -> int:
         _run_scenario(
             "preferred_name",
             [
-                Turn("you can call me Person C", _asks_save_scope, "asks save scope"),
                 Turn(
-                    "save in memory",
-                    lambda r: _saved_long_term(r) or "call you" in r.lower(),
+                    "you can call me Person C",
+                    lambda r: _auto_saved_core(r) or "call you" in r.lower(),
                     "preferred name stored",
                 ),
                 Turn(
@@ -258,12 +260,7 @@ def main() -> int:
             [
                 Turn(
                     "My real name is Owner Legal but call me Person C",
-                    _asks_save_scope,
-                    "asks save scope",
-                ),
-                Turn(
-                    "save in memory",
-                    _all_of(_saved_long_term, _has("owner legal")),
+                    _all_of(_auto_saved_core, _has("owner legal")),
                     "dual identity stored",
                 ),
                 Turn(
@@ -286,10 +283,9 @@ def main() -> int:
             [
                 Turn(
                     "I am doing my bachelors in Topic A at School A",
-                    _asks_save_scope,
-                    "asks save scope",
+                    _auto_saved_core,
+                    "degree statement saved",
                 ),
-                Turn("save in memory", _saved_long_term, "degree statement saved"),
                 Turn(
                     "what do I study?",
                     _all_of(_has("topic a"), _lacks("reviewed memory")),
@@ -321,8 +317,7 @@ def main() -> int:
         _run_scenario(
             "bare_stable_home",
             [
-                Turn("I live in City A.", _asks_save_scope, "asks save scope"),
-                Turn("save in memory", _saved_long_term, "bare I live in accepted"),
+                Turn("I live in City A.", _auto_saved_core, "bare I live in accepted"),
                 Turn(
                     "where do I live?",
                     _has("city a"),
@@ -373,7 +368,11 @@ def main() -> int:
         _run_scenario(
             "relationship",
             [
-                Turn("Person C is my sister", _asks_save_scope, "asks save scope"),
+                Turn(
+                    "Person C is my sister",
+                    _asks_save_scope,
+                    "sister asks save scope",
+                ),
                 Turn("save in memory", _saved_long_term, "sister saved"),
                 Turn(
                     "who is my sister?",

@@ -236,22 +236,17 @@ def extract_owner_identity_names(text: str) -> Dict[str, str]:
 
     m_legal = re.search(
         r"\b(?:my\s+)?(?:real|legal|official)\s+name\s+is\s+"
-        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*){0,5})",
+        r"(.+?)(?=\s+(?:but|and)\s+(?:"
+        r"(?:i\s+)?(?:told\s+(?:you|u)\s+to\s+)?call\s+me|"
+        r"(?:you\s+can\s+|u\s+can\s+)?call\s+me|"
+        r"(?:i\s+)?(?:told|tell)\b"
+        r")\b|[,.;!?]|$)",
         raw,
         re.I,
     )
     if m_legal:
         legal = _title_person_name(
-            re.split(
-                r"\s+(?:but|and)\s+(?:"
-                r"(?:i\s+)?(?:told\s+(?:you|u)\s+to\s+)?call\s+me|"
-                r"(?:you\s+can\s+|u\s+can\s+)?call\s+me|"
-                r"(?:i\s+)?(?:told|tell)\b"
-                r")\b|[,.;!?]",
-                m_legal.group(1).strip(),
-                maxsplit=1,
-                flags=re.I,
-            )[0].strip()
+            m_legal.group(1).strip()
         )
         if legal:
             out["legal_name"] = legal

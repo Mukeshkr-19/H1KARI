@@ -76,6 +76,7 @@ _ASSISTANT_MARKERS = re.compile(
 _DURABLE_PATTERNS = (
     re.compile(r"\bremember\s+(?:this|that)\b", re.I),
     re.compile(r"\bmy\s+name\s+is\b", re.I),
+    re.compile(r"\b(?:you\s+can\s+|u\s+can\s+)?call\s+me\s+[A-Za-z]", re.I),
     re.compile(r"\bmy\s+(dad|father|mom|mother|sister|brother|gf|girlfriend|partner|wife|husband)\b", re.I),
     re.compile(r"\bi\s+(live|work|study)\s+(?:in|at)\b", re.I),
     re.compile(

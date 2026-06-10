@@ -10,11 +10,44 @@ from core.brain_v2.memory_save_prompt import (
     is_session_only_confirmation,
     should_ask_memory_scope,
 )
+from core.brain_v2.memory_type import extract_owner_identity_names
 from core.brain_v2.owner_auto_trust import is_explicit_remember_command
 
 
-def test_should_ask_for_plain_owner_fact():
+def test_real_name_but_call_me_splits_legal_and_preferred():
+    parsed = extract_owner_identity_names(
+        "My real name is Owner Legal but you can call me Person C."
+    )
+    assert parsed.get("legal_name") == "Owner Legal"
+    assert parsed.get("preferred_name") == "Person C"
+
+
+def test_should_not_ask_for_core_owner_identity():
+    assert not should_ask_memory_scope(
+        statement="My real name is Owner A but you can call me Person B.",
+        candidate_type="identity",
+        explicit_remember=False,
+    )
+
+
+def test_should_not_ask_for_stable_home():
+    assert not should_ask_memory_scope(
+        statement="I live in City A.",
+        candidate_type="location",
+        explicit_remember=False,
+    )
+
+
+def test_should_ask_for_third_party_education():
     assert should_ask_memory_scope(
+        statement="My partner Person B studies at School A.",
+        candidate_type="education",
+        explicit_remember=False,
+    )
+
+
+def test_should_not_ask_for_graduation_education():
+    assert not should_ask_memory_scope(
         statement="I am a rising senior and I will be graduating in May 2027.",
         candidate_type="education",
         explicit_remember=False,

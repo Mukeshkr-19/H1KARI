@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from typing import Optional
 
@@ -86,15 +87,43 @@ def is_session_only_confirmation(text: str) -> bool:
     return bool(_SESSION_ONLY.search(raw))
 
 
+def _owner_auto_trust_eligible(statement: str, candidate_type: str) -> bool:
+    """True when this owner fact should save without a save-vs-session prompt."""
+    from core.brain_v2.candidate_quality import classify_candidate
+    from core.brain_v2.memory_type import infer_memory_type
+    from core.brain_v2.owner_auto_trust import is_owner_scoped_auto_trust_candidate
+    from core.brain_v2.schemas import MemoryCandidate
+
+    inferred = infer_memory_type(statement)
+    ctype = candidate_type or inferred.candidate_type
+    if ctype not in {"identity", "location", "education", "preference"}:
+        return False
+    quality = classify_candidate(statement, candidate_type=ctype)
+    meta = {**(inferred.metadata or {}), **quality.to_metadata()}
+    candidate = MemoryCandidate(
+        candidate_id=str(uuid.uuid4()),
+        episode_id="scope-check",
+        statement=statement.strip(),
+        candidate_type=ctype,
+        metadata=meta,
+    )
+    return is_owner_scoped_auto_trust_candidate(candidate, statement)
+
+
 def should_ask_memory_scope(
     *,
     statement: str,
     candidate_type: str,
     explicit_remember: bool,
 ) -> bool:
-    """True when HIKARI should ask save-vs-session instead of auto-writing."""
+    """Ask only for ambiguous owner facts; core durable facts auto-save."""
     if explicit_remember:
         return False
     if candidate_type == "current_location":
         return False
-    return bool((statement or "").strip())
+    text = (statement or "").strip()
+    if not text:
+        return False
+    if _owner_auto_trust_eligible(text, candidate_type):
+        return False
+    return True
