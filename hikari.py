@@ -402,6 +402,22 @@ def main():
         ),
     )
     parser.add_argument(
+        "--brain-v2-wiki-preview",
+        action="store_true",
+        help=(
+            "Read-only preview of private wiki pages compiled from active accepted "
+            "Brain v2 memories (no file writes)."
+        ),
+    )
+    parser.add_argument(
+        "--brain-v2-wiki-writeback",
+        action="store_true",
+        help=(
+            "Compile active accepted Brain v2 memories into private markdown wiki pages "
+            "under the live brain wiki directory (or HIKARI_WIKI_DIR)."
+        ),
+    )
+    parser.add_argument(
         "--tasks-list",
         action="store_true",
         help=(
@@ -497,6 +513,16 @@ def main():
         from core.brain_v2.readiness import run_brain_v2_readiness
 
         raise SystemExit(run_brain_v2_readiness())
+
+    if args.brain_v2_wiki_preview:
+        from core.brain_v2.wiki_writeback import cmd_wiki_preview
+
+        raise SystemExit(cmd_wiki_preview())
+
+    if args.brain_v2_wiki_writeback:
+        from core.brain_v2.wiki_writeback import cmd_wiki_writeback
+
+        raise SystemExit(cmd_wiki_writeback())
 
     brain_v2_actions = (
         args.brain_v2_status,
