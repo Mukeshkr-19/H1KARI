@@ -664,7 +664,7 @@ def test_owner_current_location_then_where_am_i_now(episode_db):
 
     declare = orch.process_input("I am in City B.")
     assert declare
-    assert "current location" in declare.lower()
+    assert "session" in declare.lower() and "city b" in declare.lower()
 
     after = orch.process_input("where am I now?")
     assert after
@@ -700,7 +700,7 @@ def test_owner_current_location_restored_after_guest_reset(episode_db):
     orch._handle_special_commands = MagicMock(return_value=None)
 
     owner_set = orch.process_input("I am in City B.")
-    assert "current location" in owner_set.lower()
+    assert "session" in owner_set.lower() and "city b" in owner_set.lower()
 
     orch.process_input("I am Guest B talking to you now")
     guest_reply = orch.process_input("where am I now?")
@@ -813,7 +813,7 @@ def test_owner_brain_v2_recording_resumes_after_guest_reset(episode_db):
     orch.process_input("back to owner")
     owner_reply = orch.process_input(f"Remember this: I prefer {_OWNER_CONTEXT_MARKER}.")
     assert owner_reply
-    assert "remember that in brain v2" in owner_reply.lower()
+    assert "got it" in owner_reply.lower()
     accepted = episode_db.get_active_accepted_memories(limit=20)
     assert any(_OWNER_CONTEXT_MARKER in (m.statement or "").lower() for m in accepted)
 

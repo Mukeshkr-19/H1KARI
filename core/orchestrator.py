@@ -59,18 +59,19 @@ from core.speaker_context import (
 )
 from core.brain_v2.memory_save_prompt import (
     PendingMemoryChoice,
-    format_memory_scope_question,
     format_save_needs_review_reply,
     format_saved_to_memory_reply,
     format_saved_to_session_reply,
     is_save_to_memory_confirmation,
     is_session_only_confirmation,
-    should_ask_memory_scope,
 )
 from core.brain_v2.natural_replies import (
     format_guest_intro_reply,
     format_guest_visit_recall,
+    format_identity_saved,
+    format_memory_conflict_brief,
     format_owner_reset_reply,
+    format_session_location_ack,
 )
 from core.brain_v2.owner_auto_trust import is_explicit_remember_command
 from core.family_memory import (
@@ -557,75 +558,97 @@ class HIKARI_Orchestrator:
                 metadata=task_meta,
             )
 
-        # New owner statements are write-intent, even if their words also resemble recall.
-        if (
-            self._brain_v2_authority_enabled()
-            and not skip_owner_identity
-            and is_declarative_memory_statement(brain_memory_text)
-        ):
-            if self._brain_v2_runtime_ready():
-                from core.brain_v2.memory_type import infer_memory_type
+        # Memory policy router: silent bucket selection for owner utterances.
+        if self._brain_v2_authority_enabled() and not skip_owner_identity:
+            from core.brain_v2.memory_policy import MemoryPolicyRoute, route_owner_utterance
 
-                inferred = infer_memory_type(brain_memory_text)
-                if inferred.candidate_type == "current_location":
-                    from core.brain_v2.location_phrases import (
-                        is_meta_or_deferred_location_phrase,
-                    )
-                    from core.brain_v2.session_context import get_session_current_place
+            decision = route_owner_utterance(
+                brain_memory_text,
+                guest=guest,
+                skip_owner_identity=skip_owner_identity,
+            )
 
-                    if is_meta_or_deferred_location_phrase(brain_memory_text):
-                        session_place = get_session_current_place()
-                        if session_place:
-                            response = (
-                                f"You're in {session_place} for this session "
-                                "(from earlier in this chat)."
-                            )
-                        else:
-                            response = (
-                                "I don't have a city name for this session yet. "
-                                'Tell me the city, for example: "I am in City A".'
-                            )
+            if decision.route == MemoryPolicyRoute.SESSION_MEMORY:
+                from core.brain_v2.location_phrases import (
+                    is_meta_or_deferred_location_phrase,
+                )
+                from core.brain_v2.session_context import get_session_current_place
+
+                if is_meta_or_deferred_location_phrase(brain_memory_text):
+                    session_place = get_session_current_place()
+                    if session_place:
+                        response = format_session_location_ack(session_place)
                     else:
                         response = (
-                            "Got it. I will use that as your current location "
-                            "for this session."
+                            "I don't have a city name for this session yet. "
+                            'Tell me the city, for example: "I am in City A".'
                         )
-                    return self._reply_and_record_brain_v2_turn(
-                        user_input,
-                        response,
-                        source,
-                        metadata={"skip_candidate_extraction": True},
-                    )
-                explicit_remember = is_explicit_remember_command(brain_memory_text)
-                if should_ask_memory_scope(
-                    statement=brain_memory_text,
-                    candidate_type=inferred.candidate_type,
-                    explicit_remember=explicit_remember,
-                ):
-                    self._pending_memory_choice = PendingMemoryChoice(
-                        statement=brain_memory_text,
-                        candidate_type=inferred.candidate_type,
-                    )
-                    response = format_memory_scope_question(brain_memory_text)
-                    return self._reply_and_record_brain_v2_turn(
-                        user_input,
-                        response,
-                        source,
-                        metadata={"skip_candidate_extraction": True},
-                    )
+                else:
+                    place = ""
+                    if decision.inferred and decision.inferred.metadata:
+                        place = str(
+                            decision.inferred.metadata.get("current_location") or ""
+                        ).strip()
+                    response = format_session_location_ack(place)
                 return self._reply_and_record_brain_v2_turn(
                     user_input,
-                    self._commit_owner_memory_declaration(
-                        user_input,
-                        brain_memory_text,
-                        source,
-                        inferred=inferred,
-                    ),
+                    response,
                     source,
                     metadata={"skip_candidate_extraction": True},
                 )
-            response = self._brain_v2_unavailable_message()
-            return self._reply_and_record_brain_v2_turn(user_input, response, source)
+
+            if decision.route == MemoryPolicyRoute.EPISODE_ONLY and decision.reason in {
+                "casual_filler",
+                "quality_reject",
+                "uncertain_hypothetical",
+                "weak_fact",
+            }:
+                if decision.reason == "casual_filler":
+                    response = "Got it."
+                else:
+                    response = self._route_to_agent(lowered)
+                    if not response:
+                        response = self._get_ai_response(
+                            lowered, dominant_emotion, emotion_score
+                        )
+                    if response and emotion_score > 0.4:
+                        response = self.emotional_iq.adapt_response(
+                            response,
+                            dominant_emotion,
+                            emotion_score,
+                            user_input=user_input,
+                        )
+                    if response:
+                        response = self.personality.format_response(response)
+                return self._reply_and_record_brain_v2_turn(
+                    user_input,
+                    response or "",
+                    source,
+                    metadata={
+                        "skip_candidate_extraction": True,
+                        "memory_policy_route": decision.route.value,
+                        "memory_policy_reason": decision.reason,
+                    },
+                )
+
+            if decision.route in (
+                MemoryPolicyRoute.ACTIVE_MEMORY,
+                MemoryPolicyRoute.REVIEW_QUEUE,
+            ):
+                if self._brain_v2_runtime_ready():
+                    return self._reply_and_record_brain_v2_turn(
+                        user_input,
+                        self._commit_owner_memory_declaration(
+                            user_input,
+                            brain_memory_text,
+                            source,
+                            inferred=decision.inferred,
+                        ),
+                        source,
+                        metadata={"skip_candidate_extraction": True},
+                    )
+                response = self._brain_v2_unavailable_message()
+                return self._reply_and_record_brain_v2_turn(user_input, response, source)
 
         if (
             self._brain_v2_authority_enabled()
@@ -1101,25 +1124,15 @@ class HIKARI_Orchestrator:
             if inferred.candidate_type == "identity" and (
                 identity_meta.get("preferred_name") or identity_meta.get("legal_name")
             ):
-                legal = str(identity_meta.get("legal_name", "")).strip()
-                preferred = str(identity_meta.get("preferred_name", "")).strip()
-                if legal and preferred:
-                    return (
-                        f"Got it. Your legal name is {legal} in Brain v2, "
-                        f"and I'll call you {preferred}."
-                    )
-                if legal:
-                    return f"Got it. I will remember your legal name as {legal} in Brain v2."
-                if preferred:
-                    return f"Got it. I'll call you {preferred} and remember that in Brain v2."
+                return format_identity_saved(
+                    legal=str(identity_meta.get("legal_name", "")),
+                    preferred=str(identity_meta.get("preferred_name", "")),
+                )
             if is_explicit_remember_command(brain_memory_text):
-                return "Got it. I will remember that in Brain v2."
+                return format_saved_to_memory_reply()
             return format_saved_to_memory_reply()
         if outcome.get("status") == "pending_conflict":
-            return (
-                "I already have a different reviewed memory for that. "
-                "I kept your update for confirmation instead of silently replacing it."
-            )
+            return format_memory_conflict_brief()
         if outcome.get("status") == "pending_review":
             return format_save_needs_review_reply()
         return format_save_needs_review_reply()

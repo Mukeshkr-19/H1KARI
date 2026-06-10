@@ -6,11 +6,10 @@ Use your real names/places locally only. Never commit these facts to the repo.
 
 | You say | HIKARI does |
 |---------|-------------|
-| Name, home, school, graduation, preferences | **Auto-saves** (no ask) |
+| Owner facts (name, home, school, relations, preferences, etc.) | **Auto-saves** locally — quiet "Got it" (no ask) |
 | `Remember this: ...` | **Auto-saves** immediately |
-| `I am in <TRIP_CITY>` | **Session only** (trip city) |
-| Vague / ambiguous chat | **Asks:** save in memory or session only? |
-| Family / third-party facts | **Asks:** save in memory or session only? |
+| `I am in <TRIP_CITY>` | **Session only** (trip city, not home) |
+| Third-party / sensitive facts | **Queued for review** (no save-vs-session ask) |
 | Guest intro (`i am X talking to you`) | Guest mode - not owner memory |
 
 Voice answers are natural - no `From reviewed memory:` prefix.
@@ -53,7 +52,7 @@ Voice answers are natural - no `From reviewed memory:` prefix.
 
 ## D. Must NOT happen
 
-- Ask to save name or home
+- "Save in memory or session only?" on any owner fact
 - Legal name includes "But You Can Call"
 - Guest intro in pending queue as owner memory
 

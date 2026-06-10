@@ -155,7 +155,7 @@ def test_safe_owner_location_auto_trusts_brain_v2_without_neural_fact_write(epis
 
     brain.remember_fact.assert_not_called()
     brain.neural.learn_from_text.assert_not_called()
-    assert "remember that in brain v2" in reply.lower()
+    assert "got it" in reply.lower()
     assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
     accepted = episode_db.get_active_accepted_memories(limit=10)
     assert any("city a" in memory.statement.lower() for memory in accepted)
@@ -171,7 +171,7 @@ def test_identity_declaration_is_auto_trusted_before_recall(episode_db, neural_d
 
     reply = _teach_long_term(orch, "My name is Owner A.")
 
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
     assert "do not have a reviewed memory" not in reply.lower()
     brain.answer.assert_not_called()
     brain.remember_fact.assert_not_called()
@@ -211,7 +211,7 @@ def test_current_location_is_available_immediately_in_session(episode_db, neural
     orch = _minimal_orchestrator(coord, brain)
 
     reply = orch.process_input("Right now I'm in City B.")
-    assert "current location for this session" in reply.lower()
+    assert "session" in reply.lower() and "city b" in reply.lower()
     answer = orch.process_input("where am I now?")
     assert "for this session" in answer.lower()
     assert "city b" in answer.lower()
@@ -227,8 +227,8 @@ def test_conflicting_owner_location_stays_pending(episode_db, neural_db):
 
     save_reply = _teach_long_term(orch, "I live in City B.")
     assert (
-        "different reviewed memory" in save_reply.lower()
-        or "confirmation" in save_reply.lower()
+        "different" in save_reply.lower()
+        or "review" in save_reply.lower()
     )
     where = orch.process_input("where do I live?")
     assert "city a" in where.lower()
@@ -240,10 +240,9 @@ def test_other_person_fact_remains_review_gated(episode_db, neural_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    ask_reply = orch.process_input("My partner Person B studies at School A.")
-    assert _asks_save_scope(ask_reply)
-    save_reply = orch.process_input("save in memory")
-    assert "review" in save_reply.lower() or "queued" in save_reply.lower()
+    reply = orch.process_input("My partner Person B studies at School A.")
+    assert not _asks_save_scope(reply)
+    assert "review" in reply.lower() or "noted" in reply.lower()
     assert not episode_db.get_active_accepted_memories(limit=10)
     pending = episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
     assert any("person b" in candidate.statement.lower() for candidate in pending)

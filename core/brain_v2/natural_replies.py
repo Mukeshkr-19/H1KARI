@@ -59,6 +59,43 @@ def format_owner_pending_note() -> str:
     return "Got it - I noted that. Say 'remember this' if you want it saved right away."
 
 
+def format_identity_saved(
+    *,
+    legal: str = "",
+    preferred: str = "",
+) -> str:
+    """Voice-quiet acknowledgment after identity is stored."""
+    preferred = (preferred or "").strip()
+    legal = (legal or "").strip()
+    if preferred:
+        return f"Got it, {preferred}."
+    if legal:
+        return f"Got it, {legal}."
+    return "Got it."
+
+
+def format_fact_saved() -> str:
+    return "Got it."
+
+
+def format_session_location_ack(place: str = "") -> str:
+    place = (place or "").strip().rstrip(".")
+    if place:
+        return f"Got it. I'll use {place} for this session."
+    return "Got it. I'll use that for this session."
+
+
+def format_review_queued_quiet() -> str:
+    return "Got it - I noted that for review."
+
+
+def format_memory_conflict_brief() -> str:
+    return (
+        "I already have something different saved for that. "
+        "I kept your update for review."
+    )
+
+
 def format_guest_visit_recall(
     guest_name: str,
     *,

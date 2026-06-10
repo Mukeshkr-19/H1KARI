@@ -38,8 +38,8 @@ def test_should_not_ask_for_stable_home():
     )
 
 
-def test_should_ask_for_third_party_education():
-    assert should_ask_memory_scope(
+def test_never_asks_save_vs_session_even_for_third_party_education():
+    assert not should_ask_memory_scope(
         statement="My partner Person B studies at School A.",
         candidate_type="education",
         explicit_remember=False,
@@ -99,6 +99,7 @@ def test_session_only_confirmations(phrase: str):
 
 def test_scope_question_is_voice_friendly():
     q = format_memory_scope_question("I live in City A")
-    assert "long-term memory" in q.lower()
-    assert "session only" in q.lower()
+    assert "save in memory" not in q.lower()
+    assert "session only" not in q.lower()
+    assert q == 'Got it - "I live in City A".'
     assert is_explicit_remember_command("remember this: I prefer tea") is True

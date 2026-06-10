@@ -73,7 +73,7 @@ def test_owner_legal_and_preferred_name_stored_separately(episode_db):
         orch,
         "My real name is Owner A but I told you to call me Person B.",
     )
-    assert "legal name" in reply.lower() or "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
 
     legal = coord.retrieval.answer_from_accepted("what is my real name?")
     casual = coord.retrieval.answer_from_accepted("what is my name?")

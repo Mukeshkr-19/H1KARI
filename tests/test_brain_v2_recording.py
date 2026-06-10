@@ -64,7 +64,7 @@ def test_memory_statement_got_it_records_brain_v2_turn(episode_db):
             source="text",
         )
 
-    assert "remember that in brain v2" in response.lower()
+    assert "got it" in response.lower()
     orch.brain.remember_fact.assert_not_called()
     orch.brain.remember_turn.assert_not_called()
     accepted = episode_db.get_active_accepted_memories(limit=10)

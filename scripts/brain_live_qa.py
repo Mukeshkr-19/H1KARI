@@ -69,16 +69,23 @@ def _asks_save_scope(reply: str) -> bool:
     return "save in memory" in low and "session only" in low
 
 
-def _saved_long_term(reply: str) -> bool:
+def _no_admin_memory_language(reply: str) -> bool:
     low = (reply or "").lower()
-    return "saved in long-term" in low or "brain v2" in low or "remember" in low
+    if _asks_save_scope(reply):
+        return False
+    banned = ("brain v2", "long-term memory", "save in memory")
+    return not any(token in low for token in banned)
+
+
+def _quiet_memory_saved(reply: str) -> bool:
+    low = (reply or "").lower()
+    if not _no_admin_memory_language(reply):
+        return False
+    return "got it" in low
 
 
 def _auto_saved_core(reply: str) -> bool:
-    low = (reply or "").lower()
-    if "save in memory" in low and "session only" in low:
-        return False
-    return _saved_long_term(reply)
+    return _quiet_memory_saved(reply)
 
 
 def _weather_ok(reply: str) -> bool:
@@ -181,7 +188,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: My name is Owner A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "identity accepted",
                 ),
                 Turn(
@@ -260,7 +267,7 @@ def main() -> int:
             [
                 Turn(
                     "My real name is Owner Legal but call me Person C",
-                    _all_of(_auto_saved_core, _has("owner legal")),
+                    _auto_saved_core,
                     "dual identity stored",
                 ),
                 Turn(
@@ -301,7 +308,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: I live in City A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "stable home accepted",
                 ),
                 Turn(
@@ -338,7 +345,7 @@ def main() -> int:
                 ),
                 Turn(
                     "I am in City B",
-                    _has("current location"),
+                    _all_of(_has("city b"), _has("session")),
                     "declare city b",
                 ),
                 Turn(
@@ -354,7 +361,11 @@ def main() -> int:
         _run_scenario(
             "meta_phrase",
             [
-                Turn("I am in City B", _has("current location"), "set session city"),
+                Turn(
+                    "I am in City B",
+                    _all_of(_has("city b"), _has("session")),
+                    "set session city",
+                ),
                 Turn(
                     "the city im in now",
                     _all_of(_has("city b"), _lacks("the city im in now")),
@@ -370,10 +381,9 @@ def main() -> int:
             [
                 Turn(
                     "Person C is my sister",
-                    _asks_save_scope,
-                    "sister asks save scope",
+                    _auto_saved_core,
+                    "sister auto saved",
                 ),
-                Turn("save in memory", _saved_long_term, "sister saved"),
                 Turn(
                     "who is my sister?",
                     _has("person c"),
@@ -389,7 +399,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: I will meet Person C for lunch tomorrow.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "plan accepted",
                 ),
                 Turn(
@@ -407,7 +417,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: I live in City A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "seed profile fact",
                 ),
                 Turn(
@@ -425,12 +435,12 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: I live in City A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "seed location",
                 ),
                 Turn(
                     "Remember this: I prefer Topic A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "seed preference",
                 ),
                 Turn(
@@ -466,7 +476,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: My girlfriend is Person C.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "owner relationship stored",
                 ),
                 Turn(
@@ -490,7 +500,11 @@ def main() -> int:
         _run_scenario(
             "guest_restore_owner_location",
             [
-                Turn("I am in City B", _has("current location"), "owner session city"),
+                Turn(
+                    "I am in City B",
+                    _all_of(_has("city b"), _has("session")),
+                    "owner session city",
+                ),
                 Turn("I am Guest B talking to you now", _has("guest b"), "guest intro"),
                 Turn(
                     "where am i now?",
@@ -524,7 +538,11 @@ def main() -> int:
         _run_scenario(
             "weather_session",
             [
-                Turn("I am in City B", _has("current location"), "set session city"),
+                Turn(
+                    "I am in City B",
+                    _all_of(_has("city b"), _has("session")),
+                    "set session city",
+                ),
                 Turn(
                     "whats the weather outside",
                     lambda r: "city b" in r.lower() and _weather_ok(r),
@@ -545,7 +563,7 @@ def main() -> int:
             [
                 Turn(
                     "I am in my hometown which is City B for summer vacation",
-                    _has("current location"),
+                    _all_of(_has("city b"), _has("session")),
                     "noisy declare accepted",
                 ),
                 Turn(
@@ -568,7 +586,7 @@ def main() -> int:
             [
                 Turn(
                     "Remember this: I live in City A.",
-                    _has("brain v2"),
+                    _quiet_memory_saved,
                     "stable home for weather",
                 ),
                 Turn(
@@ -589,6 +607,38 @@ def main() -> int:
         if allow_open and "opening" in low:
             return True
         return "will not store that as a brain v2 memory" in low
+
+    results.append(
+        _run_scenario(
+            "memory_policy_quiet",
+            [
+                Turn(
+                    "My real name is Owner Legal but you can call me Person C",
+                    _all_of(_quiet_memory_saved, _no_admin_memory_language),
+                    "identity saves without admin prompt",
+                ),
+                Turn(
+                    "I live in City A.",
+                    _all_of(_quiet_memory_saved, _no_admin_memory_language),
+                    "home saves without admin prompt",
+                ),
+                Turn(
+                    "I am in City B",
+                    _all_of(_has("session"), _no_admin_memory_language),
+                    "trip city session only quiet",
+                ),
+                Turn(
+                    "haha okay",
+                    _all_of(
+                        _has("got it"),
+                        _no_admin_memory_language,
+                        _lacks("trouble thinking"),
+                    ),
+                    "filler deterministic, no save prompt",
+                ),
+            ],
+        )
+    )
 
     results.append(
         _run_scenario(

@@ -102,7 +102,7 @@ def test_call_me_identity_auto_trusted(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "you can call me Person C")
-    assert "brain v2" in reply.lower() or "call you" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
 
 
 def test_weather_resolves_session_city(episode_db):

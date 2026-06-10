@@ -158,7 +158,7 @@ def test_explicit_future_plan_is_not_blocked_as_task_action(episode_db):
     orch._route_to_agent.return_value = None
 
     reply = orch.process_input(phrase)
-    assert "brain v2" in reply.lower()
+    assert "got it" in reply.lower()
 
     accepted = episode_db.get_active_accepted_memories(limit=10)
     assert any("meet person c" in mem.statement.lower() for mem in accepted)
@@ -214,7 +214,7 @@ def test_person_c_is_my_sister_auto_accept_and_recall(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "Person C is my sister")
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
 
     answer = orch.process_input("who is my sister?")
     assert "person c" in answer.lower()
@@ -225,7 +225,7 @@ def test_bare_my_name_is_auto_trusted(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "My name is Owner A.")
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
     answer = orch.process_input("what is my name?")
     assert "owner a" in answer.lower()
 
@@ -235,7 +235,7 @@ def test_bare_preference_auto_trusted(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "I prefer Topic A.")
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic a" in profile.lower()
 
@@ -245,7 +245,7 @@ def test_bare_dislike_auto_trusted(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "I don't like Topic B.")
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic b" in profile.lower()
 
@@ -255,7 +255,7 @@ def test_bare_education_auto_trusted(episode_db):
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = _teach_long_term(orch, "I study at School A.")
-    assert "brain v2" in reply.lower() or "saved" in reply.lower()
+    assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "school a" in profile.lower()
 
