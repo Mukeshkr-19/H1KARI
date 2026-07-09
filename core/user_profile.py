@@ -20,7 +20,13 @@ PATTERNS_FILE = DATA_DIR / "behavior_patterns.json"
 RELATIONSHIPS_FILE = DATA_DIR / "relationships.json"
 
 
-_NAME_CAPTURE = r"([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)*)"
+_NAME_WORD = (
+    r"(?!and\b|but\b|because\b|who\b|that\b|which\b|where\b|when\b|"
+    r"likes?\b|loves?\b|hates?\b|works?\b|studies?\b|goes?\b|went\b|"
+    r"has\b|have\b|is\b|was\b|are\b|were\b|she\b|he\b|they\b)"
+    r"[A-Za-z][a-z]*"
+)
+_NAME_CAPTURE = rf"({_NAME_WORD}(?:\s+{_NAME_WORD}){{0,3}})"
 
 
 class UserProfile:

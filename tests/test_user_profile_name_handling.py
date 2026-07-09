@@ -23,6 +23,14 @@ class TestUserProfileNameHandling(unittest.TestCase):
         self.assertEqual(rel["name"], "Jane Doe")
         self.assertEqual(rel["relationship"], "spouse")
 
+    def test_multi_word_name_stops_before_rest_of_sentence(self):
+        self.profile.extract_info_from_conversation(
+            "My wife is Jane Doe and she likes tea",
+            "",
+        )
+        self.assertIn("jane doe", self.profile.relationships)
+        self.assertNotIn("jane doe and she likes tea", self.profile.relationships)
+
     def test_normalized_key_collapses_whitespace(self):
         self.profile.add_relationship("Jane  Doe", "friend")
         self.profile.add_relationship("Jane Doe", "colleague")
