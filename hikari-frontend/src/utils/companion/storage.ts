@@ -23,12 +23,14 @@ export function loadCompanionPrefs(): CompanionUiPrefs {
       return { companionType: DEFAULT_COMPANION, presentation: DEFAULT_PRESENTATION };
     }
     const data = JSON.parse(raw) as { companionType?: string; presentation?: string };
+    const companionType = data.companionType ?? "";
+    const presentation = data.presentation ?? "";
     return {
-      companionType: isCompanionType(data.companionType ?? "")
-        ? data.companionType
+      companionType: isCompanionType(companionType)
+        ? companionType
         : DEFAULT_COMPANION,
-      presentation: isPresentation(data.presentation ?? "")
-        ? data.presentation
+      presentation: isPresentation(presentation)
+        ? presentation
         : DEFAULT_PRESENTATION,
     };
   } catch {
