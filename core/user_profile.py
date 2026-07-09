@@ -20,6 +20,9 @@ PATTERNS_FILE = DATA_DIR / "behavior_patterns.json"
 RELATIONSHIPS_FILE = DATA_DIR / "relationships.json"
 
 
+_NAME_CAPTURE = r"([A-Za-z][a-z]*(?:\s+[A-Za-z][a-z]*)*)"
+
+
 class UserProfile:
     """Deep user profile that learns and adapts over time"""
 
@@ -192,13 +195,22 @@ class UserProfile:
 
     def add_relationship(self, name: str, relationship: str, details: Dict = None):
         """Learn about a person in user's life"""
-        self.relationships[name.lower()] = {
-            "name": name,
+        normalized = " ".join((name or "").split()).lower()
+        if not normalized:
+            return
+        display_name = " ".join(piece.capitalize() for piece in normalized.split())
+        self.relationships[normalized] = {
+            "name": display_name,
             "relationship": relationship,
             "details": details or {},
-            "first_mentioned": datetime.now().isoformat(),
+            "first_mentioned": self.relationships.get(normalized, {}).get(
+                "first_mentioned", datetime.now().isoformat()
+            ),
             "last_mentioned": datetime.now().isoformat(),
-            "mention_count": 1,
+            "mention_count": self.relationships.get(normalized, {}).get(
+                "mention_count", 0
+            )
+            + 1,
         }
         self._save()
 
@@ -356,20 +368,21 @@ class UserProfile:
 
         # Extract names and relationships
         name_patterns = [
-            (r"my (?:wife|husband|partner) is (\w+)", "spouse"),
-            (r"my (?:mom|mother) is (\w+)", "mother"),
-            (r"my (?:dad|father) is (\w+)", "father"),
-            (r"my (?:brother|sister) is (\w+)", "sibling"),
-            (r"my (?:son|daughter) is (\w+)", "child"),
-            (r"my (?:friend|colleague|boss) (\w+)", "friend"),
-            (r"i work with (\w+)", "colleague"),
-            (r"i know (\w+)", "acquaintance"),
+            (rf"my (?:wife|husband|partner) is {_NAME_CAPTURE}", "spouse"),
+            (rf"my (?:mom|mother) is {_NAME_CAPTURE}", "mother"),
+            (rf"my (?:dad|father) is {_NAME_CAPTURE}", "father"),
+            (rf"my (?:brother|sister) is {_NAME_CAPTURE}", "sibling"),
+            (rf"my (?:son|daughter) is {_NAME_CAPTURE}", "child"),
+            (rf"my (?:friend|colleague|boss) {_NAME_CAPTURE}", "friend"),
+            (rf"i work with {_NAME_CAPTURE}", "colleague"),
+            (rf"i know {_NAME_CAPTURE}", "acquaintance"),
         ]
 
         for pattern, relationship in name_patterns:
-            match = re.search(pattern, lower)
+            match = re.search(pattern, lower, re.I)
             if match:
-                name = match.group(1).capitalize()
+                raw_name = match.group(1).strip()
+                name = " ".join(piece.capitalize() for piece in raw_name.split())
                 self.add_relationship(name, relationship)
 
         # Extract preferences
