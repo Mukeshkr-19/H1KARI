@@ -235,6 +235,26 @@ def main():
             "and audio-egress policy without loading models."
         ),
     )
+    runtime_modes.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize the private HIKARI runtime layout without downloading models.",
+    )
+    runtime_modes.add_argument(
+        "--init-plan",
+        action="store_true",
+        help="Preview runtime initialization without writing files.",
+    )
+    parser.add_argument(
+        "--startup-mode",
+        choices=("text", "voice"),
+        help="Required with --init or --init-plan.",
+    )
+    parser.add_argument(
+        "--voice-backend",
+        choices=("openai-whisper", "faster-whisper", "google-speech"),
+        help="Required for voice startup; records download and audio-egress disclosure.",
+    )
     parser.add_argument(
         "--brain-v2-status",
         action="store_true",
@@ -449,6 +469,16 @@ def main():
 
     args = parser.parse_args()
 
+    init_requested = args.init or args.init_plan
+    if init_requested and args.startup_mode is None:
+        parser.error("--init and --init-plan require --startup-mode")
+    if not init_requested and (args.startup_mode or args.voice_backend):
+        parser.error("--startup-mode and --voice-backend require --init or --init-plan")
+    if args.startup_mode == "voice" and args.voice_backend is None:
+        parser.error("voice startup requires --voice-backend")
+    if args.startup_mode == "text" and args.voice_backend is not None:
+        parser.error("--voice-backend cannot be used with text startup")
+
     if args.confirm_promote is not None and not args.brain_v2_accept:
         parser.error("--confirm-promote requires --brain-v2-accept")
     if args.confirm_promote is not None and args.brain_v2_accept_no_promote:
@@ -488,6 +518,25 @@ def main():
     if args.verbose:
         os.environ["HIKARI_VERBOSE"] = "1"
         os.environ["HIKARI_QUIET"] = "0"
+
+    if init_requested:
+        from core.runtime_setup import (
+            format_initialization,
+            initialization_plan,
+            initialize_runtime_home,
+        )
+
+        if args.init_plan:
+            result = initialization_plan(args.startup_mode, args.voice_backend)
+            print(format_initialization(result, applied=False))
+            raise SystemExit(1 if result["blockers"] else 0)
+        try:
+            result = initialize_runtime_home(args.startup_mode, args.voice_backend)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime initialization failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(format_initialization(result, applied=True))
+        raise SystemExit(0)
 
     if args.memory_status:
         from core.memory_status import format_memory_status_report

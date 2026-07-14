@@ -12,7 +12,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-RUNTIME_MODES = ("--text", "--daemon", "--tray", "--server")
+RUNTIME_MODES = ("--text", "--daemon", "--tray", "--server", "--init", "--init-plan")
 
 
 @pytest.mark.parametrize("first,second", itertools.combinations(RUNTIME_MODES, 2))
