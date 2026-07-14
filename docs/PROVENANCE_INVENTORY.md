@@ -83,14 +83,19 @@ Registry license fields are evidence pointers, not a substitute for reviewing th
 
 | Model or service | Location/use | Bundled? | Provenance and release state |
 |---|---|---:|---|
-| OpenAI Whisper `base` | `core/voice.py`, `services/hikari_daemon.py` | no; downloaded at runtime | code package reports MIT; weight origin, cache location, checksum, size, and user disclosure still need a model record |
-| faster-whisper `base` | always-on and daemon services | no; downloaded at runtime | undeclared optional dependency; conversion/runtime and weight record required |
+| OpenAI Whisper `base` | `core/voice.py` | no; downloaded at runtime | code package reports MIT; expected cache and offline readiness are visible through `hikari.py --voice-status`; weight origin, checksum, size, and user disclosure still need a model record |
+| faster-whisper `base` | always-on and wake daemon services | no; downloaded at runtime | direct dependency; expected Hugging Face cache and offline readiness are visible through `hikari.py --voice-status`; conversion/runtime and weight record still required |
 | `speechbrain/spkrec-ecapa-voxceleb` | `core/speaker_auth.py` | no; downloaded at runtime | exact model id is recorded; model-card license, training-data limits, cache/checksum, and biometric disclosure must be reviewed |
 | Ollama models | `config/providers.yaml` | no | local provider strings only; exact tags, upstream model licenses, sizes, and availability are unverified |
 | Google, Groq, OpenRouter, Cerebras, DeepSeek, NVIDIA, Cohere | `config/providers.yaml` and `core/router.py` | no | hosted-service configuration; model names, terms, retention, regions, and data egress require provider records before release claims |
 | DuckDuckGo, BBC feeds, OpenWeather | `agents/research.py` | no | external endpoints; request fields, terms, rate limits, retention, and failure behavior require service records |
 
 No model weights, datasets, ONNX files, GGUF files, or audio samples are tracked in the repository.
+
+`hikari.py --voice-status` is a read-only inspection path. It checks package and
+expected cache-path metadata without importing model packages, downloading weights,
+or reading the speaker enrollment file. It also identifies the Google Speech fallback
+as a possible off-device audio-egress path.
 
 ## Prompt inventory
 

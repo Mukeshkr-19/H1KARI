@@ -195,7 +195,6 @@ def verify_speaker(audio) -> bool:
 
 
 sr = None
-whisper_model = None
 faster_whisper_model = None
 np = None
 r = None
@@ -204,7 +203,7 @@ _audio_initialized = False
 
 def initialize_audio_backends() -> bool:
     """Initialize speech dependencies once, when the daemon actually starts."""
-    global _audio_initialized, faster_whisper_model, whisper_model, np, sr, r
+    global _audio_initialized, faster_whisper_model, np, sr, r
 
     if _audio_initialized:
         return sr is not None
@@ -220,17 +219,6 @@ def initialize_audio_backends() -> bool:
         print("[OK] faster-whisper loaded!")
     except Exception as exc:
         print(f"[INFO] faster-whisper: {exc}")
-
-    try:
-        import whisper
-        import numpy as numpy_module
-
-        np = numpy_module
-        print("[OK] Whisper - loading model...")
-        whisper_model = whisper.load_model("base")
-        print("[OK] Whisper model loaded!")
-    except Exception as exc:
-        print(f"[MISSING] Whisper: {exc}")
 
     try:
         import speech_recognition as sr_module

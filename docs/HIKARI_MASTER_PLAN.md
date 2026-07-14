@@ -461,6 +461,7 @@ Run the applicable full set before declaring `develop` green:
 ```bash
 .venv/bin/python -m pytest tests -q
 .venv/bin/python hikari.py --doctor
+.venv/bin/python hikari.py --voice-status
 .venv/bin/python hikari.py --brain-v2-eval
 .venv/bin/python hikari.py --brain-live-qa
 .venv/bin/python tests/privacy_scan.py
