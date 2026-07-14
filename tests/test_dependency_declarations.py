@@ -39,6 +39,12 @@ def test_voice_backends_have_unambiguous_distribution_names():
     assert names.count("faster-whisper") == 1
 
 
+def test_supported_tray_dependency_is_declared():
+    names = _requirement_names()
+
+    assert names.count("rumps") == 1
+
+
 def test_known_unused_packages_are_not_declared():
     names = set(_requirement_names())
 
@@ -95,4 +101,5 @@ def test_platform_locks_are_exact_and_used_by_installer():
     assert runtime < development
     assert "pytest" in development
     assert set(_requirement_names()) <= runtime
+    assert {"rumps", "pyobjc-core", "pyobjc-framework-Cocoa"} <= runtime
     assert RUNTIME_LOCK.name in (REPO_ROOT / "install.sh").read_text(encoding="utf-8")

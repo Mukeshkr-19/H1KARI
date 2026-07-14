@@ -43,8 +43,11 @@ def test_status_reports_packages_caches_and_enrollment_without_reading(
     )
 
     assert status["models"]["openai_whisper_base"]["offline_ready"] is True
+    assert status["models"]["openai_whisper_base"]["sha256"] == voice_status.OPENAI_WHISPER_BASE_SHA256
     assert status["models"]["faster_whisper_base"]["offline_ready"] is True
+    assert status["models"]["faster_whisper_base"]["revision"] == voice_status.FASTER_WHISPER_REVISION
     assert status["models"]["speechbrain_ecapa"]["offline_ready"] is False
+    assert status["models"]["speechbrain_ecapa"]["revision"] == voice_status.SPEECHBRAIN_ECAPA_REVISION
     assert status["models"]["speechbrain_ecapa"]["enrollment_present"] is True
     assert status["policies"]["google_audio_egress"] is True
 
@@ -56,6 +59,9 @@ def test_formatter_discloses_egress_and_no_load_contract(monkeypatch, tmp_path: 
     report = voice_status.format_voice_status(status)
 
     assert "read-only; no models loaded" in report
+    assert voice_status.OPENAI_WHISPER_BASE_SHA256 in report
+    assert voice_status.FASTER_WHISPER_REVISION in report
+    assert voice_status.SPEECHBRAIN_ECAPA_REVISION in report
     assert "contents not read" in report
     assert "send captured audio off-device" in report
 
@@ -90,3 +96,9 @@ def test_voice_status_cli_does_not_import_model_packages(tmp_path: Path):
     assert "Voice backend status" in result.stdout
     assert "Google fallback" in result.stdout
     assert not marker.exists()
+
+
+def test_runtime_download_sites_use_reviewed_model_revisions():
+    daemon = (REPO_ROOT / "services" / "hikari_daemon.py").read_text(encoding="utf-8")
+
+    assert "revision=FASTER_WHISPER_REVISION" in daemon

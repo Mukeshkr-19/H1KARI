@@ -10,6 +10,13 @@ from typing import Mapping
 from core.runtime_paths import hikari_home
 
 
+FASTER_WHISPER_REVISION = "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
+SPEECHBRAIN_ECAPA_REVISION = "0f99f2d0ebe89ac095bcc5903c4dd8f72b367286"
+OPENAI_WHISPER_BASE_SHA256 = (
+    "ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e"
+)
+
+
 def _installed(module: str) -> bool:
     try:
         return find_spec(module) is not None
@@ -58,17 +65,20 @@ def collect_voice_status(
     }
     models = {
         "openai_whisper_base": {
+            "sha256": OPENAI_WHISPER_BASE_SHA256,
             "package_available": packages["openai_whisper"],
             "cache_path": _display_path(whisper_cache, home),
             "cache_present": whisper_cache.is_file(),
         },
         "faster_whisper_base": {
+            "revision": FASTER_WHISPER_REVISION,
             "package_available": packages["faster_whisper"],
             "cache_path": _display_path(faster_cache, home),
             "cache_present": faster_cache.is_dir(),
         },
         "speechbrain_ecapa": {
             "model_id": "speechbrain/spkrec-ecapa-voxceleb",
+            "revision": SPEECHBRAIN_ECAPA_REVISION,
             "package_available": packages["speechbrain"],
             "cache_path": _display_path(speaker_cache, home),
             "cache_present": speaker_cache.is_dir(),
@@ -119,6 +129,10 @@ def format_voice_status(status: dict | None = None) -> str:
             f"cache={yes(model['cache_present'])}; "
             f"offline-ready={yes(model['offline_ready'])}"
         )
+        if "sha256" in model:
+            lines.append(f"  reviewed sha256: {model['sha256']}")
+        if "revision" in model:
+            lines.append(f"  reviewed revision: {model['revision']}")
         lines.append(f"  cache path: {model['cache_path']}")
 
     speaker = status["models"]["speechbrain_ecapa"]

@@ -103,6 +103,7 @@ def test_model_loader_uses_exact_id_and_private_cache_without_downloading(
     assert calls == [
         {
             "source": "speechbrain/spkrec-ecapa-voxceleb",
+            "revision": speaker_auth.SPEECHBRAIN_ECAPA_REVISION,
             "savedir": str(cache / "speechbrain_spkrec_ecapa"),
         }
     ]

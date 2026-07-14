@@ -24,6 +24,8 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_ROOT)
 
+from core.voice_status import FASTER_WHISPER_REVISION
+
 # Speaker verification (local-first); must run after sys.path includes repo root
 try:
     from core.speaker_auth import SpeakerAuth
@@ -215,7 +217,12 @@ def initialize_audio_backends() -> bool:
 
         np = numpy_module
         print("[OK] faster-whisper loading...")
-        faster_whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        faster_whisper_model = WhisperModel(
+            "base",
+            device="cpu",
+            compute_type="int8",
+            revision=FASTER_WHISPER_REVISION,
+        )
         print("[OK] faster-whisper loaded!")
     except Exception as exc:
         print(f"[INFO] faster-whisper: {exc}")

@@ -254,6 +254,8 @@ Exit:
 - every shipped dependency and asset has known provenance
 - no final license is added before provenance review and owner approval
 
+Completion evidence: `docs/PHASE_0_COMPLETION.md`.
+
 ### Phase 1 - Safe companion kernel
 
 Outcome: one resumable companion task can safely read and explain a user-approved document.
@@ -524,7 +526,7 @@ Long-term success means a parent, child, person using assistive technology, and 
 3. ~~Establish and record the verified `develop` baseline.~~
 4. ~~Intake the smallest high-confidence safety/runtime fixes through separate branches.~~
 5. ~~Publish the WP-001 provenance/component inventory without selecting a final project license.~~
-6. Execute the focused WP-001 remediation branches recorded in `docs/PROVENANCE_INVENTORY.md`.
+6. ~~Execute the focused WP-001 remediation branches recorded in `docs/PROVENANCE_INVENTORY.md`.~~
 7. ~~Execute the prioritized WP-003 gaps in `docs/CHARACTERIZATION_MATRIX.md` before architectural refactors.~~
 8. ~~Establish WP-004 continuous checks for the full Python suite, privacy and protocol contracts, locked dependencies, and the frontend release gates.~~
 9. ~~Define WP-005 canonical checkout/runtime naming and preserve legacy launcher compatibility.~~

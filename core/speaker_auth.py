@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from core.runtime_paths import legacy_data_dir
+from core.voice_status import SPEECHBRAIN_ECAPA_REVISION
 
 
 VOICE_AUTH_FILE = legacy_data_dir() / "voice_auth.json"
@@ -176,6 +177,7 @@ class SpeakerAuth:
         # Downloads model weights into HF_HOME on first run
         self._model = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
+            revision=SPEECHBRAIN_ECAPA_REVISION,
             savedir=str(HF_CACHE_DIR / "speechbrain_spkrec_ecapa"),
         )
 
