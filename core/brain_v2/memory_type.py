@@ -433,14 +433,7 @@ def _title_label(value: str) -> str:
 
 def _extract_user_school(text: str, low: str) -> Optional[str]:
     m = re.search(
-        r"\b(university\s+at\s+city\s+a|university\s+in\s+city\s+a|north\s+city\s+college)\b",
-        low,
-    )
-    if m:
-        return _title_label(m.group(1))
-
-    m = re.search(
-        r"\bi\s+study\s+(?:at|in)\s+(?:the\s+)?(?:university\s+at\s+)?(.+?)"
+        r"\bi\s+study\s+(?:at|in)\s+(?:the\s+)?(.+?)"
         r"(?:\s+as\s+a|\s+as\s+an|\s*$|\.)",
         low,
     )
