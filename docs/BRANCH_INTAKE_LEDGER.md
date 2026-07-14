@@ -23,6 +23,8 @@ This ledger controls the review of pre-existing branches before any change enter
 
 The warnings are known dependency/deprecation notices plus an unwritable pytest cache in the restricted worktree. They did not change test results.
 
+Current verified `develop`: `5eeacba` with 866 passing tests. Privacy and diff checks pass, and public `main` remains unchanged at `6b481b7`.
+
 ## Status legend
 
 - `ready`: small, understood, test-backed change suitable for a fresh intake branch
@@ -45,16 +47,16 @@ The warnings are known dependency/deprecation notices plus an unwritable pytest 
 | `fix/security-policy-path-whitelist` | enforce allowed paths in `SecurityPolicy` | defer | `SecurityPolicy` currently has no production callers. Merging would create a false safety claim. Implement as part of the real central action path. |
 | `fix/orchestrator-singleton-lock` | protect singleton initialization | integrated | Reworked with a deterministic constructor-count regression as `core/orchestrator-singleton-lock`; accepted commit `88bd4f5`. |
 | `fix/system-agent-music-flow` | remove unreachable clipboard restore block | integrated | Reworked with a behavior test as `fix/system-music-unreachable-code`; accepted commit `0487918`. |
-| `fix/exception-observability` | replace broad exception handlers across runtime paths | revise | Direction is useful, but it spans nine production files. Review each exception boundary and avoid converting recoverable optional-feature failures into crashes. |
-| `fix/runtime-guard-cleanups` | guard optional collaborators and runtime stubs | revise | Test-backed but touches unrelated optional systems. Split into coherent issue-family intakes. |
+| `fix/exception-observability` | replace broad exception handlers across runtime paths | revise | Action-result parsing was accepted separately as `fix/action-result-parsing` at `d932b29`. The remaining files still require boundary-specific review so recoverable optional-feature failures do not become crashes. |
+| `fix/runtime-guard-cleanups` | guard optional collaborators and runtime stubs | reject | The tray guard duplicates the accepted singleton lock, CodeAgent already falls back to the AI router, and `ProactiveIntelligence` has no production constructor while its intended collaborators implement the required methods. |
 | `fix/reminders-and-speech-runtime` | scheduler and speech runtime corrections | characterize | Side-effect and persistence behavior needs focused scheduling/voice characterization before intake. |
-| `fix/runtime-small-bugs` | browser, build executor, and menubar fixes | revise | Three unrelated subsystems should be separated into independent intake branches. |
+| `fix/runtime-small-bugs` | browser, build executor, and menubar fixes | integrated | Reworked as three focused branches: `safety/browser-applescript-quoting` at `c062515`, `fix/build-executor-plan-state` at `b00a477`, and `fix/menubar-runtime-fallback` at `2e2aed4`. |
 | `fix/neural-graph-algorithms` | graph algorithm corrections | characterize | Substantial algorithm change. Run focused graph tests, inspect complexity and empty/cyclic cases, then full memory gates. |
 | `fix/voice-verification-math` | speaker verification scoring math | characterize | Identity-sensitive calculation. Requires threshold/edge-case review and focused voice regression tests before acceptance. |
 | `fix/brain-v2-fixture-leakage` | remove hardcoded clean-room fixtures | revise | Privacy intent is valid, but later Brain and profile work may overlap. Re-diff against current `develop` and keep only non-superseded changes. |
 | `fix/hikari-daemon-runtime` | large daemon loop rewrite | characterize | Large deletion/rewrite with no dedicated test file in the branch. Capture startup, shutdown, speaker-lock, timeout, and error behavior first. |
 | `fix/router-provider-config-sync` | add one provider and synchronize fallback configuration | defer | Provider-specific configuration should follow the provider-neutral capability/router contract and a secrets/data-boundary review. |
-| `fix/frontend-pwa-icons` | point manifest entries to an existing image | ready | Minimal asset-reference fix. Verify manifest validity, frontend lint/build, and the installed-app icon behavior. |
+| `fix/frontend-pwa-icons` | provide valid manifest icon sizes | integrated | Reworked as `frontend/pwa-manifest-icons` at `b32dd17` with metadata-free 192px and 512px assets matching the manifest. |
 
 ## Integration log
 
@@ -65,6 +67,11 @@ The warnings are known dependency/deprecation notices plus an unwritable pytest 
 | `safety/server-pairing-pages` | `991e18d` | 2 focused tests; 857 full tests; privacy passed | 2 focused tests; privacy passed |
 | `core/orchestrator-singleton-lock` | `88bd4f5` | 1 focused test; 858 full tests; privacy passed | 1 focused test; privacy passed |
 | `fix/system-music-unreachable-code` | `0487918` | 1 focused test; 859 full tests; privacy passed | 1 focused test; privacy passed |
+| `frontend/pwa-manifest-icons` | `b32dd17` | manifest parse, exact dimensions, empty image metadata, privacy passed | asset and privacy checks passed |
+| `safety/browser-applescript-quoting` | `c062515` | 2 focused tests; 861 full tests; privacy passed | 2 focused tests; privacy passed |
+| `fix/build-executor-plan-state` | `b00a477` | 2 focused tests; 863 full tests; privacy passed | 2 focused tests; privacy passed |
+| `fix/menubar-runtime-fallback` | `2e2aed4` | import/path check; 864 full tests; privacy passed | 1 focused test; privacy passed |
+| `fix/action-result-parsing` | `d932b29` | 2 focused tests; 866 full tests; privacy passed | 2 focused tests; privacy passed |
 
 The increasing full-test count reflects the focused regression tests added by accepted branches.
 
@@ -81,9 +88,10 @@ The increasing full-test count reflects the focused regression tests added by ac
 
 1. ~~Orchestrator singleton lock~~
 2. ~~System music-flow deletion~~
-3. Frontend PWA icon reference
-4. Split runtime guard and small-bug changes
-5. Exception observability, reviewed file by file
+3. ~~Frontend PWA manifest icons~~
+4. ~~Split and integrate the valid runtime-small-bug changes~~
+5. ~~Reject the redundant or unreachable runtime-guard changes~~
+6. Exception observability, reviewed file by file; action-result parsing integrated
 
 ### Wave 3 - Side effects, voice, memory, and daemon behavior
 
