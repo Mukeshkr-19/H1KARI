@@ -1,7 +1,7 @@
 # WP-003 Characterization Matrix
 
 Status: active
-Baseline: `develop` at `a849f8e`
+Baseline: `develop` at `f23360c`
 Reviewed: 2026-07-13
 
 ## Purpose
@@ -23,11 +23,11 @@ This matrix records which current behaviors are protected before architectural m
 | Daemon lifecycle | one entrypoint, import-safe lazy audio initialization, one owned loop, graceful SIGINT/SIGTERM stop, timeout continuation, wake/active transitions, missing-dependency failure, speaker checks | high | Resolved in `test/daemon-lifecycle-characterization`. Keep model loading behind explicit startup and preserve fail-closed enrolled-speaker verification. | blocking regression gate |
 | Voice identity | similarity direction, degenerate cosine fallback, pitch edge cases, guest/owner session context, finite/dimension validation, private enrollment round trip, malformed-profile rejection, owner-only file mode, exact model/cache wiring, offline load failure | high | Resolved in `safety/voice-identity-failure-paths`. Tests use synthetic vectors and stubbed loaders only; preserve the no-weight-download and no-live-biometric rule. | blocking regression gate |
 | Voice recognition backends | no-load CLI status for installed packages, exact model ids, expected cache paths, offline readiness, component fallback order, and Google audio egress | high | Resolved in `feature/voice-backend-status`. Model weights still require provenance/checksum records before bundling or release claims. | blocking regression gate |
-| Frontend API behavior | source-level voice race tests, companion state machine, server voice event ordering, clean production build | medium | The frontend assumes pairing is sufficient but the server does not enforce it; protocol shapes are duplicated rather than generated/shared. First bind behavior to server authorization, then define a versioned schema boundary. | high |
+| Frontend API behavior | shared v1 JSON contract imported by Python and Next.js, bounded client validation, pairing version negotiation, backward-compatible omitted version, protected server authorization, source-level voice race tests, companion ordering, clean production build | high | Resolved in `feature/websocket-protocol-v1`. Incompatible field or message changes require a new protocol version. | blocking regression gate |
 | Frontend accessibility | some semantic labels and keyboard paths in source | low | No automated accessibility audit or representative manual checklist exists for the claimed client flow. Add after the protected protocol is stable. | medium |
 
 ## Execution order
 
-1. Define a versioned server/frontend message schema and add accessibility checks.
+1. Add automated accessibility checks and a representative manual client-flow checklist.
 
 Each item lands through its own branch. Brain v2 full gates remain mandatory for shared orchestration changes, and `main` remains unchanged until the owner explicitly authorizes a release merge.

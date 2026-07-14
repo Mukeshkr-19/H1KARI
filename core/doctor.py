@@ -169,6 +169,7 @@ def _check_required_paths() -> list[Check]:
         "core/neural_memory/db/memory_schema.sql",
         "agents",
         "services",
+        "protocol/hikari-v1.json",
         "skills",
         "tests",
         "hikari-frontend/package.json",

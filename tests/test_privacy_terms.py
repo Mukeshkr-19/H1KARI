@@ -47,6 +47,12 @@ def test_privacy_scan_includes_scanner_definition_files():
         assert rel in rels, f"{rel} must be included in public privacy scan scope"
 
 
+def test_privacy_scan_includes_protocol_contract():
+    paths = collect_public_source_files()
+    rels = {p.relative_to(REPO_ROOT).as_posix() for p in paths}
+    assert "protocol/hikari-v1.json" in rels
+
+
 def test_privacy_scanner_source_is_generic():
     """Scanner definition files must not embed legacy name lists or tuple encodings."""
     assert scanner_source_is_generic()

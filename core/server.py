@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
 
+from core.protocol import PROTOCOL_VERSION, validate_client_message
 from core.voice_companion.bridge import VoiceCompanionBridge, VOICE_PROCESSING_ERROR_MESSAGE
 from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
 from core.voice_companion.status import is_voice_companion_enabled
@@ -116,6 +117,7 @@ class WebSocketServer:
                 {
                     "type": "welcome",
                     "message": "Connected to HIKARI",
+                    "protocol_version": PROTOCOL_VERSION,
                 }
             )
         )
@@ -186,6 +188,24 @@ class WebSocketServer:
             client_id = str(id(websocket))
 
             if msg_type == "pair":
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    await websocket.send(
+                        json.dumps({"type": "error", "message": validation_error})
+                    )
+                    return
+                requested_version = data.get("protocol_version", PROTOCOL_VERSION)
+                if requested_version != PROTOCOL_VERSION:
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "protocol_error",
+                                "message": "Unsupported protocol version",
+                                "supported_version": PROTOCOL_VERSION,
+                            }
+                        )
+                    )
+                    return
                 attempts = self._pair_attempts.get(client_id, 0)
                 if attempts >= MAX_PAIRING_ATTEMPTS:
                     await websocket.send(
@@ -212,6 +232,7 @@ class WebSocketServer:
                             {
                                 "type": "paired",
                                 "message": "Device paired successfully",
+                                "protocol_version": PROTOCOL_VERSION,
                             }
                         )
                     )
@@ -234,6 +255,12 @@ class WebSocketServer:
                 return
 
             if msg_type == "ping":
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    await websocket.send(
+                        json.dumps({"type": "error", "message": validation_error})
+                    )
+                    return
                 await websocket.send(json.dumps({"type": "pong"}))
                 return
 
@@ -245,6 +272,13 @@ class WebSocketServer:
                             "message": "Pair this connection before sending requests",
                         }
                     )
+                )
+                return
+
+            validation_error = validate_client_message(data)
+            if validation_error:
+                await websocket.send(
+                    json.dumps({"type": "error", "message": validation_error})
                 )
                 return
 
@@ -537,7 +571,8 @@ class WebSocketServer:
                         ws.send(JSON.stringify({
                             type: 'pair',
                             code: code,
-                            device_type: 'mobile'
+                            device_type: 'mobile',
+                            protocol_version: __HIKARI_PROTOCOL_VERSION__
                         }));
                     };
 
@@ -552,6 +587,8 @@ class WebSocketServer:
                             addMessage('Connected! Ask me anything.', 'ai');
                         } else if (data.type === 'pair_error' || data.type === 'pair_locked') {
                             alert(data.message || 'Pairing failed.');
+                        } else if (data.type === 'protocol_error') {
+                            alert(data.message || 'Unsupported server protocol.');
                         } else if (data.type === 'response') {
                             addMessage(data.text, 'ai');
                         }
@@ -586,6 +623,9 @@ class WebSocketServer:
         </body>
         </html>
         """
+        html_body = html_body.replace(
+            "__HIKARI_PROTOCOL_VERSION__", str(PROTOCOL_VERSION)
+        )
         return self._html_response(html_body)
 
     def _serve_api_status(self):
