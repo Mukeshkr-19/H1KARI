@@ -453,6 +453,7 @@ The decision and provenance are recorded before code is merged.
 - `git diff --check`
 - no secrets, private runtime data, databases, generated QA artifacts, or automation attribution
 - documentation updated when behavior or contracts change
+- frontend release candidates complete `docs/ACCESSIBILITY_CHECKLIST.md`
 - dependency and license delta reviewed
 - rollback or disable path documented for behavior-changing work
 
