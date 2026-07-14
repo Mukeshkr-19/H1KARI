@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
+from core.path_literals import HIKARI_PRIVATE
 from core.runtime_paths import hikari_home
 
 
@@ -173,4 +176,130 @@ def format_initialization(result: dict, *, applied: bool) -> str:
         paths = result.get("created", result["create"])
         label = "Created" if applied else "Would create"
         lines.append(f"{label}: " + (", ".join(str(path) for path in paths) or "nothing"))
+    return "\n".join(lines)
+
+
+def _load_runtime_config(root: Path) -> dict:
+    config_path = root / CONFIG_NAME
+    if config_path.is_symlink() or not config_path.is_file():
+        raise RuntimeError("runtime config must be an existing regular file")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if config.get("version") != 1 or not isinstance(config.get("created_paths"), list):
+        raise RuntimeError("runtime config has an unsupported or invalid schema")
+    return config
+
+
+def backup_runtime_home(
+    *,
+    root: Path | None = None,
+    destination: Path | None = None,
+) -> Path:
+    root = hikari_home() if root is None else Path(root).expanduser().resolve()
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError("runtime home must be an existing regular directory")
+    _load_runtime_config(root)
+
+    if destination is None:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        destination = root / "backups" / f"runtime-{stamp}"
+    destination = Path(destination).expanduser().resolve()
+    if destination.exists():
+        raise RuntimeError(f"backup destination already exists: {destination}")
+
+    backups_dir = (root / "backups").resolve()
+    if destination.is_relative_to(root) and not destination.is_relative_to(backups_dir):
+        raise RuntimeError("backup destination inside runtime home must be under backups")
+    if not destination.parent.is_dir():
+        raise RuntimeError(f"backup parent does not exist: {destination.parent}")
+
+    def ignore_backups(path: str, names: list[str]) -> list[str]:
+        if Path(path).resolve() == root.resolve() and "backups" in names:
+            return ["backups"]
+        return []
+
+    shutil.copytree(root, destination, symlinks=True, ignore=ignore_backups)
+    return destination
+
+
+def runtime_migration_plan(*, root: Path | None = None, repo_root: Path | None = None) -> dict:
+    """Inspect legacy layout shapes without reading private file contents or writing."""
+    root = hikari_home() if root is None else Path(root).expanduser().resolve()
+    if repo_root is None:
+        repo_root = Path(os.environ.get("HIKARI_REPO_ROOT", Path(__file__).resolve().parents[1]))
+    repo_root = Path(repo_root).expanduser().resolve()
+    legacy_brain = repo_root.parent / HIKARI_PRIVATE / "live-brain"
+    brain = root / "brain"
+
+    if brain.is_symlink():
+        state = "legacy brain symlink detected"
+        source = brain.resolve()
+        actions = [
+            "Back up the symlink target with its existing private backup procedure.",
+            "Review target ownership and available disk space.",
+            "Replace the symlink only in a separately approved migration apply step.",
+        ]
+    elif brain.is_dir():
+        state = "runtime brain directory already exists"
+        source = brain
+        actions = ["Back up HIKARI_HOME before adopting the existing directory in place."]
+    elif legacy_brain.is_dir():
+        state = "legacy sibling brain available"
+        source = legacy_brain
+        actions = [
+            "Back up the legacy private brain.",
+            "Review ownership and available disk space.",
+            "Copy only in a separately approved migration apply step.",
+        ]
+    else:
+        state = "no legacy brain source detected"
+        source = None
+        actions = ["Use --init for a fresh private runtime layout."]
+
+    return {"root": root, "state": state, "source": source, "actions": actions}
+
+
+def rollback_initialization(token: str, *, root: Path | None = None) -> list[Path]:
+    if token != "ROLLBACK":
+        raise ValueError("rollback token must be exactly ROLLBACK")
+    root = hikari_home() if root is None else Path(root).expanduser().resolve()
+    config = _load_runtime_config(root)
+    config_path = root / CONFIG_NAME
+
+    allowed = {"." if path == root else str(path.relative_to(root)): path for path in _layout(root)}
+    relative_created = config["created_paths"]
+    if (
+        not all(isinstance(path, str) for path in relative_created)
+        or len(relative_created) != len(set(relative_created))
+        or any(path not in allowed for path in relative_created)
+    ):
+        raise RuntimeError("runtime config contains unsafe rollback paths")
+    created = [allowed[path] for path in relative_created]
+    expected = set(created) | {config_path}
+
+    for path in created:
+        if path.is_symlink() or not path.is_dir():
+            raise RuntimeError(f"created rollback path is no longer a regular directory: {path}")
+        unexpected = [child for child in path.iterdir() if child not in expected]
+        if unexpected:
+            raise RuntimeError(f"rollback refused because created path contains data: {path}")
+
+    config_path.unlink()
+    removed = [config_path]
+    for path in sorted(created, key=lambda item: len(item.parts), reverse=True):
+        path.rmdir()
+        removed.append(path)
+    return removed
+
+
+def format_migration_plan(plan: dict) -> str:
+    lines = [
+        "HIKARI runtime migration plan (read-only)",
+        "=" * 41,
+        f"Runtime home: {plan['root']}",
+        f"State: {plan['state']}",
+        f"Source: {plan['source'] or 'none'}",
+        "No files were read, copied, moved, or removed.",
+        "Actions:",
+    ]
+    lines.extend(f"- {action}" for action in plan["actions"])
     return "\n".join(lines)
