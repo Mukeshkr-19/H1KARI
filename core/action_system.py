@@ -227,7 +227,7 @@ async def get_system_volume() -> int:
     result = await run_applescript(script)
     try:
         return int(result["stdout"]) if result["success"] else 50
-    except:
+    except (ValueError, TypeError):
         return 50
 
 
@@ -251,7 +251,7 @@ async def get_brightness() -> int:
     result = await run_applescript(script)
     try:
         return int(float(result["stdout"]) * 100) if result["success"] else 50
-    except:
+    except (ValueError, TypeError):
         return 50
 
 
@@ -304,15 +304,11 @@ return info
     result = await run_applescript(script)
 
     if result["success"]:
-        try:
-            # Parse the system info
-            return {
-                "success": True,
-                "system": result["stdout"],
-                "confirmation": "System info retrieved.",
-            }
-        except:
-            pass
+        return {
+            "success": True,
+            "system": result["stdout"],
+            "confirmation": "System info retrieved.",
+        }
 
     return {"success": False, "error": "Failed to get system info"}
 
