@@ -515,13 +515,14 @@ Long-term success means a parent, child, person using assistive technology, and 
 
 ## 17. Immediate execution queue
 
-1. Merge this canonical plan into `develop` after document and metadata review.
-2. Produce the existing-branch intake ledger and classify every unmerged branch.
-3. Establish and record the verified `develop` baseline.
-4. Intake the smallest high-confidence safety/runtime fixes through separate branches.
-5. Start WP-001 provenance/component inventory without selecting a final project license.
-6. Start WP-003 characterization-gap audit before architectural refactors.
-7. Design WP-006 `HIKARI_HOME` around current runtime paths and a reversible migration dry run.
-8. Define WP-007 action-policy contracts before routing additional tools or integrations.
+1. ~~Merge this canonical plan into `develop` after document and metadata review.~~
+2. ~~Produce the existing-branch intake ledger and classify every unmerged branch.~~
+3. ~~Establish and record the verified `develop` baseline.~~
+4. ~~Intake the smallest high-confidence safety/runtime fixes through separate branches.~~
+5. ~~Publish the WP-001 provenance/component inventory without selecting a final project license.~~
+6. Execute the focused WP-001 remediation branches recorded in `docs/PROVENANCE_INVENTORY.md`.
+7. Start WP-003 characterization-gap audit before architectural refactors.
+8. Design WP-006 `HIKARI_HOME` around current runtime paths and a reversible migration dry run.
+9. Define WP-007 action-policy contracts before routing additional tools or integrations.
 
 Future work follows this queue unless a verified security or data-loss issue requires immediate priority.
