@@ -126,8 +126,11 @@ class ResearchAgent(BaseAgent):
 
         # Use DuckDuckGo instant answer API (free, no key needed)
         try:
-            url = f"https://api.duckduckgo.com/?q={query}&format=json"
-            response = requests.get(url, timeout=10)
+            response = requests.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json"},
+                timeout=10,
+            )
             data = response.json()
 
             if data.get("Abstract"):
