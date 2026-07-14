@@ -72,7 +72,7 @@ Direct declarations are Next.js, React, React DOM, ESLint, Tailwind CSS, TypeScr
 | Finding | Evidence | Disposition |
 |---|---|---|
 | Direct runtime versions | Next 15.5.18; React and React DOM 19.1.0 in the lock | retain pending frontend build and vulnerability gates |
-| Lock license families | 317 MIT, 29 Apache-2.0, 17 ISC, 12 MPL-2.0, 9 LGPL-3.0-or-later, plus BSD, BlueOak, CC, Python-2.0, and 0BSD entries | generate notices and review redistribution obligations before release |
+| Lock license families | 317 MIT, 29 Apache-2.0, 17 ISC, 12 MPL-2.0, 9 LGPL-3.0-or-later, plus BSD, BlueOak, CC, Python-2.0, and 0BSD entries | exact generated input is in `docs/FRONTEND_THIRD_PARTY_INPUT.md`; final notices and unresolved obligations remain release work |
 | Native image binaries | `sharp` and platform `libvips` packages enter through Next | verify binary redistribution and notice requirements |
 | Overrides | `js-yaml`, `postcss`, and `tar` are security-pinned in `package.json` | keep until audit proves the parent graph no longer needs them |
 | Reproducibility | frontend `node_modules` is absent from the worktree | run `npm ci`, lint, build, and audit on the frontend work package |
@@ -133,7 +133,7 @@ The standard library and native macOS commands avoid additional package provenan
 3. Make the selected voice backend and model download behavior explicit during initialization.
 4. Resolve speaker-model code/model/training-data terms before treating voice identity as release-ready.
 5. ~~Remove unused template and hero assets and replace the unknown-origin favicon reference.~~
-6. Generate a frontend third-party notice input from the exact lock and review non-permissive/content-license families.
+6. ~~Generate a frontend third-party notice input from the exact lock and review non-permissive/content-license families.~~ The deterministic input and focused review set are in `docs/FRONTEND_THIRD_PARTY_INPUT.md`; final artifact-level notices and unresolved binary obligations remain open.
 7. Record hosted provider model ids, terms, egress, retention, and disable/rollback behavior in provider-neutral records.
 8. Keep the project license undecided until these items are resolved and the owner approves it.
 

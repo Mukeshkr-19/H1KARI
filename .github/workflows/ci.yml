@@ -33,6 +33,9 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev-macos-arm64-py312.lock
 
+      - name: Verify frontend third-party input
+        run: python scripts/frontend_third_party.py --check
+
       - name: Install system dependency
         run: brew install portaudio
 
