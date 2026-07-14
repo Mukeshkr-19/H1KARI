@@ -245,6 +245,26 @@ def main():
         action="store_true",
         help="Preview runtime initialization without writing files.",
     )
+    runtime_modes.add_argument(
+        "--runtime-backup",
+        action="store_true",
+        help="Back up initialized private runtime state without following symlinks.",
+    )
+    runtime_modes.add_argument(
+        "--migration-plan",
+        action="store_true",
+        help="Inspect legacy runtime layout and print a no-write migration plan.",
+    )
+    runtime_modes.add_argument(
+        "--rollback-init",
+        metavar="TOKEN",
+        help="Remove only empty paths created by --init; token must be exactly ROLLBACK.",
+    )
+    parser.add_argument(
+        "--backup-destination",
+        metavar="PATH",
+        help="Optional destination for --runtime-backup; parent must already exist.",
+    )
     parser.add_argument(
         "--startup-mode",
         choices=("text", "voice"),
@@ -474,6 +494,8 @@ def main():
         parser.error("--init and --init-plan require --startup-mode")
     if not init_requested and (args.startup_mode or args.voice_backend):
         parser.error("--startup-mode and --voice-backend require --init or --init-plan")
+    if args.backup_destination and not args.runtime_backup:
+        parser.error("--backup-destination requires --runtime-backup")
     if args.startup_mode == "voice" and args.voice_backend is None:
         parser.error("voice startup requires --voice-backend")
     if args.startup_mode == "text" and args.voice_backend is not None:
@@ -518,6 +540,35 @@ def main():
     if args.verbose:
         os.environ["HIKARI_VERBOSE"] = "1"
         os.environ["HIKARI_QUIET"] = "0"
+
+    if args.migration_plan:
+        from core.runtime_setup import format_migration_plan, runtime_migration_plan
+
+        print(format_migration_plan(runtime_migration_plan()))
+        raise SystemExit(0)
+
+    if args.runtime_backup:
+        from core.runtime_setup import backup_runtime_home
+
+        destination = Path(args.backup_destination) if args.backup_destination else None
+        try:
+            backup_path = backup_runtime_home(destination=destination)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime backup failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"Runtime backup complete: {backup_path}")
+        raise SystemExit(0)
+
+    if args.rollback_init:
+        from core.runtime_setup import rollback_initialization
+
+        try:
+            removed = rollback_initialization(args.rollback_init)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime rollback failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"Runtime initialization rolled back: {len(removed)} paths removed")
+        raise SystemExit(0)
 
     if init_requested:
         from core.runtime_setup import (
