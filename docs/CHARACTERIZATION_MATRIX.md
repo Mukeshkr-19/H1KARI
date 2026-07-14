@@ -1,7 +1,7 @@
 # WP-003 Characterization Matrix
 
 Status: active
-Baseline: `develop` at `faab3ca`
+Baseline: `develop` at `a849f8e`
 Reviewed: 2026-07-13
 
 ## Purpose
@@ -17,7 +17,7 @@ This matrix records which current behaviors are protected before architectural m
 | Server pairing authorization | per-connection random-code pairing, bounded failure lockout, protected-event rejection, paired-only broadcasts, disconnect cleanup | high | Resolved in `security/server-pairing-authorization`. Preserve the rule that only ping and pair are accepted before authorization. | blocking regression gate |
 | Server HTTP surfaces | `/qr` and `/connect` hardening headers; `/qr` omits the secret; `/api/status` exposes only running state and client count | high | Resolved in `security/server-pairing-authorization`. Keep pairing secrets and device details local-only. | blocking regression gate |
 | Server protocol errors | invalid JSON, unknown message types, unpaired access, pairing lockout, and unexpected request failures have stable non-sensitive responses | high | Resolved in `security/server-pairing-authorization`. Preserve generic remote errors while retaining local diagnostics. | blocking regression gate |
-| Doctor quick checks | formatting, quick-check names, clean-clone private-layout behavior, live command gate | high | Full-doctor failure aggregation and exit-code behavior are not isolated from expensive subprocesses. Characterize command selection, timeout, and failure reporting. | medium |
+| Doctor checks | quick-check names, clean-clone private layout, explicit full command plan/timeouts, success, missing executable, timeout, nonzero exit tail, failure aggregation, exit code | high | Resolved in `test/doctor-full-failure-contract`. Preserve deterministic command selection and aggregate all results before returning failure. | blocking regression gate |
 | Brain v2 storage/retrieval | episode separation, reviewed truth, repair lifecycle, rollback, conflict redaction, guest isolation, eval 8/8, live QA | high | Maintain current gates. New architecture work must not weaken reviewed-memory authority, source links, repair history, or live-data isolation. | blocking regression gate |
 | Brain v2 CLI | subprocess isolation, safe accept/no-promote, explicit promotion/repair tokens, read-only reconciliation | high | No immediate characterization gap. Preserve exact tokens, redaction, and copy-only legacy repair behavior. | blocking regression gate |
 | Daemon lifecycle | one entrypoint, import-safe lazy audio initialization, one owned loop, graceful SIGINT/SIGTERM stop, timeout continuation, wake/active transitions, missing-dependency failure, speaker checks | high | Resolved in `test/daemon-lifecycle-characterization`. Keep model loading behind explicit startup and preserve fail-closed enrolled-speaker verification. | blocking regression gate |
@@ -28,7 +28,6 @@ This matrix records which current behaviors are protected before architectural m
 
 ## Execution order
 
-1. Characterize full-doctor subprocess failures and timeouts.
-2. Define a versioned server/frontend message schema and add accessibility checks.
+1. Define a versioned server/frontend message schema and add accessibility checks.
 
 Each item lands through its own branch. Brain v2 full gates remain mandatory for shared orchestration changes, and `main` remains unchanged until the owner explicitly authorizes a release merge.
