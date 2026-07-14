@@ -144,7 +144,7 @@ class SmartHome:
                 return "Temperature too high (maximum 85°F)"
 
             return await self.run_shortcut("Set Thermostat")
-        except:
+        except (ValueError, TypeError):
             return "Please specify a temperature (e.g., 'set thermostat to 72')"
 
 
