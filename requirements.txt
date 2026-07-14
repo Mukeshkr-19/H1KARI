@@ -39,8 +39,8 @@ types-requests==2.32.0.20241016
 typing_extensions==4.15.0
 urllib3==2.7.0
 websockets>=12.0
-whisper==1.1.10
 wikipedia==1.4.0
 openai-whisper>=20231117
+faster-whisper==1.2.1
 torch>=2.0.0
 speechbrain>=1.0.0

@@ -47,16 +47,18 @@ There is no root `LICENSE`, `COPYING`, or `NOTICE` file. That absence is intenti
 | `torch>=2.0.0` | speaker identity model | BSD-3-Clause | direct dependency; unbounded model/runtime footprint |
 | `speechbrain>=1.0.0` | speaker identity model | unresolved locally | declared but absent from the verified environment |
 | `websockets>=12.0` | pairing server | BSD-3-Clause | direct dependency; lower bound permits major-version drift |
-| `openai-whisper>=20231117` | local speech recognition | MIT | direct dependency; conflicts with the unrelated `whisper` declaration |
+| `openai-whisper>=20231117` | local speech recognition | MIT | direct dependency; distribution name is protected by a regression check |
+| `faster-whisper==1.2.1` | optional local speech recognition in daemon services | MIT metadata | direct optional dependency; now explicitly declared |
 
-`cohere` is reached through the HTTP router, not the Cohere Python package. `faster-whisper` is imported by two shipped services but is not declared; the shared environment currently has `faster-whisper` 1.2.1 and `ctranslate2` 4.7.1, both reporting MIT metadata.
+`cohere` is reached through the HTTP router, not the Cohere Python package. The shared environment currently has `faster-whisper` 1.2.1 and `ctranslate2` 4.7.1, both reporting MIT metadata.
 
 ### Declaration problems
 
-`requirements.txt` has 46 lines and mixes direct runtime dependencies, transitive implementation details, test-only packages, unused packages, and two distributions that provide the same `whisper` import.
+`requirements.txt` has 46 lines and mixes direct runtime dependencies, transitive implementation details, test-only packages, and unused packages.
 
-- `whisper==1.1.10` is the Graphite Whisper database package, while HIKARI calls OpenAI Whisper's `load_model`. Both `whisper` and `openai-whisper` claim the `whisper` import in the current environment. The Graphite package must be removed.
-- `faster-whisper` is a shipped optional runtime path but is undeclared.
+- The unrelated Graphite `whisper==1.1.10` package was removed. HIKARI calls OpenAI Whisper's `load_model`, and a regression check now prevents the ambiguous distribution name from returning.
+- `faster-whisper==1.2.1` is now declared for the optional service paths that import it.
+- The existing shared development environment still records both Whisper distributions. Do not uninstall one in place because their files overlap; rebuild the environment from the corrected manifest during reproducibility work.
 - `parameterized` and `types-requests` are development/test concerns in the runtime manifest.
 - `beautifulsoup4`, `cohere`, `pyttsx3`, `wikipedia`, and several low-level packages have no direct shipped import in the current tree.
 - Exact transitive pins such as `anyio`, `httpcore`, `h11`, `jiter`, `pydantic_core`, `sniffio`, `soupsieve`, and `urllib3` duplicate resolver responsibility and can conflict with their parent packages.
@@ -122,9 +124,9 @@ The standard library and native macOS commands avoid additional package provenan
 
 ## WP-001 findings and next actions
 
-1. Remove the unrelated `whisper==1.1.10` distribution and prove the OpenAI Whisper import.
+1. ~~Remove the unrelated `whisper==1.1.10` distribution and declare the faster-whisper runtime path.~~
 2. Normalize Python manifests into direct runtime, optional voice, and development dependencies; pin a reproducible tested set.
-3. Declare or remove faster-whisper runtime paths and make the selected voice backend explicit.
+3. Make the selected voice backend and model download behavior explicit during initialization.
 4. Resolve speaker-model code/model/training-data terms before treating voice identity as release-ready.
 5. Remove unused template and hero assets; replace or document the favicon.
 6. Generate a frontend third-party notice input from the exact lock and review non-permissive/content-license families.
