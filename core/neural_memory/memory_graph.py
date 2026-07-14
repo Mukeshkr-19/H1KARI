@@ -1,8 +1,9 @@
 """Graph operations for Hikari Neural Memory."""
 
-from typing import Optional, List, Set, Tuple, Callable
-from collections import deque
+from typing import Optional, List, Set, Tuple, Callable, Dict
+from collections import defaultdict, deque
 
+from .config import config
 from .storage import storage
 from .models import MemoryNode, MemoryEdge
 
@@ -77,7 +78,6 @@ class MemoryGraph:
 
         paths = []
         queue = deque([(source_id, [source_id])])
-        visited = {source_id}
 
         while queue:
             current, path = queue.popleft()
@@ -89,8 +89,7 @@ class MemoryGraph:
             for neighbor in neighbors:
                 if neighbor.id == target_id:
                     paths.append(path + [neighbor.id])
-                elif neighbor.id not in visited:
-                    visited.add(neighbor.id)
+                elif neighbor.id not in path:
                     queue.append((neighbor.id, path + [neighbor.id]))
 
         return paths
@@ -129,29 +128,15 @@ class MemoryGraph:
 
     def get_bridges(self) -> List[Tuple[int, int]]:
         bridges = []
-        all_edges = self.storage.fetch_all(
-            "SELECT id, source_id, target_id FROM edges WHERE is_archived = 0", ()
-        )
+        all_edges = self._active_edges()
+        adjacency = self._undirected_adjacency(all_edges)
 
-        for edge_row in all_edges:
-            edge_id, src, tgt = (
-                edge_row["id"],
-                edge_row["source_id"],
-                edge_row["target_id"],
-            )
-            self.storage.execute(
-                "UPDATE edges SET is_archived = 1 WHERE id = ?", (edge_id,)
-            )
-
-            neighbors_src = {n.id for n in self.storage.get_neighbors(src)}
-            neighbors_tgt = {n.id for n in self.storage.get_neighbors(tgt)}
-
-            if tgt not in neighbors_src:
+        for edge in all_edges:
+            edge_id = edge["id"]
+            src = edge["source_id"]
+            tgt = edge["target_id"]
+            if not self._reachable(src, tgt, adjacency, skip_edge_id=edge_id):
                 bridges.append((src, tgt))
-
-            self.storage.execute(
-                "UPDATE edges SET is_archived = 0 WHERE id = ?", (edge_id,)
-            )
 
         return bridges
 
@@ -164,23 +149,31 @@ class MemoryGraph:
             return {}
 
         ranks = {nid: 1.0 / n for nid in node_ids}
+        incoming: Dict[int, List[Tuple[int, float]]] = defaultdict(list)
+        outgoing_weight = {nid: 0.0 for nid in node_ids}
+
+        for edge in self._active_edges():
+            src = edge["source_id"]
+            tgt = edge["target_id"]
+            weight = float(edge["weight"] if edge["weight"] is not None else 1.0)
+            if weight <= 0 or src not in outgoing_weight or tgt not in outgoing_weight:
+                continue
+            incoming[tgt].append((src, weight))
+            outgoing_weight[src] += weight
+            if edge["bidirectional"]:
+                incoming[src].append((tgt, weight))
+                outgoing_weight[tgt] += weight
 
         for _ in range(iterations):
+            dangling_rank = sum(
+                ranks[nid] for nid in node_ids if outgoing_weight[nid] == 0.0
+            )
             new_ranks = {}
 
             for node_id in node_ids:
-                neighbors = self.storage.get_neighbors(node_id)
-                rank_sum = 0.0
-
-                for neighbor in neighbors:
-                    neighbor_edges = self.storage.get_edges_for_node(neighbor.id)
-                    out_degree = len(neighbor_edges)
-                    if out_degree > 0:
-                        edge = next(
-                            (e for e in neighbor_edges if e.target_id == node_id), None
-                        )
-                        weight = edge.weight if edge else 1.0
-                        rank_sum += ranks.get(neighbor.id, 0) * weight / out_degree
+                rank_sum = dangling_rank / n
+                for source_id, weight in incoming.get(node_id, []):
+                    rank_sum += ranks[source_id] * weight / outgoing_weight[source_id]
 
                 new_ranks[node_id] = (1 - damping) / n + damping * rank_sum
 
@@ -229,6 +222,46 @@ class MemoryGraph:
             "SELECT DISTINCT node_type FROM nodes WHERE is_archived = 0", ()
         )
         return [row["node_type"] for row in rows]
+
+    def _active_edges(self):
+        return self.storage.fetch_all(
+            "SELECT id, source_id, target_id, weight, bidirectional "
+            "FROM edges WHERE is_archived = 0 AND user_id = ?",
+            (config.user_id,),
+        )
+
+    @staticmethod
+    def _undirected_adjacency(edges) -> Dict[int, List[Tuple[int, int]]]:
+        adjacency: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+        for edge in edges:
+            edge_id = edge["id"]
+            src = edge["source_id"]
+            tgt = edge["target_id"]
+            adjacency[src].append((tgt, edge_id))
+            adjacency[tgt].append((src, edge_id))
+        return adjacency
+
+    @staticmethod
+    def _reachable(
+        source_id: int,
+        target_id: int,
+        adjacency: Dict[int, List[Tuple[int, int]]],
+        skip_edge_id: int,
+    ) -> bool:
+        if source_id == target_id:
+            return True
+        visited = {source_id}
+        queue = deque([source_id])
+        while queue:
+            current = queue.popleft()
+            for neighbor_id, edge_id in adjacency.get(current, []):
+                if edge_id == skip_edge_id or neighbor_id in visited:
+                    continue
+                if neighbor_id == target_id:
+                    return True
+                visited.add(neighbor_id)
+                queue.append(neighbor_id)
+        return False
 
 
 graph = MemoryGraph()
