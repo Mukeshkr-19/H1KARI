@@ -318,8 +318,8 @@ export default function Home() {
         } else {
           setOrbState("idle");
         }
-      } else if (data.type === "pair_error") {
-        alert("Invalid pairing code");
+      } else if (data.type === "pair_error" || data.type === "pair_locked") {
+        alert(data.message || "Pairing failed");
       }
     };
 
