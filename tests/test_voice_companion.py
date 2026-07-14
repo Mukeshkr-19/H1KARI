@@ -309,9 +309,11 @@ def test_server_voice_plain_response_when_companion_disabled():
             return "plain voice reply"
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
+    websocket = MockWebSocket()
+    server._paired_client_ids.add(str(id(websocket)))
     asyncio.run(
         server._handle_message(
-            MockWebSocket(),
+            websocket,
             json.dumps({"type": "voice", "text": "demo voice input"}),
         )
     )
@@ -336,9 +338,11 @@ def test_server_typed_message_no_companion_events(voice_companion_enabled):
             return long_reply
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
+    websocket = MockWebSocket()
+    server._paired_client_ids.add(str(id(websocket)))
     asyncio.run(
         server._handle_message(
-            MockWebSocket(),
+            websocket,
             json.dumps({"type": "message", "text": "typed demo query"}),
         )
     )
@@ -364,9 +368,11 @@ def test_server_voice_turn_wire_order_and_response_integrity(voice_companion_ena
             return long_reply
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
+    websocket = MockWebSocket()
+    server._paired_client_ids.add(str(id(websocket)))
     asyncio.run(
         server._handle_message(
-            MockWebSocket(),
+            websocket,
             json.dumps({"type": "voice", "text": "demo voice input"}),
         )
     )
@@ -413,6 +419,7 @@ def test_server_voice_orchestrator_exception_terminal_lifecycle(voice_companion_
 
     server = WebSocketServer(FailingOrchestrator(), port=9999)
     websocket = MockWebSocket()
+    server._paired_client_ids.add(str(id(websocket)))
     asyncio.run(
         server._handle_message(
             websocket,
