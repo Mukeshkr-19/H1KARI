@@ -69,7 +69,7 @@ cat >"$PLIST_DST" <<EOF
   <dict>
     <key>PATH</key>
     <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
-    <key>HIKARI_HOME</key>
+    <key>HIKARI_REPO_ROOT</key>
     <string>$REPO_ROOT</string>
     <key>HIKARI_QUIET</key>
     <string>1</string>

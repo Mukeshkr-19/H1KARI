@@ -24,7 +24,7 @@ WRAPPER="$CLI_DIR/hikari"
 rm -f "$WRAPPER" "$CLI_DIR/Hikari"
 cat > "$WRAPPER" <<EOF
 #!/usr/bin/env bash
-export HIKARI_HOME="$REPO_ROOT"
+export HIKARI_REPO_ROOT="$REPO_ROOT"
 exec "$LAUNCHER" "\$@"
 EOF
 chmod +x "$WRAPPER"
@@ -37,7 +37,7 @@ else
 fi
 
 echo "Installed HIKARI CLI (repo folder: $(basename "$REPO_ROOT")):"
-echo "  $CLI_DIR/hikari (HIKARI_HOME=$REPO_ROOT)"
+echo "  $CLI_DIR/hikari (HIKARI_REPO_ROOT=$REPO_ROOT)"
 echo "  launcher: $LAUNCHER"
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "  $CLI_DIR/Hikari -> hikari"

@@ -424,12 +424,13 @@ class TestDoctor(unittest.TestCase):
         self.assertEqual(neural.status, "ok")
         self.assertIn("optional", neural.detail.lower())
 
-    def test_install_cli_script_uses_hikari_home(self):
+    def test_install_cli_script_uses_repo_root(self):
         from pathlib import Path
 
         script = Path(__file__).resolve().parent.parent / "scripts" / "install-hikari-cli.sh"
         text = script.read_text(encoding="utf-8")
-        self.assertIn("HIKARI_HOME", text)
+        self.assertIn("HIKARI_REPO_ROOT", text)
+        self.assertNotIn("export HIKARI_HOME=", text)
         self.assertIn("REPO_ROOT", text)
         self.assertIn("Darwin", text)
 
