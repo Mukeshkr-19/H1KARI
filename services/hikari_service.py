@@ -56,7 +56,11 @@ class HIKARI_Daemon:
         try:
             clean = re.sub(r"[^\w\s:,.!?']", "", str(text))
             if sys.platform == "darwin":
-                subprocess.Popen(["say", "-r", "180", clean])
+                subprocess.run(
+                    ["say", "-r", "180", clean],
+                    timeout=30,
+                    check=False,
+                )
             else:
                 print(f"[TTS] {clean}")
         except Exception as e:
