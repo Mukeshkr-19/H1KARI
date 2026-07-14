@@ -1,9 +1,12 @@
 # HIKARI Master Integration and Implementation Plan
 
-Status: active implementation authority  
-Version: 1.0  
-Updated: 2026-07-13  
-Repository: H1KARI  
+Status: active implementation authority
+
+Version: 1.0
+
+Updated: 2026-07-13
+
+Repository: H1KARI
 Product and runtime name: HIKARI / `hikari`
 
 ## 1. Purpose
