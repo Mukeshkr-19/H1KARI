@@ -142,6 +142,16 @@ class TestSkillSystem(unittest.TestCase):
         self.assertGreater(calc.can_handle("calculate 2+2"), 0.5)
         result = calc.execute(expression="2+2")
         self.assertIn("4", result)
+        self.assertIn("14", calc.execute(expression="2+3*4"))
+        self.assertEqual(
+            calc.execute(expression="__import__('os').system('ls')"),
+            "Invalid expression",
+        )
+        self.assertEqual(
+            calc.execute(expression="+".join(["1"] * 100)),
+            "Invalid expression",
+        )
+        self.assertEqual(calc.execute(expression="2+"), "Invalid expression")
 
     def test_joke_skill(self):
         from skills.skill_system import SkillRegistry, register_builtin_skills
