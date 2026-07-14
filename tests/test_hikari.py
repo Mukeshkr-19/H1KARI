@@ -142,6 +142,16 @@ class TestSkillSystem(unittest.TestCase):
         self.assertGreater(calc.can_handle("calculate 2+2"), 0.5)
         result = calc.execute(expression="2+2")
         self.assertIn("4", result)
+        self.assertIn("14", calc.execute(expression="2+3*4"))
+        self.assertEqual(
+            calc.execute(expression="__import__('os').system('ls')"),
+            "Invalid expression",
+        )
+        self.assertEqual(
+            calc.execute(expression="+".join(["1"] * 100)),
+            "Invalid expression",
+        )
+        self.assertEqual(calc.execute(expression="2+"), "Invalid expression")
 
     def test_joke_skill(self):
         from skills.skill_system import SkillRegistry, register_builtin_skills
@@ -214,6 +224,25 @@ class TestResearchAgent(unittest.TestCase):
         self.assertGreater(agent.can_handle("what's the weather"), 0.7)
         self.assertGreater(agent.can_handle("latest news"), 0.7)
         self.assertLess(agent.can_handle("write code"), 0.3)
+
+    def test_search_web_passes_query_as_request_parameters(self):
+        from unittest.mock import MagicMock, patch
+
+        from agents.research import ResearchAgent
+
+        agent = ResearchAgent()
+        with patch("agents.research.requests.get") as mock_get:
+            response = MagicMock()
+            response.json.return_value = {"Abstract": "Result"}
+            mock_get.return_value = response
+
+            agent.search_web("hello world & foo=bar?baz")
+
+        mock_get.assert_called_once_with(
+            "https://api.duckduckgo.com/",
+            params={"q": "hello world & foo=bar?baz", "format": "json"},
+            timeout=10,
+        )
 
 
 class TestCodenameAuth(unittest.TestCase):
@@ -299,6 +328,34 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(orch.authenticated)
 
+    def test_get_orchestrator_singleton_thread_safe(self):
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+
+        import core.orchestrator as orchestrator
+
+        original = orchestrator._orchestrator
+        instance = object()
+
+        def create():
+            time.sleep(0.01)
+            return instance
+
+        try:
+            orchestrator._orchestrator = None
+            with patch.object(
+                orchestrator, "HIKARI_Orchestrator", side_effect=create
+            ) as constructor, ThreadPoolExecutor(max_workers=10) as pool:
+                results = list(
+                    pool.map(lambda _: orchestrator.get_orchestrator(), range(10))
+                )
+
+            self.assertTrue(all(result is instance for result in results))
+            constructor.assert_called_once_with()
+        finally:
+            orchestrator._orchestrator = original
+
 
 class TestDoctor(unittest.TestCase):
     """Test the doctor/status checker."""
@@ -367,12 +424,13 @@ class TestDoctor(unittest.TestCase):
         self.assertEqual(neural.status, "ok")
         self.assertIn("optional", neural.detail.lower())
 
-    def test_install_cli_script_uses_hikari_home(self):
+    def test_install_cli_script_uses_repo_root(self):
         from pathlib import Path
 
         script = Path(__file__).resolve().parent.parent / "scripts" / "install-hikari-cli.sh"
         text = script.read_text(encoding="utf-8")
-        self.assertIn("HIKARI_HOME", text)
+        self.assertIn("HIKARI_REPO_ROOT", text)
+        self.assertNotIn("export HIKARI_HOME=", text)
         self.assertIn("REPO_ROOT", text)
         self.assertIn("Darwin", text)
 

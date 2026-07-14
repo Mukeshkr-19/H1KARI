@@ -7,14 +7,16 @@ QR code generation for easy phone pairing
 import os
 import sys
 import json
-import time
 import asyncio
 import threading
-import hashlib
+import html
+import hmac
+import secrets
 from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
 
+from core.protocol import PROTOCOL_VERSION, validate_client_message
 from core.voice_companion.bridge import VoiceCompanionBridge, VOICE_PROCESSING_ERROR_MESSAGE
 from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
 from core.voice_companion.status import is_voice_companion_enabled
@@ -37,6 +39,9 @@ except ImportError:
     QR_AVAILABLE = False
 
 
+MAX_PAIRING_ATTEMPTS = 5
+
+
 class WebSocketServer:
     """WebSocket server for device connections"""
 
@@ -45,6 +50,8 @@ class WebSocketServer:
         self.host = host
         self.port = port
         self.connected_clients: Set = set()
+        self._paired_client_ids: Set[str] = set()
+        self._pair_attempts: Dict[str, int] = {}
         self.device_info: Dict[str, Dict] = {}
         self._server = None
         self._running = False
@@ -56,8 +63,8 @@ class WebSocketServer:
         return is_voice_companion_enabled()
 
     def _generate_pairing_code(self) -> str:
-        """Generate a 6-digit pairing code"""
-        return hashlib.md5(str(time.time()).encode()).hexdigest()[:6].upper()
+        """Generate a cryptographically random 6-character pairing code."""
+        return secrets.token_hex(3).upper()
 
     def start(self):
         """Start the WebSocket server"""
@@ -109,9 +116,8 @@ class WebSocketServer:
             json.dumps(
                 {
                     "type": "welcome",
-                    "pairing_code": self.pairing_code,
                     "message": "Connected to HIKARI",
-                    "devices": len(self.connected_clients),
+                    "protocol_version": PROTOCOL_VERSION,
                 }
             )
         )
@@ -132,7 +138,11 @@ class WebSocketServer:
             print(f"[WS] Client error: {e}")
         finally:
             self.connected_clients.discard(websocket)
-            self._companion_bridges.pop(str(id(websocket)), None)
+            client_key = str(id(websocket))
+            self._paired_client_ids.discard(client_key)
+            self._pair_attempts.pop(client_key, None)
+            self.device_info.pop(client_key, None)
+            self._companion_bridges.pop(client_key, None)
             print(f"[WS] Client disconnected ({len(self.connected_clients)} total)")
 
     def _companion_for(self, websocket) -> VoiceCompanionBridge:
@@ -168,12 +178,116 @@ class WebSocketServer:
         """Process incoming message from client"""
         try:
             data = json.loads(message)
+            if not isinstance(data, dict):
+                await websocket.send(
+                    json.dumps({"type": "error", "message": "Invalid message payload"})
+                )
+                return
+
             msg_type = data.get("type", "")
+            client_id = str(id(websocket))
+
+            if msg_type == "pair":
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    await websocket.send(
+                        json.dumps({"type": "error", "message": validation_error})
+                    )
+                    return
+                requested_version = data.get("protocol_version", PROTOCOL_VERSION)
+                if requested_version != PROTOCOL_VERSION:
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "protocol_error",
+                                "message": "Unsupported protocol version",
+                                "supported_version": PROTOCOL_VERSION,
+                            }
+                        )
+                    )
+                    return
+                attempts = self._pair_attempts.get(client_id, 0)
+                if attempts >= MAX_PAIRING_ATTEMPTS:
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "pair_locked",
+                                "message": "Too many invalid pairing attempts",
+                            }
+                        )
+                    )
+                    return
+
+                code = str(data.get("code", ""))
+                if hmac.compare_digest(code, self.pairing_code):
+                    self._paired_client_ids.add(client_id)
+                    self._pair_attempts.pop(client_id, None)
+                    info = self.device_info.setdefault(
+                        client_id,
+                        {"connected_at": datetime.now().isoformat(), "type": "unknown"},
+                    )
+                    info["type"] = str(data.get("device_type", info["type"]))[:64]
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "paired",
+                                "message": "Device paired successfully",
+                                "protocol_version": PROTOCOL_VERSION,
+                            }
+                        )
+                    )
+                else:
+                    attempts += 1
+                    self._pair_attempts[client_id] = attempts
+                    response_type = (
+                        "pair_locked"
+                        if attempts >= MAX_PAIRING_ATTEMPTS
+                        else "pair_error"
+                    )
+                    message_text = (
+                        "Too many invalid pairing attempts"
+                        if response_type == "pair_locked"
+                        else "Invalid pairing code"
+                    )
+                    await websocket.send(
+                        json.dumps({"type": response_type, "message": message_text})
+                    )
+                return
+
+            if msg_type == "ping":
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    await websocket.send(
+                        json.dumps({"type": "error", "message": validation_error})
+                    )
+                    return
+                await websocket.send(json.dumps({"type": "pong"}))
+                return
+
+            if client_id not in self._paired_client_ids:
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "pairing_required",
+                            "message": "Pair this connection before sending requests",
+                        }
+                    )
+                )
+                return
+
+            validation_error = validate_client_message(data)
+            if validation_error:
+                await websocket.send(
+                    json.dumps({"type": "error", "message": validation_error})
+                )
+                return
 
             if msg_type == "identify":
-                device_type = data.get("device_type", "unknown")
-                client_id = str(id(websocket))
-                self.device_info[client_id]["type"] = device_type
+                device_type = str(data.get("device_type", "unknown"))[:64]
+                self.device_info.setdefault(
+                    client_id,
+                    {"connected_at": datetime.now().isoformat(), "type": "unknown"},
+                )["type"] = device_type
                 await websocket.send(
                     json.dumps(
                         {
@@ -182,27 +296,6 @@ class WebSocketServer:
                         }
                     )
                 )
-
-            elif msg_type == "pair":
-                code = data.get("code", "")
-                if code == self.pairing_code:
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": "paired",
-                                "message": "Device paired successfully",
-                            }
-                        )
-                    )
-                else:
-                    await websocket.send(
-                        json.dumps(
-                            {
-                                "type": "pair_error",
-                                "message": "Invalid pairing code",
-                            }
-                        )
-                    )
 
             elif msg_type == "message":
                 # Process user message through orchestrator
@@ -286,8 +379,10 @@ class WebSocketServer:
                     )
                 )
 
-            elif msg_type == "ping":
-                await websocket.send(json.dumps({"type": "pong"}))
+            else:
+                await websocket.send(
+                    json.dumps({"type": "error", "message": "Unknown message type"})
+                )
 
         except json.JSONDecodeError:
             await websocket.send(
@@ -299,11 +394,12 @@ class WebSocketServer:
                 )
             )
         except Exception as e:
+            print(f"[WS] Request failed: {e}")
             await websocket.send(
                 json.dumps(
                     {
                         "type": "error",
-                        "message": str(e),
+                        "message": "Request failed",
                     }
                 )
             )
@@ -312,6 +408,8 @@ class WebSocketServer:
         """Send message to all connected clients"""
         data = json.dumps(message)
         for client in self.connected_clients.copy():
+            if str(id(client)) not in self._paired_client_ids:
+                continue
             try:
                 asyncio.run_coroutine_threadsafe(
                     client.send(data),
@@ -319,6 +417,23 @@ class WebSocketServer:
                 )
             except Exception:
                 pass
+
+    def _html_response(self, body: str):
+        """Serve HTML with basic hardening headers."""
+        headers = [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Cache-Control", "no-store"),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Frame-Options", "DENY"),
+            ("X-Content-Type-Options", "nosniff"),
+            (
+                "Content-Security-Policy",
+                "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; connect-src 'self' ws: wss:; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        ]
+        return HTTPStatus.OK, headers, body.encode()
 
     def _serve_qr_code(self):
         """Serve QR code image"""
@@ -342,23 +457,25 @@ class WebSocketServer:
 
         img_base64 = base64.b64encode(buffer.read()).decode()
 
-        html = f"""
+        safe_url = html.escape(url, quote=True)
+
+        html_body = f"""
         <!DOCTYPE html>
         <html>
         <head><title>HIKARI - QR Code</title></head>
         <body style="background:#0a0a0a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;">
             <h1>Scan to connect</h1>
             <img src="data:image/png;base64,{img_base64}" alt="QR Code" />
-            <p style="margin-top:20px;">Pairing code: <strong>{self.pairing_code}</strong></p>
-            <p>Or open: <code>{url}</code></p>
+            <p style="margin-top:20px;">Enter the pairing code shown in the local HIKARI terminal.</p>
+            <p>Or open: <code>{safe_url}</code></p>
         </body>
         </html>
         """
-        return HTTPStatus.OK, [("Content-Type", "text/html")], html.encode()
+        return self._html_response(html_body)
 
     def _serve_connect_page(self):
         """Serve the connection page for phones"""
-        html = """
+        html_body = """
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -454,7 +571,8 @@ class WebSocketServer:
                         ws.send(JSON.stringify({
                             type: 'pair',
                             code: code,
-                            device_type: 'mobile'
+                            device_type: 'mobile',
+                            protocol_version: __HIKARI_PROTOCOL_VERSION__
                         }));
                     };
 
@@ -467,8 +585,10 @@ class WebSocketServer:
                             statusEl.textContent = 'Connected';
                             statusEl.classList.add('connected');
                             addMessage('Connected! Ask me anything.', 'ai');
-                        } else if (data.type === 'pair_error') {
-                            alert('Invalid pairing code. Try again.');
+                        } else if (data.type === 'pair_error' || data.type === 'pair_locked') {
+                            alert(data.message || 'Pairing failed.');
+                        } else if (data.type === 'protocol_error') {
+                            alert(data.message || 'Unsupported server protocol.');
                         } else if (data.type === 'response') {
                             addMessage(data.text, 'ai');
                         }
@@ -503,19 +623,24 @@ class WebSocketServer:
         </body>
         </html>
         """
-        return HTTPStatus.OK, [("Content-Type", "text/html")], html.encode()
+        html_body = html_body.replace(
+            "__HIKARI_PROTOCOL_VERSION__", str(PROTOCOL_VERSION)
+        )
+        return self._html_response(html_body)
 
     def _serve_api_status(self):
         """Serve API status as JSON"""
         status = {
             "running": self._running,
             "clients": len(self.connected_clients),
-            "pairing_code": self.pairing_code,
-            "devices": self.device_info,
         }
         return (
             HTTPStatus.OK,
-            [("Content-Type", "application/json")],
+            [
+                ("Content-Type", "application/json"),
+                ("Cache-Control", "no-store"),
+                ("X-Content-Type-Options", "nosniff"),
+            ],
             json.dumps(status).encode(),
         )
 

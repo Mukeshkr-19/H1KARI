@@ -36,15 +36,14 @@ export function CompanionSettings({
         </p>
         <div
           className="flex flex-wrap gap-2"
-          role="radiogroup"
+          role="group"
           aria-labelledby="companion-type-label"
         >
           {COMPANION_TYPES.map((type) => (
             <button
               key={type}
               type="button"
-              role="radio"
-              aria-checked={companionType === type}
+              aria-pressed={companionType === type}
               onClick={() => apply(type, presentation)}
               className={`px-4 py-2 rounded-lg text-sm capitalize transition ${
                 companionType === type
@@ -63,15 +62,14 @@ export function CompanionSettings({
         </h3>
         <div
           className="flex flex-wrap gap-2"
-          role="radiogroup"
+          role="group"
           aria-labelledby="presentation-label"
         >
           {PRESENTATIONS.map((pres) => (
             <button
               key={pres}
               type="button"
-              role="radio"
-              aria-checked={presentation === pres}
+              aria-pressed={presentation === pres}
               onClick={() => apply(companionType, pres)}
               className={`px-4 py-2 rounded-lg text-sm transition ${
                 presentation === pres

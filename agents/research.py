@@ -126,8 +126,11 @@ class ResearchAgent(BaseAgent):
 
         # Use DuckDuckGo instant answer API (free, no key needed)
         try:
-            url = f"https://api.duckduckgo.com/?q={query}&format=json"
-            response = requests.get(url, timeout=10)
+            response = requests.get(
+                "https://api.duckduckgo.com/",
+                params={"q": query, "format": "json"},
+                timeout=10,
+            )
             data = response.json()
 
             if data.get("Abstract"):
@@ -196,7 +199,7 @@ class ResearchAgent(BaseAgent):
         try:
             params = {"q": location, "appid": api_key, "units": "metric"}
             response = requests.get(
-                "http://api.openweathermap.org/data/2.5/weather",
+                "https://api.openweathermap.org/data/2.5/weather",
                 params=params,
                 timeout=10,
             )

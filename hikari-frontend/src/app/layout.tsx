@@ -5,6 +5,10 @@ export const metadata: Metadata = {
   title: "HIKARI - Personal AI Assistant",
   description: "Multi-agent autonomous AI assistant with voice authentication",
   manifest: "/manifest.json",
+  icons: {
+    icon: "/icon-192.png",
+    apple: "/icon-192.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",

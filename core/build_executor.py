@@ -371,6 +371,11 @@ class BuildExecutor:
         if tech:
             return await self._execute_build(request, {"tech": tech})
 
+        self.active_plan = {
+            "request": request,
+            "task_type": task_type,
+            "answers": {},
+        }
         return {
             "type": "planning",
             "task_type": task_type,
@@ -383,13 +388,13 @@ class BuildExecutor:
 
         answer_lower = answer.lower()
 
+        if not self.active_plan:
+            return {"type": "chat", "message": "No active build plan."}
+
         if any(bypass in answer_lower for bypass in BYPASS_PHRASES):
             return await self._execute_build(
                 self.active_plan["request"], self.active_plan.get("answers", {})
             )
-
-        if not self.active_plan:
-            return {"type": "chat", "message": "No active build plan."}
 
         answers = self.active_plan.get("answers", {})
         answers[BUILD_QUESTIONS[0]["key"]] = answer

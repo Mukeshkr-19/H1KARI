@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from core.path_literals import DOT_HIKARI, ENV_FILE, HIKARI_MEMORY_DB, HIKARI_PRIVATE
+from core.runtime_paths import hikari_home
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -54,6 +55,12 @@ class CommandResult:
     timed_out: bool = False
 
 
+def _output_text(value: str | bytes | None) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value or ""
+
+
 def _run_command(
     command: Sequence[str],
     cwd: Path = REPO_ROOT,
@@ -69,11 +76,20 @@ def _run_command(
             text=True,
             timeout=timeout,
         )
-        return CommandResult(result.returncode, result.stdout, result.stderr)
+        return CommandResult(
+            result.returncode,
+            _output_text(result.stdout),
+            _output_text(result.stderr),
+        )
     except FileNotFoundError as exc:
         return CommandResult(127, "", str(exc))
     except subprocess.TimeoutExpired as exc:
-        return CommandResult(124, exc.stdout or "", exc.stderr or "", timed_out=True)
+        return CommandResult(
+            124,
+            _output_text(exc.stdout),
+            _output_text(exc.stderr),
+            timed_out=True,
+        )
 
 
 def _ok(name: str, detail: str) -> Check:
@@ -154,6 +170,7 @@ def _check_required_paths() -> list[Check]:
         "core/neural_memory/db/memory_schema.sql",
         "agents",
         "services",
+        "protocol/hikari-v1.json",
         "skills",
         "tests",
         "hikari-frontend/package.json",
@@ -190,7 +207,7 @@ def _check_private_layout() -> list[Check]:
             )
         )
 
-    brain_link = Path.home() / ".hikari" / "brain"
+    brain_link = hikari_home() / "brain"
     if brain_link.is_symlink():
         target = brain_link.resolve()
         if private_ready and target == EXPECTED_BRAIN_TARGET:
@@ -358,6 +375,40 @@ def _check_repo_root() -> Check:
     return _ok("Repo root", f"{REPO_ROOT} ({name})")
 
 
+def _collect_full_command_checks() -> list[Check]:
+    """Run the explicit full-doctor command plan."""
+    return [
+        _command_check(
+            "CLI help",
+            [sys.executable, "hikari.py", "--help"],
+            timeout=20,
+        ),
+        _command_check(
+            "Text status",
+            [sys.executable, "hikari.py", "--text"],
+            timeout=40,
+            input_text="status\nexit\n",
+        ),
+        _command_check(
+            "Python tests",
+            [sys.executable, "-m", "pytest", "tests", "-q"],
+            timeout=120,
+        ),
+        _command_check(
+            "Frontend lint",
+            ["npm", "run", "lint"],
+            cwd=REPO_ROOT / "hikari-frontend",
+            timeout=120,
+        ),
+        _command_check(
+            "Frontend build",
+            ["npm", "run", "build"],
+            cwd=REPO_ROOT / "hikari-frontend",
+            timeout=180,
+        ),
+    ]
+
+
 def collect_checks(full: bool = False) -> list[Check]:
     checks: list[Check] = []
     checks.append(_check_python_version())
@@ -372,20 +423,7 @@ def collect_checks(full: bool = False) -> list[Check]:
     checks.extend(_check_frontend_layout())
 
     if full:
-        checks.extend(
-            [
-                _command_check("CLI help", [sys.executable, "hikari.py", "--help"], timeout=20),
-                _command_check(
-                    "Text status",
-                    [sys.executable, "hikari.py", "--text"],
-                    timeout=40,
-                    input_text="status\nexit\n",
-                ),
-                _command_check("Python tests", [sys.executable, "-m", "pytest", "tests", "-q"], timeout=120),
-                _command_check("Frontend lint", ["npm", "run", "lint"], cwd=REPO_ROOT / "hikari-frontend", timeout=120),
-                _command_check("Frontend build", ["npm", "run", "build"], cwd=REPO_ROOT / "hikari-frontend", timeout=180),
-            ]
-        )
+        checks.extend(_collect_full_command_checks())
 
     return checks
 

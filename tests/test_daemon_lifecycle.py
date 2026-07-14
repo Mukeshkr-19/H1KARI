@@ -1,0 +1,177 @@
+"""Behavioral coverage for the always-on daemon lifecycle."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+from services import hikari_daemon as daemon
+
+
+class WaitTimeoutError(Exception):
+    pass
+
+
+class UnknownValueError(Exception):
+    pass
+
+
+class Microphone:
+    def __enter__(self):
+        return object()
+
+    def __exit__(self, *_args):
+        return False
+
+
+def _speech_module():
+    return SimpleNamespace(
+        Microphone=Microphone,
+        WaitTimeoutError=WaitTimeoutError,
+        UnknownValueError=UnknownValueError,
+    )
+
+
+def test_import_does_not_load_audio_models(tmp_path: Path):
+    marker = tmp_path / "model-imported"
+    module_source = (
+        "import os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['HIKARI_TEST_MODEL_MARKER']).write_text('imported')\n"
+    )
+    (tmp_path / "faster_whisper.py").write_text(module_source, encoding="utf-8")
+    (tmp_path / "whisper.py").write_text(module_source, encoding="utf-8")
+    env = os.environ.copy()
+    env["HIKARI_TEST_MODEL_MARKER"] = str(marker)
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(tmp_path), str(Path(__file__).parents[1])) if part
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import services.hikari_daemon"],
+        cwd=Path(__file__).parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+
+
+def test_main_fails_cleanly_when_speech_recognition_is_unavailable(monkeypatch):
+    monkeypatch.setattr(daemon, "initialize_audio_backends", lambda: False)
+    listen = MagicMock()
+    monkeypatch.setattr(daemon, "listen_always", listen)
+
+    assert daemon.main() == 1
+    listen.assert_not_called()
+
+
+def test_shutdown_request_stops_owned_loop():
+    daemon.daemon_running = True
+
+    daemon.request_shutdown(signal.SIGTERM, None)
+
+    assert daemon.daemon_running is False
+
+
+def test_listener_dispatches_wake_then_active_and_stops(monkeypatch):
+    calls = []
+    daemon.sr = _speech_module()
+    daemon.r = object()
+    daemon.daemon_running = True
+    daemon.hikari_state = daemon.HikariState.LISTENING
+
+    def wake():
+        calls.append("wake")
+        daemon.hikari_state = daemon.HikariState.ACTIVE
+
+    def active():
+        calls.append("active")
+        daemon.request_shutdown()
+
+    monkeypatch.setattr(daemon, "_listen_for_wake_word", wake)
+    monkeypatch.setattr(daemon, "_listen_for_active_command", active)
+
+    daemon.listen_always()
+
+    assert calls == ["wake", "active"]
+
+
+def test_listener_continues_after_wait_timeout(monkeypatch):
+    attempts = 0
+    daemon.sr = _speech_module()
+    daemon.r = object()
+    daemon.daemon_running = True
+    daemon.hikari_state = daemon.HikariState.LISTENING
+
+    def wake():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise WaitTimeoutError
+        daemon.request_shutdown()
+
+    monkeypatch.setattr(daemon, "_listen_for_wake_word", wake)
+
+    daemon.listen_always()
+
+    assert attempts == 2
+
+
+def test_verified_wake_phrase_enters_active_state(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.LISTENING
+    monkeypatch.setattr(daemon, "recognize_audio", lambda _audio: "hikari")
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+    speak = MagicMock()
+    monkeypatch.setattr(daemon, "speak", speak)
+
+    daemon._listen_for_wake_word()
+
+    assert daemon.hikari_state == daemon.HikariState.ACTIVE
+    speak.assert_called_once_with("Go ahead!")
+
+
+def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+    monkeypatch.setattr(daemon, "recognize_audio", lambda _audio: "bye")
+    speak = MagicMock()
+    monkeypatch.setattr(daemon, "speak", speak)
+
+    daemon._listen_for_active_command()
+
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    speak.assert_called_once_with("Talk to you later!")
+
+
+def test_main_registers_shutdown_signals_before_listening(monkeypatch):
+    registered = {}
+    monkeypatch.setattr(daemon, "initialize_audio_backends", lambda: True)
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", False)
+    monkeypatch.setattr(
+        daemon.signal,
+        "signal",
+        lambda signum, handler: registered.__setitem__(signum, handler),
+    )
+    listen = MagicMock()
+    monkeypatch.setattr(daemon, "listen_always", listen)
+    monkeypatch.setattr(daemon.sys, "argv", ["hikari_daemon.py"])
+
+    assert daemon.main() == 0
+    assert registered == {
+        signal.SIGINT: daemon.request_shutdown,
+        signal.SIGTERM: daemon.request_shutdown,
+    }
+    listen.assert_called_once_with()

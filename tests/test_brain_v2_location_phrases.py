@@ -132,3 +132,21 @@ def test_weather_error_does_not_echo_provider_url_or_key(monkeypatch):
     assert "secret-key" not in result
     assert "appid" not in result
     assert "weather service is unavailable" in result.lower()
+
+
+def test_weather_sends_location_and_key_only_over_https(monkeypatch):
+    from agents.research import ResearchAgent
+
+    response = MagicMock()
+    response.json.return_value = {"cod": 404}
+    request = MagicMock(return_value=response)
+    monkeypatch.setenv("WEATHER_API_KEY", "secret-key")
+    monkeypatch.setattr("agents.research.requests.get", request)
+
+    ResearchAgent(eager_legacy_brain=False).get_weather("City A")
+
+    request.assert_called_once_with(
+        "https://api.openweathermap.org/data/2.5/weather",
+        params={"q": "City A", "appid": "secret-key", "units": "metric"},
+        timeout=10,
+    )

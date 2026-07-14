@@ -1,0 +1,54 @@
+{
+  "name": "hikari.websocket",
+  "version": 1,
+  "client_to_server": {
+    "pair": {
+      "required": {"code": {"type": "string", "max_length": 64}},
+      "optional": {
+        "device_type": {"type": "string", "max_length": 64},
+        "protocol_version": {"type": "integer"}
+      }
+    },
+    "ping": {"required": {}, "optional": {}},
+    "identify": {
+      "required": {},
+      "optional": {"device_type": {"type": "string", "max_length": 64}}
+    },
+    "message": {
+      "required": {"text": {"type": "string", "max_length": 20000}},
+      "optional": {}
+    },
+    "voice": {
+      "required": {},
+      "at_least_one": ["text", "listening"],
+      "optional": {
+        "text": {"type": "string", "max_length": 20000},
+        "listening": {"type": "boolean"}
+      }
+    },
+    "companion_preferences": {
+      "required": {
+        "companion_type": {"type": "string", "max_length": 32},
+        "presentation": {"type": "string", "max_length": 32}
+      },
+      "optional": {}
+    },
+    "status": {"required": {}, "optional": {}}
+  },
+  "server_to_client": {
+    "welcome": ["message", "protocol_version"],
+    "paired": ["message", "protocol_version"],
+    "pair_error": ["message"],
+    "pair_locked": ["message"],
+    "pairing_required": ["message"],
+    "protocol_error": ["message", "supported_version"],
+    "pong": [],
+    "identified": ["device_type"],
+    "response": ["text"],
+    "status": ["text"],
+    "error": ["message"],
+    "companion_update": ["companion"],
+    "companion_preferences_ack": ["preferences"],
+    "companion_preferences_error": ["message"]
+  }
+}

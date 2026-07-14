@@ -6,14 +6,20 @@ unset PYTHONHOME
 unset PYTHONPATH
 unset __PYVENV_LAUNCHER__
 
-if [[ -n "${HIKARI_HOME:-}" ]]; then
+if [[ -n "${HIKARI_REPO_ROOT:-}" ]]; then
+  REPO_ROOT="$(cd "$HIKARI_REPO_ROOT" && pwd)"
+elif [[ -n "${HIKARI_HOME:-}" && -f "$HIKARI_HOME/hikari.py" ]]; then
+  # Compatibility for wrappers installed before HIKARI_REPO_ROOT existed.
   REPO_ROOT="$(cd "$HIKARI_HOME" && pwd)"
+  unset HIKARI_HOME
 else
   _HERE="${BASH_SOURCE[0]}"
   _REAL="$(python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$_HERE")"
   _BIN="$(dirname "$_REAL")"
   REPO_ROOT="$(cd "$_BIN/.." && pwd)"
 fi
+
+export HIKARI_REPO_ROOT="$REPO_ROOT"
 
 cd "$REPO_ROOT" || exit 1
 

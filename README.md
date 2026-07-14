@@ -35,7 +35,9 @@ H1KARI/
 ├── hikari.py           # Main CLI/server entrypoint
 ├── install.sh
 ├── package.json        # npm shortcuts for Python commands
+├── requirements-dev-macos-arm64-py312.lock
 ├── requirements-dev.txt
+├── requirements-macos-arm64-py312.lock
 └── requirements.txt
 ```
 
@@ -44,6 +46,11 @@ H1KARI/
 - `docs/QUICKSTART.md` - setup and first-run commands.
 - `docs/ARCHITECTURE.md` - current repo layout, commands, and operating model.
 - `docs/NEURAL_MEMORY_ACCEPTANCE.md` - neural memory acceptance criteria.
+- `docs/MODEL_PROVENANCE.md` - reviewed voice-model sources and download policy.
+- `docs/PROVIDER_PROVENANCE.md` - hosted-provider and external-service data flows.
+- `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
+- `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
+- `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.
 
 ## Privacy Model
 
@@ -64,10 +71,12 @@ Use Python 3.12. Python 3.14 has caused native dependency install failures for t
 cd path/to/H1KARI
 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
-.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
 cp .env.example local-environment-file
 bash scripts/install-hikari-cli.sh
 ```
+
+That exact lock is verified for macOS arm64 with Python 3.12. On another platform, install `requirements.txt` and `requirements-dev.txt`; that portable path resolves direct constraints but is not yet a verified lock.
 
 Edit your local environment file (from `.env.example`) and add at least one provider key, for example `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`.
 
@@ -180,4 +189,3 @@ Private-file scan before any public push:
 ```
 
 That test must pass (zero denylist hits in tracked and untracked public source).
-

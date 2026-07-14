@@ -6,13 +6,11 @@ Runtime CLI compatibility: `hikari`, `Hikari`, `hikari.py`.
 
 ## Tool roles
 
-| Tool | Role | Git commit/push |
+| Role | Responsibility | Git commit/push |
 |---|---|---|
-| Cursor | Implementation, focused tests | No |
-| Agy | Behavioral QA, scripted terminal chat | No |
-| Gemini CLI | Architecture and privacy audit | No |
-| Hermes (reference) | Pattern comparison reports | No |
-| Codex/sia | Final review, branch, gates, commit, push | **Yes (only)** |
+| Implementation helper | Focused code or documentation plus focused checks | No |
+| Independent auditor | Behavior, architecture, privacy, or provenance review | No |
+| Release operator | Final review, branches, gates, integration, and push | **Yes (only)** |
 
 Living feature tracker (local, not always in repo):
 
@@ -26,7 +24,7 @@ Living feature tracker (local, not always in repo):
   - `docs/<topic>`
   - `infra/<topic>`
   - `voice/<topic>`
-- Codex creates the branch, runs gates, commits, pushes, then merges when green.
+- The release operator creates the branch, runs gates, commits, pushes, then merges when green.
 
 ## Required gates before merge
 
@@ -64,4 +62,4 @@ task-boundary gates, but they should be handled before a Python 3.13 runtime mov
 - Scope is narrow and named.
 - All gates pass locally.
 - Handoff report lists files changed, verification output, and risks.
-- Only Codex performs `git commit` and `git push`.
+- Only the release operator performs `git commit` and `git push`.

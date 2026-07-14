@@ -6,6 +6,8 @@ Extensible skill framework for adding new capabilities
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+import ast
+import operator
 
 from core.quiet import debug
 
@@ -135,20 +137,49 @@ class TimerSkill(Skill):
 class CalculatorSkill(Skill):
     """Quick calculations"""
 
+    MAX_EXPRESSION_LENGTH = 200
+    MAX_AST_NODES = 80
+
+    _OPS = {
+        ast.Add: operator.add,
+        ast.Sub: operator.sub,
+        ast.Mult: operator.mul,
+        ast.Div: operator.truediv,
+        ast.USub: operator.neg,
+        ast.UAdd: operator.pos,
+    }
+
     def __init__(self):
         super().__init__("calculator", "Quick math calculations")
 
     def execute(self, **kwargs) -> Any:
         expression = kwargs.get("expression", "")
         try:
-            # Safe eval for math only
-            allowed = set("0123456789+-*/.() ")
-            if all(c in allowed for c in expression):
-                result = eval(expression)
-                return f"{expression} = {result}"
+            result = self._eval_math(expression)
+            return f"{expression} = {result}"
+        except (SyntaxError, ValueError):
             return "Invalid expression"
         except Exception:
             return "Couldn't calculate that"
+
+    def _eval_math(self, expression: str):
+        if not isinstance(expression, str) or len(expression) > self.MAX_EXPRESSION_LENGTH:
+            raise ValueError("expression too large")
+        tree = ast.parse(expression, mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > self.MAX_AST_NODES:
+            raise ValueError("expression too complex")
+        return self._eval_node(tree.body)
+
+    def _eval_node(self, node):
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in self._OPS:
+            return self._OPS[type(node.op)](
+                self._eval_node(node.left), self._eval_node(node.right)
+            )
+        if isinstance(node, ast.UnaryOp) and type(node.op) in self._OPS:
+            return self._OPS[type(node.op)](self._eval_node(node.operand))
+        raise ValueError("unsupported expression")
 
     def can_handle(self, user_input: str) -> float:
         import re

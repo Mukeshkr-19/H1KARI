@@ -6,16 +6,9 @@ import os
 from pathlib import Path
 
 from core.path_literals import EPISODES_DB
+from core.runtime_paths import brain_dir
 
 ENV_BRAIN_V2_EPISODES_DB = "HIKARI_BRAIN_V2_EPISODES_DB"
-
-
-def _join(*parts: str) -> str:
-    return "".join(parts)
-
-
-def _home_hikari_brain_v2_dir(home: Path) -> Path:
-    return home / _join(".", "hikari") / "brain" / "brain_v2"
 
 
 def resolve_episodes_db_path() -> Path:
@@ -23,8 +16,7 @@ def resolve_episodes_db_path() -> Path:
     explicit = os.environ.get(ENV_BRAIN_V2_EPISODES_DB)
     if explicit:
         return Path(explicit).expanduser().resolve()
-    home = Path(os.environ.get("HOME", "~")).expanduser()
-    return _home_hikari_brain_v2_dir(home) / EPISODES_DB
+    return brain_dir() / "brain_v2" / EPISODES_DB
 
 
 def episodes_db_explicitly_configured() -> bool:

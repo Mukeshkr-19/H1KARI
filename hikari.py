@@ -18,17 +18,19 @@ import subprocess
 from pathlib import Path
 from textwrap import dedent
 
-# Hide dock icon when running as service
-if "--daemon" in sys.argv or "--bg" in sys.argv or "--tray" in sys.argv:
-    try:
-        from AppKit import NSApplication
-        app = NSApplication.sharedApplication()
-        app.setActivationPolicy_(2)
-    except:
-        pass
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ["OBJC_DISABLE_INITIALIZE_BRIDGE"] = "1"
+
+
+def hide_dock_icon():
+    """Hide the dock icon for validated background UI modes on macOS."""
+    try:
+        from AppKit import NSApplication
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(2)
+    except Exception:
+        pass
 
 def print_banner():
     banner = dedent(
@@ -161,24 +163,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="HIKARI personal AI assistant",
     )
-    parser.add_argument(
+    runtime_modes = parser.add_mutually_exclusive_group()
+    runtime_modes.add_argument(
         "--text",
         action="store_true",
         help="Run interactive text mode. This is the default.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--daemon",
         "--bg",
         dest="daemon",
         action="store_true",
         help="Run always-listening background mode.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--tray",
         action="store_true",
         help="Run HIKARI from the macOS menu bar.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--server",
         action="store_true",
         help="Run the WebSocket/HTTP server for phone and web clients.",
@@ -223,6 +226,54 @@ def main():
         "--memory-status",
         action="store_true",
         help="Show neural memory connection and brain stats (read-only, no conversation dump).",
+    )
+    parser.add_argument(
+        "--voice-status",
+        action="store_true",
+        help=(
+            "Show installed voice backends, expected model caches, offline readiness, "
+            "and audio-egress policy without loading models."
+        ),
+    )
+    runtime_modes.add_argument(
+        "--init",
+        action="store_true",
+        help="Initialize the private HIKARI runtime layout without downloading models.",
+    )
+    runtime_modes.add_argument(
+        "--init-plan",
+        action="store_true",
+        help="Preview runtime initialization without writing files.",
+    )
+    runtime_modes.add_argument(
+        "--runtime-backup",
+        action="store_true",
+        help="Back up initialized private runtime state without following symlinks.",
+    )
+    runtime_modes.add_argument(
+        "--migration-plan",
+        action="store_true",
+        help="Inspect legacy runtime layout and print a no-write migration plan.",
+    )
+    runtime_modes.add_argument(
+        "--rollback-init",
+        metavar="TOKEN",
+        help="Remove only empty paths created by --init; token must be exactly ROLLBACK.",
+    )
+    parser.add_argument(
+        "--backup-destination",
+        metavar="PATH",
+        help="Optional destination for --runtime-backup; parent must already exist.",
+    )
+    parser.add_argument(
+        "--startup-mode",
+        choices=("text", "voice"),
+        help="Required with --init or --init-plan.",
+    )
+    parser.add_argument(
+        "--voice-backend",
+        choices=("openai-whisper", "faster-whisper", "google-speech"),
+        help="Required for voice startup; records download and audio-egress disclosure.",
     )
     parser.add_argument(
         "--brain-v2-status",
@@ -438,6 +489,18 @@ def main():
 
     args = parser.parse_args()
 
+    init_requested = args.init or args.init_plan
+    if init_requested and args.startup_mode is None:
+        parser.error("--init and --init-plan require --startup-mode")
+    if not init_requested and (args.startup_mode or args.voice_backend):
+        parser.error("--startup-mode and --voice-backend require --init or --init-plan")
+    if args.backup_destination and not args.runtime_backup:
+        parser.error("--backup-destination requires --runtime-backup")
+    if args.startup_mode == "voice" and args.voice_backend is None:
+        parser.error("voice startup requires --voice-backend")
+    if args.startup_mode == "text" and args.voice_backend is not None:
+        parser.error("--voice-backend cannot be used with text startup")
+
     if args.confirm_promote is not None and not args.brain_v2_accept:
         parser.error("--confirm-promote requires --brain-v2-accept")
     if args.confirm_promote is not None and args.brain_v2_accept_no_promote:
@@ -471,14 +534,71 @@ def main():
     if args.repair_preview and args.confirm_repair:
         parser.error("--repair-preview cannot be combined with --confirm-repair")
 
+    if args.daemon or args.tray:
+        hide_dock_icon()
+
     if args.verbose:
         os.environ["HIKARI_VERBOSE"] = "1"
         os.environ["HIKARI_QUIET"] = "0"
+
+    if args.migration_plan:
+        from core.runtime_setup import format_migration_plan, runtime_migration_plan
+
+        print(format_migration_plan(runtime_migration_plan()))
+        raise SystemExit(0)
+
+    if args.runtime_backup:
+        from core.runtime_setup import backup_runtime_home
+
+        destination = Path(args.backup_destination) if args.backup_destination else None
+        try:
+            backup_path = backup_runtime_home(destination=destination)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime backup failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"Runtime backup complete: {backup_path}")
+        raise SystemExit(0)
+
+    if args.rollback_init:
+        from core.runtime_setup import rollback_initialization
+
+        try:
+            removed = rollback_initialization(args.rollback_init)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime rollback failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(f"Runtime initialization rolled back: {len(removed)} paths removed")
+        raise SystemExit(0)
+
+    if init_requested:
+        from core.runtime_setup import (
+            format_initialization,
+            initialization_plan,
+            initialize_runtime_home,
+        )
+
+        if args.init_plan:
+            result = initialization_plan(args.startup_mode, args.voice_backend)
+            print(format_initialization(result, applied=False))
+            raise SystemExit(1 if result["blockers"] else 0)
+        try:
+            result = initialize_runtime_home(args.startup_mode, args.voice_backend)
+        except (OSError, RuntimeError, ValueError) as exc:
+            print(f"Runtime initialization failed: {exc}", file=sys.stderr)
+            raise SystemExit(1)
+        print(format_initialization(result, applied=True))
+        raise SystemExit(0)
 
     if args.memory_status:
         from core.memory_status import format_memory_status_report
 
         print(format_memory_status_report())
+        raise SystemExit(0)
+
+    if args.voice_status:
+        from core.voice_status import format_voice_status
+
+        print(format_voice_status())
         raise SystemExit(0)
 
     if args.tasks_list:

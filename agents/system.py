@@ -47,8 +47,11 @@ class SystemAgent(BaseAgent):
         if "quit" in lowered or "close" in lowered or "kill" in lowered:
             return self.control_app(user_input)
 
-        # Restart/reboot commands
-        if "restart" in lowered or "reboot" in lowered:
+        # Restart/shutdown commands
+        if any(
+            word in lowered
+            for word in ["restart", "reboot", "shutdown", "shut down"]
+        ):
             return self.system_control(user_input)
 
         # Sleep/lock commands
@@ -190,19 +193,6 @@ class SystemAgent(BaseAgent):
                     pass
 
                 # Restore clipboard
-                p = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-                p.communicate(
-                    input=old_clip.stdout.encode() if old_clip.stdout else b""
-                )
-
-                return f"Searching Spotify for '{search}'..."
-                try:
-                    subprocess.run(["osascript", "-e", script], timeout=10)
-                    time.sleep(2)
-                except:
-                    pass
-
-                # Restore old clipboard
                 p = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
                 p.communicate(
                     input=old_clip.stdout.encode() if old_clip.stdout else b""
@@ -389,7 +379,17 @@ class SystemAgent(BaseAgent):
 
     def system_control(self, command: str) -> str:
         """Control Mac system - sleep, lock, restart"""
-        cmd = command.lower()
+        cmd = command.lower().strip()
+
+        confirmation_rules = (
+            (("empty trash", "empty the trash", "empty bin"), "confirm empty trash"),
+            (("restart", "reboot"), "confirm restart"),
+            (("shutdown", "shut down"), "confirm shutdown"),
+            (("sleep",), "confirm sleep"),
+        )
+        for keywords, confirmation in confirmation_rules:
+            if any(keyword in cmd for keyword in keywords) and cmd != confirmation:
+                return f"Confirmation required: say '{confirmation}'."
 
         try:
             if "sleep" in cmd:
