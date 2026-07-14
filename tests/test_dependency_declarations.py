@@ -22,3 +22,19 @@ def test_voice_backends_have_unambiguous_distribution_names():
     assert "whisper" not in names
     assert names.count("openai-whisper") == 1
     assert names.count("faster-whisper") == 1
+
+
+def test_known_unused_packages_are_not_declared():
+    names = set(_requirement_names())
+
+    assert names.isdisjoint(
+        {
+            "beautifulsoup4",
+            "cohere",
+            "parameterized",
+            "pyttsx3",
+            "pyyaml",
+            "types-requests",
+            "wikipedia",
+        }
+    )

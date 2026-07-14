@@ -1,9 +1,7 @@
 annotated-types==0.7.0
 anyio==4.8.0
-beautifulsoup4==4.12.3
 certifi==2024.12.14
 charset-normalizer==3.4.1
-cohere==5.13.6
 distro==1.9.0
 fastavro==1.10.0
 feedparser>=6.0.0
@@ -20,13 +18,10 @@ litellm==1.84.0
 numpy>=1.26.0
 openai==2.30.0
 packaging==24.2
-parameterized==0.9.0
 PyAudio==0.2.14
 pydantic==2.10.4
 pydantic_core==2.27.2
-pyttsx3==2.90
 python-dotenv==1.2.2
-PyYAML==6.0.2
 qrcode[pil]>=7.4.2
 requests==2.33.0
 six==1.17.0
@@ -35,11 +30,9 @@ soupsieve==2.8.4
 SpeechRecognition==3.13.0
 tokenizers==0.21.0
 tqdm==4.67.1
-types-requests==2.32.0.20241016
 typing_extensions==4.15.0
 urllib3==2.7.0
 websockets>=12.0
-wikipedia==1.4.0
 openai-whisper>=20231117
 faster-whisper==1.2.1
 torch>=2.0.0
