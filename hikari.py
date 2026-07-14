@@ -18,17 +18,19 @@ import subprocess
 from pathlib import Path
 from textwrap import dedent
 
-# Hide dock icon when running as service
-if "--daemon" in sys.argv or "--bg" in sys.argv or "--tray" in sys.argv:
-    try:
-        from AppKit import NSApplication
-        app = NSApplication.sharedApplication()
-        app.setActivationPolicy_(2)
-    except:
-        pass
-
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ["OBJC_DISABLE_INITIALIZE_BRIDGE"] = "1"
+
+
+def hide_dock_icon():
+    """Hide the dock icon for validated background UI modes on macOS."""
+    try:
+        from AppKit import NSApplication
+
+        app = NSApplication.sharedApplication()
+        app.setActivationPolicy_(2)
+    except Exception:
+        pass
 
 def print_banner():
     banner = dedent(
@@ -161,24 +163,25 @@ def main():
     parser = argparse.ArgumentParser(
         description="HIKARI personal AI assistant",
     )
-    parser.add_argument(
+    runtime_modes = parser.add_mutually_exclusive_group()
+    runtime_modes.add_argument(
         "--text",
         action="store_true",
         help="Run interactive text mode. This is the default.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--daemon",
         "--bg",
         dest="daemon",
         action="store_true",
         help="Run always-listening background mode.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--tray",
         action="store_true",
         help="Run HIKARI from the macOS menu bar.",
     )
-    parser.add_argument(
+    runtime_modes.add_argument(
         "--server",
         action="store_true",
         help="Run the WebSocket/HTTP server for phone and web clients.",
@@ -470,6 +473,9 @@ def main():
         )
     if args.repair_preview and args.confirm_repair:
         parser.error("--repair-preview cannot be combined with --confirm-repair")
+
+    if args.daemon or args.tray:
+        hide_dock_icon()
 
     if args.verbose:
         os.environ["HIKARI_VERBOSE"] = "1"

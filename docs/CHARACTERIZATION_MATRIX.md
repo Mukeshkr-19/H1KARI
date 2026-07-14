@@ -1,7 +1,7 @@
 # WP-003 Characterization Matrix
 
 Status: active
-Baseline: `develop` at `cb7319f`
+Baseline: `develop` at `4fe5608`
 Reviewed: 2026-07-13
 
 ## Purpose
@@ -12,7 +12,7 @@ This matrix records which current behaviors are protected before architectural m
 
 | Surface | Current evidence | Confidence | Gap and acceptance condition | Priority |
 |---|---|---|---|---|
-| CLI argument safety | Brain v2 promotion/repair flag tests, task CLI tests, CLI safety intent tests, `hikari.py --help` in doctor | medium | Runtime modes are ordered `if` statements rather than an exclusive contract. Add subprocess characterization proving conflicting `--text`, `--server`, `--daemon`, and `--tray` modes fail without starting a side effect. | high |
+| CLI argument safety | Brain v2 promotion/repair flag tests, task CLI tests, CLI safety intent tests, `hikari.py --help` in doctor, subprocess coverage for every conflicting runtime-mode pair and the `--bg` alias | high | Resolved in `safety/cli-runtime-mode-exclusivity`. Preserve parser-level rejection before macOS UI imports or runtime startup. | blocking regression gate |
 | CLI read-only operations | Brain v2 eval/status/repair tests, memory status tests, task-list tests | high | Preserve read-only isolation and redacted output while parser changes land. No immediate gap beyond the runtime-mode contract. | medium |
 | Server pairing authorization | per-connection random-code pairing, bounded failure lockout, protected-event rejection, paired-only broadcasts, disconnect cleanup | high | Resolved in `security/server-pairing-authorization`. Preserve the rule that only ping and pair are accepted before authorization. | blocking regression gate |
 | Server HTTP surfaces | `/qr` and `/connect` hardening headers; `/qr` omits the secret; `/api/status` exposes only running state and client count | high | Resolved in `security/server-pairing-authorization`. Keep pairing secrets and device details local-only. | blocking regression gate |
@@ -28,10 +28,9 @@ This matrix records which current behaviors are protected before architectural m
 
 ## Execution order
 
-1. Characterize mutually exclusive CLI runtime modes.
-2. Add behavioral daemon lifecycle seams and tests.
-3. Add read-only voice backend/model/cache status without downloading weights.
-4. Characterize full-doctor subprocess failures and timeouts.
-5. Define a versioned server/frontend message schema and add accessibility checks.
+1. Add behavioral daemon lifecycle seams and tests.
+2. Add read-only voice backend/model/cache status without downloading weights.
+3. Characterize full-doctor subprocess failures and timeouts.
+4. Define a versioned server/frontend message schema and add accessibility checks.
 
 Each item lands through its own branch. Brain v2 full gates remain mandatory for shared orchestration changes, and `main` remains unchanged until the owner explicitly authorizes a release merge.
