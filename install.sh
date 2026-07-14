@@ -26,7 +26,13 @@ fi
 source .venv/bin/activate
 
 python -m pip install --upgrade pip wheel setuptools
-pip install -r requirements.txt
+PY_VER="$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" && "$PY_VER" == "3.12" ]]; then
+  python -m pip install -r requirements-macos-arm64-py312.lock
+else
+  echo "No verified lock for $(uname -s)/$(uname -m)/Python $PY_VER; using direct requirements."
+  python -m pip install -r requirements.txt
+fi
 
 if [ ! -f ".env" ] && [ -f ".env.example" ]; then
   cp .env.example .env

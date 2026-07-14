@@ -15,9 +15,11 @@ The project should use Python 3.12. Avoid creating the venv with Python 3.14.
 ```bash
 /Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
-.venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
 bash scripts/install-hikari-cli.sh
 ```
+
+The lock is verified for macOS arm64 with Python 3.12. Other platforms use `requirements.txt` plus `requirements-dev.txt` until their own clean-environment lock is published.
 
 ## 3. Configure API Keys
 

@@ -1,0 +1,5 @@
+# Compatibility versions verified on macOS arm64 with Python 3.12.
+numba==0.64.0
+numpy==2.4.4
+torch==2.11.0
+websockets==16.0
