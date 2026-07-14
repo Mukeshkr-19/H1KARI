@@ -35,16 +35,16 @@ The warnings are known dependency/deprecation notices plus an unwritable pytest 
 
 ## Intake decisions
 
-| Historical branch | Scope | Initial decision | Reason and required evidence |
+| Historical branch | Scope | Status | Reason and required evidence |
 |---|---|---|---|
-| `fix/calculator-eval-security` | replace arithmetic `eval` with bounded AST evaluation | ready | Small standard-library fix with malicious-input and complexity checks. Re-run calculator and full tests after intake. |
-| `fix/research-url-encoding` | encode search query before URL construction | ready | Small boundary fix with a focused regression test. Confirm all research URL construction callers. |
-| `fix/server-pairing-safety` | escape pairing values and add response headers | revise | Correct XSS direction and focused tests. Add no-store/referrer/frame protections or record why they are not applicable before intake. |
-| `fix/auth-and-safety-hardening` | reject path-like memory names and align auth trust thresholds | revise | Path-like name rejection is sound. Threshold change is a separate behavior decision and should not be bundled without characterization. |
+| `fix/calculator-eval-security` | replace arithmetic `eval` with bounded AST evaluation | integrated | Reworked as `safety/calculator-expression-parser`; accepted commit `a8b0903`. |
+| `fix/research-url-encoding` | encode search query before URL construction | integrated | Reworked to use request parameters as `safety/research-query-encoding`; accepted commit `08ae690`. |
+| `fix/server-pairing-safety` | escape pairing values and add response headers | integrated | Expanded with no-store, no-referrer, anti-framing, and CSP checks as `safety/server-pairing-pages`; accepted commit `991e18d`. |
+| `fix/auth-and-safety-hardening` | reject path-like memory names and align auth trust thresholds | defer | The memory validator has no production callers, so it would not protect writes. Auth threshold changes require separate characterization. Wire validation at the real storage boundary and keep the concerns split. |
 | `fix/mac-control-safety-gates` | require confirmation for destructive Mac actions | revise | Important containment, but confirmation strings are not a substitute for the planned central policy. Review every caller, eliminate broad exception handling, and add a compatibility test. |
 | `fix/security-policy-path-whitelist` | enforce allowed paths in `SecurityPolicy` | defer | `SecurityPolicy` currently has no production callers. Merging would create a false safety claim. Implement as part of the real central action path. |
-| `fix/orchestrator-singleton-lock` | protect singleton initialization | ready | Small concurrency change with a focused multithreaded regression test. Verify no alternate singleton path exists. |
-| `fix/system-agent-music-flow` | remove unreachable clipboard restore block | ready | Deletion-only runtime cleanup with a focused behavior test. Review interaction with exception-observability changes. |
+| `fix/orchestrator-singleton-lock` | protect singleton initialization | integrated | Reworked with a deterministic constructor-count regression as `core/orchestrator-singleton-lock`; accepted commit `88bd4f5`. |
+| `fix/system-agent-music-flow` | remove unreachable clipboard restore block | integrated | Reworked with a behavior test as `fix/system-music-unreachable-code`; accepted commit `0487918`. |
 | `fix/exception-observability` | replace broad exception handlers across runtime paths | revise | Direction is useful, but it spans nine production files. Review each exception boundary and avoid converting recoverable optional-feature failures into crashes. |
 | `fix/runtime-guard-cleanups` | guard optional collaborators and runtime stubs | revise | Test-backed but touches unrelated optional systems. Split into coherent issue-family intakes. |
 | `fix/reminders-and-speech-runtime` | scheduler and speech runtime corrections | characterize | Side-effect and persistence behavior needs focused scheduling/voice characterization before intake. |
@@ -56,19 +56,31 @@ The warnings are known dependency/deprecation notices plus an unwritable pytest 
 | `fix/router-provider-config-sync` | add one provider and synchronize fallback configuration | defer | Provider-specific configuration should follow the provider-neutral capability/router contract and a secrets/data-boundary review. |
 | `fix/frontend-pwa-icons` | point manifest entries to an existing image | ready | Minimal asset-reference fix. Verify manifest validity, frontend lint/build, and the installed-app icon behavior. |
 
+## Integration log
+
+| Accepted branch | Commit | Branch verification | Post-merge verification |
+|---|---|---|---|
+| `safety/calculator-expression-parser` | `a8b0903` | 37 focused tests; 854 full tests; privacy passed | 854 full tests; privacy passed |
+| `safety/research-query-encoding` | `08ae690` | 4 focused tests; 855 full tests; privacy passed | 4 focused tests; privacy passed |
+| `safety/server-pairing-pages` | `991e18d` | 2 focused tests; 857 full tests; privacy passed | 2 focused tests; privacy passed |
+| `core/orchestrator-singleton-lock` | `88bd4f5` | 1 focused test; 858 full tests; privacy passed | 1 focused test; privacy passed |
+| `fix/system-music-unreachable-code` | `0487918` | 1 focused test; 859 full tests; privacy passed | 1 focused test; privacy passed |
+
+The increasing full-test count reflects the focused regression tests added by accepted branches.
+
 ## Intake order
 
 ### Wave 1 - Small security and input-boundary fixes
 
-1. Calculator evaluation
-2. Research URL encoding
-3. Pairing-page output hardening
-4. Auth and memory-name validation, split by concern
+1. ~~Calculator evaluation~~
+2. ~~Research URL encoding~~
+3. ~~Pairing-page output hardening~~
+4. Auth and memory-name validation, deferred until the real boundaries are characterized and wired
 
 ### Wave 2 - Concurrency and contained runtime fixes
 
-1. Orchestrator singleton lock
-2. System music-flow deletion
+1. ~~Orchestrator singleton lock~~
+2. ~~System music-flow deletion~~
 3. Frontend PWA icon reference
 4. Split runtime guard and small-bug changes
 5. Exception observability, reviewed file by file
