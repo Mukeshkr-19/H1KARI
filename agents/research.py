@@ -199,7 +199,7 @@ class ResearchAgent(BaseAgent):
         try:
             params = {"q": location, "appid": api_key, "units": "metric"}
             response = requests.get(
-                "http://api.openweathermap.org/data/2.5/weather",
+                "https://api.openweathermap.org/data/2.5/weather",
                 params=params,
                 timeout=10,
             )
