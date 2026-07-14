@@ -527,7 +527,8 @@ Long-term success means a parent, child, person using assistive technology, and 
 6. Execute the focused WP-001 remediation branches recorded in `docs/PROVENANCE_INVENTORY.md`.
 7. ~~Execute the prioritized WP-003 gaps in `docs/CHARACTERIZATION_MATRIX.md` before architectural refactors.~~
 8. ~~Establish WP-004 continuous checks for the full Python suite, privacy and protocol contracts, locked dependencies, and the frontend release gates.~~
-9. Design WP-006 `HIKARI_HOME` around current runtime paths and a reversible migration dry run.
-10. Define WP-007 action-policy contracts before routing additional tools or integrations.
+9. ~~Define WP-005 canonical checkout/runtime naming and preserve legacy launcher compatibility.~~
+10. Design WP-006 `HIKARI_HOME` around current runtime paths and a reversible migration dry run.
+11. Define WP-007 action-policy contracts before routing additional tools or integrations.
 
 Future work follows this queue unless a verified security or data-loss issue requires immediate priority.
