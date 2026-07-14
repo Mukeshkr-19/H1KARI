@@ -228,6 +228,14 @@ def main():
         help="Show neural memory connection and brain stats (read-only, no conversation dump).",
     )
     parser.add_argument(
+        "--voice-status",
+        action="store_true",
+        help=(
+            "Show installed voice backends, expected model caches, offline readiness, "
+            "and audio-egress policy without loading models."
+        ),
+    )
+    parser.add_argument(
         "--brain-v2-status",
         action="store_true",
         help="Show Brain v2 episode DB counts and review queue status.",
@@ -485,6 +493,12 @@ def main():
         from core.memory_status import format_memory_status_report
 
         print(format_memory_status_report())
+        raise SystemExit(0)
+
+    if args.voice_status:
+        from core.voice_status import format_voice_status
+
+        print(format_voice_status())
         raise SystemExit(0)
 
     if args.tasks_list:
