@@ -8,11 +8,26 @@ import sys
 import threading
 import subprocess
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HIKARI_ENTRYPOINT = os.path.join(REPO_ROOT, "hikari.py")
+
 try:
     import rumps
 
     RUMPS_AVAILABLE = True
 except ImportError:
+    class _RumpsFallback:
+        class App:
+            pass
+
+        @staticmethod
+        def clicked(_):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    rumps = _RumpsFallback()
     RUMPS_AVAILABLE = False
 
 
@@ -61,10 +76,10 @@ class HIKARIMenuBar(rumps.App):
         subprocess.Popen(
             [
                 sys.executable,
-                os.path.join(os.path.dirname(__file__), "hikari.py"),
+                HIKARI_ENTRYPOINT,
                 "--text",
             ],
-            cwd=os.path.dirname(__file__),
+            cwd=REPO_ROOT,
         )
 
     @rumps.clicked("Server Only")
@@ -72,10 +87,10 @@ class HIKARIMenuBar(rumps.App):
         subprocess.Popen(
             [
                 sys.executable,
-                os.path.join(os.path.dirname(__file__), "hikari.py"),
+                HIKARI_ENTRYPOINT,
                 "--server",
             ],
-            cwd=os.path.dirname(__file__),
+            cwd=REPO_ROOT,
         )
 
     @rumps.clicked("Mute Voice")
