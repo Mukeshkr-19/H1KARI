@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from core.path_literals import DOT_HIKARI
+from core.runtime_paths import hikari_home
 from core.voice_companion.contract import (
     CompanionType,
     PresentationOption,
@@ -24,8 +24,7 @@ def _prefs_path() -> Path:
     explicit = os.environ.get("HIKARI_COMPANION_PREFS_PATH")
     if explicit:
         return Path(explicit).expanduser()
-    home = Path(os.environ.get("HOME", "~")).expanduser()
-    return home / DOT_HIKARI / "companion_ui.json"
+    return hikari_home() / "companion_ui.json"
 
 
 @dataclass(frozen=True)
