@@ -225,6 +225,25 @@ class TestResearchAgent(unittest.TestCase):
         self.assertGreater(agent.can_handle("latest news"), 0.7)
         self.assertLess(agent.can_handle("write code"), 0.3)
 
+    def test_search_web_passes_query_as_request_parameters(self):
+        from unittest.mock import MagicMock, patch
+
+        from agents.research import ResearchAgent
+
+        agent = ResearchAgent()
+        with patch("agents.research.requests.get") as mock_get:
+            response = MagicMock()
+            response.json.return_value = {"Abstract": "Result"}
+            mock_get.return_value = response
+
+            agent.search_web("hello world & foo=bar?baz")
+
+        mock_get.assert_called_once_with(
+            "https://api.duckduckgo.com/",
+            params={"q": "hello world & foo=bar?baz", "format": "json"},
+            timeout=10,
+        )
+
 
 class TestCodenameAuth(unittest.TestCase):
     """Test codename authentication"""
