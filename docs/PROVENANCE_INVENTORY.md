@@ -112,9 +112,9 @@ No imported prompt pack or external prompt file was found. Prompt changes are cu
 |---|---|---|---|
 | `public/icon-192.png` | `7f5cda349164f4f4ab966ebc6249bfaff13680d7ada233545beaff178775d7bc` | project-created in `b32dd17`; no embedded metadata | used by manifest |
 | `public/icon-512.png` | `a09baded4838240da4787a0844396e62fe66a2e0a53c8d5b40df47a765d811ac` | project-created in `b32dd17`; no embedded metadata | used by manifest |
-| `src/app/favicon.ico` | `2b8ad2d33455a8f736fc3a8ebf8f0bdea8848ad4c0db48a2833bd0f9cd775932` | initial clean-room commit; exact source not recorded | implicitly shipped; provenance unresolved |
 
 The unreferenced `hikari-hero.png` and five create-next-app-style SVG template assets were removed. They had no product caller, and retaining them would preserve unnecessary provenance and trademark questions.
+The unknown-origin favicon was also removed; Next metadata now uses the verified project-created 192px icon for browser and Apple icon links.
 
 No fonts are tracked. The frontend README mentions Geist through `next/font`, but the current source has no confirmed local font asset; verify actual build output before claiming or shipping it.
 
@@ -128,7 +128,7 @@ The standard library and native macOS commands avoid additional package provenan
 2. Normalize Python manifests into direct runtime, optional voice, and development dependencies; pin a reproducible tested set.
 3. Make the selected voice backend and model download behavior explicit during initialization.
 4. Resolve speaker-model code/model/training-data terms before treating voice identity as release-ready.
-5. ~~Remove unused template and hero assets.~~ Replace or document the active favicon.
+5. ~~Remove unused template and hero assets and replace the unknown-origin favicon reference.~~
 6. Generate a frontend third-party notice input from the exact lock and review non-permissive/content-license families.
 7. Record hosted provider model ids, terms, egress, retention, and disable/rollback behavior in provider-neutral records.
 8. Keep the project license undecided until these items are resolved and the owner approves it.
