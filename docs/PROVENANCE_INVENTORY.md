@@ -124,7 +124,7 @@ The standard library and native macOS commands avoid additional package provenan
 ## WP-001 findings and next actions
 
 1. ~~Remove the unrelated `whisper==1.1.10` distribution and declare the faster-whisper runtime path.~~
-2. Create a platform/Python-specific lock from the 15 direct runtime dependencies and verify it in a clean environment.
+2. The macOS arm64/Python 3.12 runtime and development locks are verified by a clean 88-package install and all 891 tests. Maintain them from the 15 direct dependencies plus four tested compatibility constraints; artifact hashes and other platform locks remain open.
 3. Make the selected voice backend and model download behavior explicit during initialization.
 4. Resolve speaker-model code/model/training-data terms before treating voice identity as release-ready.
 5. ~~Remove unused template and hero assets and replace the unknown-origin favicon reference.~~
