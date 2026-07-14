@@ -42,9 +42,20 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
     return dot / denom if denom else 0.0
 
 
+def _valid_embedding(value) -> bool:
+    return isinstance(value, list) and bool(value) and all(
+        type(item) in (int, float) and math.isfinite(float(item)) for item in value
+    )
+
+
 def _mean(vectors: List[List[float]]) -> List[float]:
     if not vectors:
-        return []
+        raise ValueError("No embeddings provided for enrollment")
+    if not all(_valid_embedding(vector) for vector in vectors):
+        raise ValueError("Embeddings must contain finite numbers")
+    if len({len(vector) for vector in vectors}) != 1:
+        raise ValueError("Embeddings must have consistent dimensions")
+
     n = len(vectors)
     d = len(vectors[0])
     out = [0.0] * d
@@ -92,8 +103,6 @@ class SpeakerAuth:
         return self._enrolled_embedding is not None
 
     def enroll_from_embeddings(self, embeddings: List[List[float]]):
-        if not embeddings:
-            raise ValueError("No embeddings provided for enrollment")
         self._enrolled_embedding = _mean(embeddings)
         self._save_enrollment()
 
@@ -175,10 +184,10 @@ class SpeakerAuth:
             if not VOICE_AUTH_FILE.exists():
                 return
             data = json.loads(VOICE_AUTH_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return
             emb = data.get("embedding")
-            if isinstance(emb, list) and emb and all(
-                isinstance(x, (int, float)) for x in emb[:10]
-            ):
+            if _valid_embedding(emb):
                 self._enrolled_embedding = [float(x) for x in emb]
         except Exception:
             return
@@ -192,3 +201,4 @@ class SpeakerAuth:
             "embedding": self._enrolled_embedding,
         }
         VOICE_AUTH_FILE.write_text(json.dumps(payload), encoding="utf-8")
+        VOICE_AUTH_FILE.chmod(0o600)
