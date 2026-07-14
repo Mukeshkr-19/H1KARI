@@ -54,13 +54,12 @@ There is no root `LICENSE`, `COPYING`, or `NOTICE` file. That absence is intenti
 
 ### Declaration problems
 
-`requirements.txt` has 46 lines and mixes direct runtime dependencies, transitive implementation details, test-only packages, and unused packages.
+`requirements.txt` has 39 lines and still mixes direct runtime dependencies with transitive implementation details.
 
 - The unrelated Graphite `whisper==1.1.10` package was removed. HIKARI calls OpenAI Whisper's `load_model`, and a regression check now prevents the ambiguous distribution name from returning.
 - `faster-whisper==1.2.1` is now declared for the optional service paths that import it.
 - The existing shared development environment still records both Whisper distributions. Do not uninstall one in place because their files overlap; rebuild the environment from the corrected manifest during reproducibility work.
-- `parameterized` and `types-requests` are development/test concerns in the runtime manifest.
-- `beautifulsoup4`, `cohere`, `pyttsx3`, `wikipedia`, and several low-level packages have no direct shipped import in the current tree.
+- The unused `beautifulsoup4`, `cohere`, `parameterized`, `pyttsx3`, `PyYAML`, `types-requests`, and `wikipedia` declarations were removed and are protected by a regression check.
 - Exact transitive pins such as `anyio`, `httpcore`, `h11`, `jiter`, `pydantic_core`, `sniffio`, `soupsieve`, and `urllib3` duplicate resolver responsibility and can conflict with their parent packages.
 - The shared environment differs from exact declarations for `filelock`, `h11`, `httpcore`, `idna`, `litellm`, `python-dotenv`, `requests`, `soupsieve`, and `urllib3`; `speechbrain` is missing. `pip check` still passes, which proves dependency compatibility only, not manifest reproducibility.
 
@@ -125,7 +124,7 @@ The standard library and native macOS commands avoid additional package provenan
 ## WP-001 findings and next actions
 
 1. ~~Remove the unrelated `whisper==1.1.10` distribution and declare the faster-whisper runtime path.~~
-2. Normalize Python manifests into direct runtime, optional voice, and development dependencies; pin a reproducible tested set.
+2. Continue normalizing Python manifests into direct runtime, optional voice, and development dependencies; the known unused declarations are removed, but transitive pins and reproducible locking remain.
 3. Make the selected voice backend and model download behavior explicit during initialization.
 4. Resolve speaker-model code/model/training-data terms before treating voice identity as release-ready.
 5. ~~Remove unused template and hero assets and replace the unknown-origin favicon reference.~~
