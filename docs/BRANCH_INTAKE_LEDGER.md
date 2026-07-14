@@ -1,8 +1,10 @@
 # Develop Branch Intake Ledger
 
 Status: complete
-Baseline: `develop` at `2616e24`  
-Baseline source: `main` at `6b481b7` plus the canonical plan merge  
+Baseline: `develop` at `2616e24`
+
+Baseline source: `main` at `6b481b7` plus the canonical plan merge
+
 Updated: 2026-07-13
 
 ## Purpose
