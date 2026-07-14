@@ -196,19 +196,6 @@ class SystemAgent(BaseAgent):
                 )
 
                 return f"Searching Spotify for '{search}'..."
-                try:
-                    subprocess.run(["osascript", "-e", script], timeout=10)
-                    time.sleep(2)
-                except:
-                    pass
-
-                # Restore old clipboard
-                p = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)
-                p.communicate(
-                    input=old_clip.stdout.encode() if old_clip.stdout else b""
-                )
-
-                return f"Searching Spotify for '{search}'..."
 
             return "Say 'play', 'pause', 'next', or 'volume up/down'"
 
