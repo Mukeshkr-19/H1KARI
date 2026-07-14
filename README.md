@@ -46,6 +46,11 @@ H1KARI/
 - `docs/QUICKSTART.md` - setup and first-run commands.
 - `docs/ARCHITECTURE.md` - current repo layout, commands, and operating model.
 - `docs/NEURAL_MEMORY_ACCEPTANCE.md` - neural memory acceptance criteria.
+- `docs/MODEL_PROVENANCE.md` - reviewed voice-model sources and download policy.
+- `docs/PROVIDER_PROVENANCE.md` - hosted-provider and external-service data flows.
+- `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
+- `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
+- `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.
 
 ## Privacy Model
 

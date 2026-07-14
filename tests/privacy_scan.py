@@ -32,6 +32,11 @@ EXPLICIT_ROOT_FILES = (
     "AGENTS.md",
     "QUICKSTART.md",
     "ARCHITECTURE.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "GOVERNANCE.md",
+    "THIRD_PARTY_NOTICES.md",
 )
 
 

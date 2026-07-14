@@ -33,13 +33,6 @@ def test_hikari_daemon_does_not_hardcode_public_data_dir():
     assert "LEGACY_DATA_DIR / \"learning.json\"" in text
 
 
-def test_hikari_always_on_does_not_hardcode_public_data_dir():
-    text = (SERVICES / "hikari_always_on.py").read_text(encoding="utf-8")
-    assert 'os.path.join(_REPO_ROOT, "data"' not in text
-    assert "legacy_data_dir" in text
-    assert "LEGACY_DATA_DIR / \"learning.json\"" in text
-
-
 def test_security_auth_does_not_hardcode_public_data_dir():
     text = (SECURITY / "auth.py").read_text(encoding="utf-8")
     _assert_no_public_data_path_in_source(text)

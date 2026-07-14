@@ -58,7 +58,7 @@ Voice answers are natural - no `From reviewed memory:` prefix.
 
 ---
 
-## Paste-back for Codex
+## Private QA result template
 
 ```
 A1-A7: PASS/FAIL
