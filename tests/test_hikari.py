@@ -328,6 +328,34 @@ class TestOrchestrator(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertTrue(orch.authenticated)
 
+    def test_get_orchestrator_singleton_thread_safe(self):
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from unittest.mock import patch
+
+        import core.orchestrator as orchestrator
+
+        original = orchestrator._orchestrator
+        instance = object()
+
+        def create():
+            time.sleep(0.01)
+            return instance
+
+        try:
+            orchestrator._orchestrator = None
+            with patch.object(
+                orchestrator, "HIKARI_Orchestrator", side_effect=create
+            ) as constructor, ThreadPoolExecutor(max_workers=10) as pool:
+                results = list(
+                    pool.map(lambda _: orchestrator.get_orchestrator(), range(10))
+                )
+
+            self.assertTrue(all(result is instance for result in results))
+            constructor.assert_called_once_with()
+        finally:
+            orchestrator._orchestrator = original
+
 
 class TestDoctor(unittest.TestCase):
     """Test the doctor/status checker."""

@@ -8,6 +8,7 @@ import sys
 import time
 import asyncio
 import re
+import threading
 from typing import TYPE_CHECKING, Optional, Dict, Any
 from datetime import datetime
 from dotenv import load_dotenv
@@ -1628,6 +1629,7 @@ Just speak naturally - I'm here to help."""
 
 # Singleton
 _orchestrator = None
+_orchestrator_lock = threading.Lock()
 
 # Backward-compatible name used by tests and older integrations.
 Orchestrator = HIKARI_Orchestrator
@@ -1635,5 +1637,7 @@ Orchestrator = HIKARI_Orchestrator
 def get_orchestrator() -> HIKARI_Orchestrator:
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = HIKARI_Orchestrator()
+        with _orchestrator_lock:
+            if _orchestrator is None:
+                _orchestrator = HIKARI_Orchestrator()
     return _orchestrator
