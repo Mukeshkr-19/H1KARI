@@ -12,6 +12,17 @@ from core.os_side_effects import osascript_disabled
 log = logging.getLogger("hikari.browser")
 
 
+def _applescript_string(value: str) -> str:
+    """Return value as an AppleScript string literal."""
+    escaped = (
+        value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+    return f'"{escaped}"'
+
+
 async def run_applescript(script: str, timeout: float = 10.0) -> Dict[str, Any]:
     """Run AppleScript and return success/failure."""
     if osascript_disabled():
@@ -40,8 +51,6 @@ async def run_applescript(script: str, timeout: float = 10.0) -> Dict[str, Any]:
 async def open_url(url: str, browser: str = "chrome") -> Dict[str, Any]:
     """Open a URL in the specified browser."""
 
-    escaped_url = url.replace('"', '\\"')
-
     browsers = {
         "chrome": "Google Chrome",
         "safari": "Safari",
@@ -52,7 +61,10 @@ async def open_url(url: str, browser: str = "chrome") -> Dict[str, Any]:
 
     app_name = browsers.get(browser.lower(), "Google Chrome")
 
-    script = f'tell application "{app_name}" to activate open location "{escaped_url}"'
+    script = (
+        f'tell application "{app_name}" to activate open location '
+        f"{_applescript_string(url)}"
+    )
     result = await run_applescript(script)
 
     return {
@@ -149,11 +161,12 @@ async def close_chrome_tab(url_contains: str = "") -> Dict[str, Any]:
     """Close a Chrome tab that contains a specific URL."""
 
     if url_contains:
+        url_filter = _applescript_string(url_contains)
         script = f'''
 tell application "Google Chrome"
     repeat with win in windows
         repeat with tab in tabs of win
-            if URL of tab contains "{url_contains}" then
+            if URL of tab contains {url_filter} then
                 close tab
                 return "closed"
             end if
