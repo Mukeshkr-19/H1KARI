@@ -11,6 +11,7 @@ import time
 import asyncio
 import threading
 import hashlib
+import html
 from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
@@ -320,6 +321,23 @@ class WebSocketServer:
             except Exception:
                 pass
 
+    def _html_response(self, body: str):
+        """Serve HTML with basic hardening headers."""
+        headers = [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Cache-Control", "no-store"),
+            ("Referrer-Policy", "no-referrer"),
+            ("X-Frame-Options", "DENY"),
+            ("X-Content-Type-Options", "nosniff"),
+            (
+                "Content-Security-Policy",
+                "default-src 'none'; img-src data:; style-src 'unsafe-inline'; "
+                "script-src 'unsafe-inline'; connect-src 'self' ws: wss:; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            ),
+        ]
+        return HTTPStatus.OK, headers, body.encode()
+
     def _serve_qr_code(self):
         """Serve QR code image"""
         if not QR_AVAILABLE:
@@ -342,23 +360,26 @@ class WebSocketServer:
 
         img_base64 = base64.b64encode(buffer.read()).decode()
 
-        html = f"""
+        safe_code = html.escape(self.pairing_code, quote=True)
+        safe_url = html.escape(url, quote=True)
+
+        html_body = f"""
         <!DOCTYPE html>
         <html>
         <head><title>HIKARI - QR Code</title></head>
         <body style="background:#0a0a0a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;">
             <h1>Scan to connect</h1>
             <img src="data:image/png;base64,{img_base64}" alt="QR Code" />
-            <p style="margin-top:20px;">Pairing code: <strong>{self.pairing_code}</strong></p>
-            <p>Or open: <code>{url}</code></p>
+            <p style="margin-top:20px;">Pairing code: <strong>{safe_code}</strong></p>
+            <p>Or open: <code>{safe_url}</code></p>
         </body>
         </html>
         """
-        return HTTPStatus.OK, [("Content-Type", "text/html")], html.encode()
+        return self._html_response(html_body)
 
     def _serve_connect_page(self):
         """Serve the connection page for phones"""
-        html = """
+        html_body = """
         <!DOCTYPE html>
         <html lang="en">
         <head>
@@ -503,7 +524,7 @@ class WebSocketServer:
         </body>
         </html>
         """
-        return HTTPStatus.OK, [("Content-Type", "text/html")], html.encode()
+        return self._html_response(html_body)
 
     def _serve_api_status(self):
         """Serve API status as JSON"""
