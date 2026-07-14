@@ -168,17 +168,19 @@ class VoiceFeatureExtractor:
         """Estimate fundamental frequency"""
         if len(audio) < 256:
             return 0.0
-        autocorr = np.correlate(audio, audio, mode="full")
+        centered = audio - np.mean(audio)
+        if not np.any(centered):
+            return 0.0
+        autocorr = np.correlate(centered, centered, mode="full")
         autocorr = autocorr[len(autocorr) // 2 :]
         if len(autocorr) < 2:
             return 0.0
-        # Find first peak after zero lag
-        for i in range(1, min(len(autocorr), 1000)):
-            if autocorr[i] < autocorr[i - 1] and i > 1:
-                return float(
-                    self.sample_rate / (i * self.hop_length / self.sample_rate)
-                )
-        return 0.0
+        min_lag = max(1, int(self.sample_rate / 500))
+        max_lag = min(len(autocorr), int(self.sample_rate / 50))
+        if max_lag <= min_lag:
+            return 0.0
+        peak_lag = int(np.argmax(autocorr[min_lag:max_lag])) + min_lag
+        return float(self.sample_rate / peak_lag)
 
 
 class VoiceMemory:
@@ -377,10 +379,10 @@ class VoiceMemory:
         avg_vector = np.array(profile["avg_features"])
         std_vector = np.array(profile.get("std_features", np.ones_like(avg_vector)))
 
-        # Normalize by standard deviation
+        # Normalize both vectors by the enrolled feature variance.
         std_vector = np.maximum(std_vector, 0.01)  # Avoid division by zero
-        normalized_current = (current_vector - avg_vector) / std_vector
-        normalized_avg = np.zeros_like(normalized_current)
+        normalized_current = current_vector / std_vector
+        normalized_avg = avg_vector / std_vector
 
         # Cosine similarity
         dot_product = np.dot(normalized_current, normalized_avg)
@@ -390,12 +392,15 @@ class VoiceMemory:
         if norm_current == 0 or norm_avg == 0:
             cosine_sim = 0.0
         else:
-            cosine_sim = dot_product / (norm_current * norm_avg)
+            cosine_sim = (dot_product / (norm_current * norm_avg) + 1.0) / 2.0
 
         # Also compute Euclidean distance similarity
         euclidean_dist = np.linalg.norm(current_vector - avg_vector)
         max_dist = np.linalg.norm(avg_vector) * 2
-        euclidean_sim = max(0, 1 - (euclidean_dist / max_dist))
+        if max_dist == 0:
+            euclidean_sim = 1.0 if euclidean_dist == 0 else 0.0
+        else:
+            euclidean_sim = max(0, 1 - (euclidean_dist / max_dist))
 
         # Weighted combination
         return float(0.7 * cosine_sim + 0.3 * euclidean_sim)
