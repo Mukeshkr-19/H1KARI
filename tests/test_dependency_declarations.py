@@ -12,7 +12,8 @@ def _requirement_names() -> list[str]:
     for line in (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
-            names.append(re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0].lower())
+            name = re.split(r"[<>=!~\[; ]", line, maxsplit=1)[0].lower()
+            names.append(re.sub(r"[-_.]+", "-", name))
     return names
 
 
@@ -36,5 +37,38 @@ def test_known_unused_packages_are_not_declared():
             "pyyaml",
             "types-requests",
             "wikipedia",
+        }
+    )
+
+
+def test_transitive_packages_are_resolver_owned():
+    names = set(_requirement_names())
+
+    assert names.isdisjoint(
+        {
+            "annotated-types",
+            "anyio",
+            "charset-normalizer",
+            "distro",
+            "fastavro",
+            "filelock",
+            "fsspec",
+            "h11",
+            "httpcore",
+            "httpx",
+            "httpx-sse",
+            "huggingface-hub",
+            "idna",
+            "jiter",
+            "packaging",
+            "pydantic",
+            "pydantic-core",
+            "six",
+            "sniffio",
+            "soupsieve",
+            "tokenizers",
+            "tqdm",
+            "typing-extensions",
+            "urllib3",
         }
     )
