@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from core.path_literals import DOT_HIKARI, ENV_FILE, HIKARI_MEMORY_DB, HIKARI_PRIVATE
+from core.runtime_paths import hikari_home
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -206,7 +207,7 @@ def _check_private_layout() -> list[Check]:
             )
         )
 
-    brain_link = Path.home() / ".hikari" / "brain"
+    brain_link = hikari_home() / "brain"
     if brain_link.is_symlink():
         target = brain_link.resolve()
         if private_ready and target == EXPECTED_BRAIN_TARGET:

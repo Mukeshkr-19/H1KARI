@@ -142,14 +142,14 @@ class ReconciliationFinding:
 
 def resolve_neural_db_path() -> Optional[Path]:
     """Resolve neural DB path without initializing neural memory runtime."""
-    from core.path_literals import DOT_HIKARI, HIKARI_MEMORY_DB
+    from core.path_literals import HIKARI_MEMORY_DB
+    from core.runtime_paths import hikari_home
 
     explicit = os.environ.get("HIKARI_NEURAL_MEMORY_DB")
     if explicit:
         path = Path(explicit).expanduser()
         return path if path.is_file() else None
-    home = Path(os.environ.get("HOME", "~")).expanduser()
-    candidate = home / DOT_HIKARI / "brain" / HIKARI_MEMORY_DB
+    candidate = hikari_home() / "brain" / HIKARI_MEMORY_DB
     return candidate if candidate.is_file() else None
 
 

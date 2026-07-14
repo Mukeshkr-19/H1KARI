@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from core.path_literals import DOT_HIKARI, HIKARI_MEMORY_DB
+from core.path_literals import HIKARI_MEMORY_DB
+from core.runtime_paths import hikari_home
 
 
 def resolve_neural_db_path() -> Path:
@@ -25,7 +26,7 @@ def resolve_neural_brain_dir() -> Path:
     env_brain = os.getenv("HIKARI_BRAIN_DIR", "").strip()
     if env_brain:
         return Path(env_brain).expanduser().resolve()
-    return Path.home() / DOT_HIKARI / "brain"
+    return hikari_home() / "brain"
 
 
 def uses_explicit_neural_db_override() -> bool:

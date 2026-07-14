@@ -7,7 +7,8 @@ Status: WP-005 naming boundary
 - `HIKARI_REPO_ROOT` identifies the H1KARI code checkout used by installed CLI
   wrappers and the login agent.
 - `HIKARI_HOME` is reserved for the private runtime-state root. WP-006 defines
-  its layout, initialization, backup, and migration behavior.
+  its layout, initialization, backup, and migration behavior. Existing HIKARI
+  state-path defaults now resolve beneath it.
 - Specific test and operator overrides such as `HIKARI_BRAIN_DIR`,
   `HIKARI_BRAIN_V2_EPISODES_DB`, `HIKARI_NEURAL_MEMORY_DB`,
   `HIKARI_LEGACY_DATA_DIR`, and `HIKARI_TASKS_DB` retain precedence over future
@@ -23,6 +24,10 @@ value before starting Python, so runtime state cannot be written into the repo.
 A `HIKARI_HOME` value that is not a recognizable HIKARI checkout is preserved as
 runtime configuration and never used to locate code. New installers write only
 `HIKARI_REPO_ROOT` for checkout discovery.
+
+Direct Python launches fail closed if `HIKARI_HOME` identifies a code checkout.
+This prevents private runtime files from being created inside the repository even
+when an old environment bypasses the compatibility launcher.
 
 ## Removal policy
 

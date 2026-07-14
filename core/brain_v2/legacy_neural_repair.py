@@ -35,10 +35,10 @@ class NeuralRepairAuditEntry:
 
 def canonical_live_neural_db_path() -> Path:
     """Default live neural DB path (independent of HIKARI_NEURAL_MEMORY_DB)."""
-    from core.path_literals import DOT_HIKARI, HIKARI_MEMORY_DB
+    from core.path_literals import HIKARI_MEMORY_DB
+    from core.runtime_paths import hikari_home
 
-    home = Path(os.environ.get("HOME", "~")).expanduser()
-    return home / DOT_HIKARI / "brain" / HIKARI_MEMORY_DB
+    return hikari_home() / "brain" / HIKARI_MEMORY_DB
 
 
 def configured_neural_source_path() -> Optional[Path]:

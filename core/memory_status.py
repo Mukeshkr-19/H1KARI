@@ -7,14 +7,15 @@ import sqlite3
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from core.path_literals import DOT_HIKARI, HIKARI_PRIVATE
+from core.path_literals import HIKARI_PRIVATE
+from core.runtime_paths import hikari_home
 
 if TYPE_CHECKING:
     from core.orchestrator import HIKARI_Orchestrator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 EXPECTED_BRAIN = PROJECT_ROOT / HIKARI_PRIVATE / "live-brain"
-BRAIN_LINK = Path.home() / DOT_HIKARI / "brain"
+BRAIN_LINK = hikari_home() / "brain"
 
 
 def _brain_v2_policy_enabled() -> bool:

@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Mapping
 
+from core.runtime_paths import hikari_home
+
 
 def _installed(module: str) -> bool:
     try:
@@ -41,7 +43,8 @@ def collect_voice_status(
     )
     faster_cache = hf_cache / "models--Systran--faster-whisper-base"
 
-    brain_dir = Path(env.get("HIKARI_BRAIN_DIR", home / ".hikari" / "brain"))
+    state_home = hikari_home(environ=env, home=home)
+    brain_dir = Path(env.get("HIKARI_BRAIN_DIR", state_home / "brain"))
     legacy_dir = Path(env.get("HIKARI_LEGACY_DATA_DIR", brain_dir / "legacy-data"))
     speaker_cache = legacy_dir / "hf_cache" / "speechbrain_spkrec_ecapa"
     enrollment_file = legacy_dir / "voice_auth.json"
