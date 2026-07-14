@@ -8,6 +8,7 @@ import re
 import unittest
 from unittest.mock import MagicMock, patch
 
+from core.protocol import PROTOCOL_VERSION
 from core.server import MAX_PAIRING_ATTEMPTS, WebSocketServer
 
 
@@ -174,7 +175,7 @@ class TestServerPairingSafety(unittest.TestCase):
         self.assertEqual(websocket.sent[-1]["type"], "pair_locked")
         self.assertNotIn(str(id(websocket)), server._paired_client_ids)
 
-    def test_successful_pair_allows_message_and_records_bounded_device_type(self):
+    def test_successful_pair_allows_message_and_records_max_device_type(self):
         orchestrator = MagicMock()
         orchestrator.process_input.return_value = "safe reply"
         server = WebSocketServer(orchestrator)
@@ -188,7 +189,7 @@ class TestServerPairingSafety(unittest.TestCase):
                     {
                         "type": "pair",
                         "code": "ABC123",
-                        "device_type": "p" * 100,
+                        "device_type": "p" * 64,
                     }
                 ),
             )
@@ -218,7 +219,13 @@ class TestServerPairingSafety(unittest.TestCase):
 
         self.assertEqual(
             websocket.sent,
-            [{"type": "welcome", "message": "Connected to HIKARI"}],
+            [
+                {
+                    "type": "welcome",
+                    "message": "Connected to HIKARI",
+                    "protocol_version": PROTOCOL_VERSION,
+                }
+            ],
         )
         self.assertNotIn(server.pairing_code, json.dumps(websocket.sent))
         self.assertNotIn(client_id, server._paired_client_ids)

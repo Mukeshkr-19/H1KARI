@@ -9,6 +9,7 @@ import {
   type Presentation,
 } from "@/utils/companion/constants";
 import { loadCompanionPrefs, saveCompanionPrefs } from "@/utils/companion/storage";
+import protocolSchema from "../../../protocol/hikari-v1.json";
 
 /** Off by default; set NEXT_PUBLIC_HIKARI_VOICE_COMPANION=1 at build time to enable overlay UI. */
 const VOICE_COMPANION_UI_ENABLED =
@@ -28,6 +29,51 @@ interface AgentStatus {
 }
 
 type TabType = "chat" | "agents" | "files" | "settings";
+type ClientMessageType = keyof typeof protocolSchema.client_to_server;
+type ServerMessageType = keyof typeof protocolSchema.server_to_client;
+type ServerMessage = Record<string, unknown> & { type: ServerMessageType };
+
+const PROTOCOL_VERSION = protocolSchema.version;
+
+function encodeClientMessage(
+  type: ClientMessageType,
+  fields: Record<string, unknown> = {},
+): string {
+  const required = protocolSchema.client_to_server[type].required;
+  for (const field of Object.keys(required)) {
+    if (!(field in fields)) {
+      throw new Error(`Missing protocol field: ${field}`);
+    }
+  }
+  return JSON.stringify({ type, ...fields });
+}
+
+function parseServerMessage(raw: string): ServerMessage | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "type" in value &&
+      typeof value.type === "string" &&
+      value.type in protocolSchema.server_to_client
+    ) {
+      const type = value.type as ServerMessageType;
+      const required = protocolSchema.server_to_client[type] as readonly string[];
+      if (required.every((field) => field in value)) {
+        return value as ServerMessage;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function stringField(message: ServerMessage, field: string): string {
+  const value = message[field];
+  return typeof value === "string" ? value : "";
+}
 
 type BrowserSpeechRecognition = {
   continuous: boolean;
@@ -209,7 +255,7 @@ export default function Home() {
         return false;
       }
       try {
-        ws.send(JSON.stringify({ type: "voice", text: trimmed }));
+        ws.send(encodeClientMessage("voice", { text: trimmed }));
       } catch {
         cancelVoiceCapture();
         return false;
@@ -229,8 +275,7 @@ export default function Home() {
       saveCompanionPrefs({ companionType: type, presentation: pres });
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
-          JSON.stringify({
-            type: "companion_preferences",
+          encodeClientMessage("companion_preferences", {
             companion_type: type,
             presentation: pres,
           }),
@@ -289,16 +334,17 @@ export default function Home() {
     ws.onopen = () => {
       setIsConnected(true);
       if (pairingCode) {
-        ws.send(JSON.stringify({
-          type: "pair",
+        ws.send(encodeClientMessage("pair", {
           code: pairingCode,
           device_type: "web",
+          protocol_version: PROTOCOL_VERSION,
         }));
       }
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      const data = parseServerMessage(event.data);
+      if (!data) return;
       if (data.type === "paired") {
         setIsPaired(true);
         if (VOICE_COMPANION_UI_ENABLED) {
@@ -311,7 +357,7 @@ export default function Home() {
         applyCompanionUpdate(data.companion as Record<string, unknown>);
       } else if (data.type === "response") {
         setIsTyping(false);
-        addMessage(data.text, "ai");
+        addMessage(stringField(data, "text"), "ai");
         if (voiceTurnActiveRef.current || voiceSessionActiveRef.current) {
           voiceTurnActiveRef.current = false;
           setVoiceTurnActive(false);
@@ -319,7 +365,9 @@ export default function Home() {
           setOrbState("idle");
         }
       } else if (data.type === "pair_error" || data.type === "pair_locked") {
-        alert(data.message || "Pairing failed");
+        alert(stringField(data, "message") || "Pairing failed");
+      } else if (data.type === "protocol_error") {
+        alert(stringField(data, "message") || "Unsupported server protocol");
       }
     };
 
@@ -348,7 +396,7 @@ export default function Home() {
 
     cancelVoiceCapture();
     addMessage(input, "user");
-    wsRef.current.send(JSON.stringify({ type: "message", text: input }));
+    wsRef.current.send(encodeClientMessage("message", { text: input }));
     setIsTyping(true);
     setOrbState("thinking");
     setInput("");
@@ -386,7 +434,7 @@ export default function Home() {
             setInput(transcript);
             if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
               addMessage(transcript, "user");
-              wsRef.current.send(JSON.stringify({ type: "message", text: transcript }));
+              wsRef.current.send(encodeClientMessage("message", { text: transcript }));
               setIsTyping(true);
               setOrbState("thinking");
             }
@@ -439,7 +487,7 @@ export default function Home() {
       beginVoiceCapture();
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         try {
-          wsRef.current.send(JSON.stringify({ type: "voice", listening: true }));
+          wsRef.current.send(encodeClientMessage("voice", { listening: true }));
         } catch {
           cancelVoiceCapture();
         }

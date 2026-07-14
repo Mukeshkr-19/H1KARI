@@ -21,6 +21,7 @@ SCAN_PREFIXES = (
     "agents/",
     "bin/",
     "config/",
+    "protocol/",
     "scripts/",
     "hikari-frontend/",
 )

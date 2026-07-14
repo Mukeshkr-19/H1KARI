@@ -241,6 +241,8 @@ Work packages:
 - WP-002 governance and public security documents; final project license remains a separate owner decision after audit
 - WP-003 characterization coverage for CLI, server, doctor, Brain v2, daemon, voice identity, and frontend API behavior
 - WP-004 continuous checks for tests, privacy, secrets, dependencies, frontend, and generated schemas
+- WebSocket compatibility changes follow `docs/PROTOCOL_V1.md` and the shared
+  `protocol/hikari-v1.json` source of truth
 - WP-005 canonical naming and compatibility policy
 - WP-006 `HIKARI_HOME` layout, initialization, backup, migration dry run, and rollback
 - WP-007 public threat model and central action-policy interface skeleton

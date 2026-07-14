@@ -454,8 +454,8 @@ def test_frontend_typed_chat_does_not_activate_companion():
     assert "setCompanionState" not in send_block
     assert "setCompanionCaption" not in send_block
     assert "voiceSessionActive" not in send_block
-    assert 'type: "message"' in send_block
-    assert 'type: "voice"' in voice_block
+    assert 'encodeClientMessage("message"' in send_block
+    assert 'encodeClientMessage("voice"' in voice_block
     assert "beginVoiceCapture()" in voice_block
     assert "submitVoiceRequest(" in voice_block
     assert "markVoiceRequestSubmitted" not in text
