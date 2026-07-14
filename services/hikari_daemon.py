@@ -180,15 +180,11 @@ def verify_speaker(audio) -> bool:
             )
         return res.ok
     except ImportError as e:
-        # SpeechBrain/torch not installed - allow activation but warn
-        print(
-            f"⚠️  Speaker verification unavailable (missing: {e}). Allowing activation."
-        )
-        return True
+        print(f"⚠️  Speaker verification unavailable (missing: {e}). Access denied.")
+        return False
     except Exception as e:
-        # Other errors - fail safe but allow activation since deps might be missing
-        print(f"⚠️  Speaker verification error: {e}. Allowing activation.")
-        return True
+        print(f"⚠️  Speaker verification error: {e}. Access denied.")
+        return False
 
 
 sr = None
@@ -323,14 +319,72 @@ def is_stop_command(text: str) -> bool:
     return any(phrase in text_lower for phrase in stop_phrases)
 
 
-def listen_always():
-    """
-    JARVIS-style continuous listening:
-    - Always listening for wake word when in LISTENING mode
-    - When ACTIVE, processes all commands until stop word
-    - Never stops listening entirely - just changes behavior
-    """
+def _is_wake_phrase(text: str) -> bool:
+    """Allow common speech-to-text variants of the wake word."""
+    return bool(
+        text.startswith("hec")
+        or text.startswith("hik")
+        or "hect" in text
+        or "hikar" in text
+    )
+
+
+def _listen_for_wake_word() -> None:
     global hikari_state
+
+    print("💤 ", end="\r", flush=True)
+    with sr.Microphone() as source:
+        r.adjust_for_ambient_noise(source, duration=0.5)
+        audio = r.listen(source, timeout=5, phrase_time_limit=5)
+
+    text = recognize_audio(audio)
+    if not text or not _is_wake_phrase(text):
+        return
+    if not verify_speaker(audio):
+        print("❌ Voice not recognized, ignoring...\n")
+        return
+
+    print(f"\n🎉 '{text}' - ACTIVATED!\n")
+    hikari_state = HikariState.ACTIVE
+    speak("Go ahead!")
+
+
+def _listen_for_active_command() -> None:
+    global hikari_state
+
+    print("👂 ", end="\r", flush=True)
+    with sr.Microphone() as source:
+        audio = r.listen(source, timeout=8, phrase_time_limit=30)
+
+    if not verify_speaker(audio):
+        print("❌ Voice not recognized, ignoring...\n")
+        return
+
+    text = recognize_audio(audio)
+    if not text:
+        return
+    print(f"You: {text}")
+
+    if any(phrase in text for phrase in ["that's wrong", "mistake", "incorrect"]):
+        speak("What should I have said?")
+        return
+    if is_stop_command(text):
+        speak("Talk to you later!")
+        hikari_state = HikariState.LISTENING
+        print("💤 Going to sleep... (still listening for 'hikari')\n")
+        return
+
+    response = process(text)
+    if response:
+        print(f"HIKARI: {response}")
+        speak(response)
+        log_convo(text, response)
+
+
+def listen_always() -> None:
+    """Listen for the wake word, then process verified commands until stopped."""
+    if sr is None:
+        raise RuntimeError("SpeechRecognition is not installed")
 
     print("\n" + "=" * 50)
     print("🎯 HIKARI - JARVIS Mode Active")
@@ -338,250 +392,46 @@ def listen_always():
     print("  • Say 'bye', 'exit', or 'goodbye' to sleep")
     print("  • Always listening...\n")
 
-
-# ============================================================
-# MAIN LOOP - JARVIS-style: always listening, activate on "hikari"
-# ============================================================
-
-while True:
-    try:
-        # === STATE: LISTENING - Waiting for wake word ===
-        if hikari_state == HikariState.LISTENING:
-            print("💤 ", end="\r", flush=True)
-            try:
-                print("→ Opening mic...", flush=True)
-                with sr.Microphone() as source:
-                    r.adjust_for_ambient_noise(source, duration=0.5)
-                    print(f"→ Energy threshold: {r.energy_threshold}", flush=True)
-                    print("→ Waiting for speech (5s)...", flush=True)
-                    audio = r.listen(source, timeout=5, phrase_time_limit=5)
-                    print("→ Got audio!", flush=True)
-
-                # Got audio!
-                print("🔊 ", end="\r", flush=True)
-
-                # Recognize
-                text = recognize_audio(audio)
-
-                if not text:
-                    print("❓ No speech", flush=True)
-                    continue
-
-                print(f"📝 '{text}'", flush=True)
-
-                # Whisper mishears "Hikari" as "hector", "hickory", etc
-                # Accept if it starts with "hec" or "hik" - it's probably "Hikari"
-                if (
-                    text.startswith("hec")
-                    or text.startswith("hik")
-                    or "hect" in text
-                    or "hikar" in text
-                ):
-                    print(f"✅ WAKE! Activating!", flush=True)
-                else:
-                    continue
-
-                # SUCCESS!
-                print(f"\n🎉 '{text}' - ACTIVATED!\n")
-                hikari_state = HikariState.ACTIVE
-                speak("Go ahead!")
-                time.sleep(0.5)
-
-            except sr.WaitTimeoutError:
-                # Normal - no speech within timeout
-                print("⏱️ No speech detected", flush=True)
-                pass
-            except OSError as e:
-                print(f"🎤 Mic error: {e}", flush=True)
-                time.sleep(2)
-            except Exception as e:
-                print(f"Error: {e}", flush=True)
-                time.sleep(1)
-                continue
-
-        # === STATE: ACTIVE - Processing commands ===
-        elif hikari_state == HikariState.ACTIVE:
-            print("👂 ", end="\r", flush=True)
-            try:
-                with sr.Microphone() as source:
-                    audio = r.listen(source, timeout=8, phrase_time_limit=30)
-
-                print("🔊 ", end="\r", flush=True)
-                text = recognize_audio(audio)
-
-                if not text:
-                    continue
-
-                print(f"You: {text}")
-
-                # Check for corrections
-                if any(p in text for p in ["that's wrong", "mistake", "incorrect"]):
-                    speak("What should I have said?")
-                    time.sleep(1)
-                    continue
-
-                # Check for stop command - go back to listening BUT KEEP LOOPING
-                if is_stop_command(text):
-                    speak("Talk to you later!")
-                    print("💤 Going to sleep... (still listening for 'hikari')\n")
-                    hikari_state = HikariState.LISTENING
-                    time.sleep(1)
-                    continue
-
-                # Process command
-                response = process(text)
-                if response:
-                    print(f"HIKARI: {response}")
-                    speak(response)
-                    log_convo(text, response)
-
-            except sr.WaitTimeoutError:
-                continue
-            except sr.UnknownValueError:
-                continue
-            except Exception as e:
-                print(f"Error: {e}", flush=True)
-                time.sleep(0.5)
-                continue
-
-    except Exception as outer:
-        print(f"Outer loop error: {outer}", flush=True)
-        time.sleep(1)
-
-
-if __name__ == "__main__":
-    if not sr:
-        print("\n❌ Run: /opt/anaconda3/bin/python3 -m pip install speechrecognition")
-        sys.exit(1)
-
-    # Check for voice enrollment flag (speaker verification)
-    if len(sys.argv) > 1 and sys.argv[1] in ["--enroll-voice", "--setup-voice"]:
-        enroll_voice()
-        sys.exit(0)
-
-    print(f"\n✅ HIKARI ready! Say '{WAKE_WORD}' to activate")
-    print("📚 Say 'that's wrong' to teach me!")
-
-    if SPEAKER_AUTH_AVAILABLE:
-        auth = SpeakerAuth()
-        if auth.is_enrolled():
-            print(
-                "🔐 Speaker verification enabled - only your voice will activate HIKARI\n"
-            )
-        else:
-            print("\n⚠️  No enrolled voice yet.")
-            print("   Run with --enroll-voice to lock HIKARI to your voice.\n")
-    else:
-        print("\n⚠️  Speaker verification unavailable (dependencies missing).")
-        print("   HIKARI will respond to any voice until you enable it.\n")
-
-    # Initialize state
-    hikari_state = HikariState.LISTENING
-
-    signal.signal(signal.SIGINT, lambda s, f: (print("\n\nBye!"), sys.exit(0)))
-
-    try:
-        listen_always()
-    except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(1)
-
-    while True:
+    while daemon_running:
         try:
-            with sr.Microphone() as source:
-                print("👂 ", end="\r", flush=True)
-                audio = r.listen(source, timeout=5, phrase_time_limit=30)
-
-            # Verify speaker matches (only your voice!)
-            if not verify_speaker(audio):
-                print("❌ Voice not recognized, ignoring...\n")
-                continue
-
-            text = r.recognize_google(audio).lower().strip()
-
-            if not text:
-                continue
-
-            print(f"You: {text}")
-
-            if any(p in text for p in ["that's wrong", "mistake", "incorrect"]):
-                speak("What should I have said?")
-                time.sleep(1)
-                try:
-                    with sr.Microphone() as source:
-                        audio2 = r.listen(source, timeout=5, phrase_time_limit=8)
-                    if not verify_speaker(audio2):
-                        print("❌ Voice not recognized for correction")
-                        speak("Sorry, didn't catch that.")
-                        continue
-                    correction = r.recognize_google(audio2).strip()
-                    if correction:
-                        add_learning(text, correction)
-                        speak("Got it!")
-                except:
-                    pass
-                continue
-
-            # === Check for stop command === back to listening KEEP LOOP
-            if is_stop_command(text):
-                speak("Talk to you later!")
-                print("💤 Going to sleep... (still listening for 'hikari')\n")
-                hikari_state = HikariState.LISTENING
-                time.sleep(1)
-                continue
-
-            # === Process regular command ===
-            response = process(text)
-            if response:
-                print(f"HIKARI: {response}")
-                speak(response)
-                log_convo(text, response)
-
-        except sr.WaitTimeoutError:
+            if hikari_state == HikariState.LISTENING:
+                _listen_for_wake_word()
+            elif hikari_state == HikariState.ACTIVE:
+                _listen_for_active_command()
+        except (sr.WaitTimeoutError, sr.UnknownValueError):
             continue
-        except sr.UnknownValueError:
-            continue
-        except Exception as e:
-            print(f"Error: {e}")
-            time.sleep(0.5)
+        except OSError as exc:
+            print(f"🎤 Mic error: {exc}", flush=True)
+            time.sleep(2)
+        except Exception as exc:
+            print(f"Daemon loop error: {exc}", flush=True)
+            time.sleep(1)
 
 
-# Old function removed - using listen_always() instead
+def main() -> int:
+    global hikari_state
+
+    if sr is None:
+        print("\n❌ Install SpeechRecognition before starting the voice daemon.")
+        return 1
+    if len(sys.argv) > 1 and sys.argv[1] in ["--enroll-voice", "--setup-voice"]:
+        return 0 if enroll_voice() else 1
+
+    print(f"\n✅ HIKARI ready! Say '{WAKE_WORD}' to activate")
+    if SPEAKER_AUTH_AVAILABLE:
+        auth = _get_speaker_auth()
+        if auth and auth.is_enrolled():
+            print("🔐 Speaker verification enabled.\n")
+        else:
+            print("⚠️  No enrolled voice; activation is currently open.\n")
+    else:
+        print("⚠️  Speaker verification unavailable; activation is currently open.\n")
+
+    hikari_state = HikariState.LISTENING
+    signal.signal(signal.SIGINT, lambda _s, _f: sys.exit(0))
+    listen_always()
+    return 0
 
 
 if __name__ == "__main__":
-    if not sr:
-        print("\n❌ Run: /opt/anaconda3/bin/python3 -m pip install speechrecognition")
-        sys.exit(1)
-
-    # Check for voice enrollment flag (speaker verification)
-    if len(sys.argv) > 1 and sys.argv[1] in ["--enroll-voice", "--setup-voice"]:
-        enroll_voice()
-        sys.exit(0)
-
-    print(f"\n✅ HIKARI ready! Say '{WAKE_WORD}' to activate")
-    print("📚 Say 'that's wrong' to teach me!")
-
-    if SPEAKER_AUTH_AVAILABLE:
-        auth = SpeakerAuth()
-        if auth.is_enrolled():
-            print(
-                "🔐 Speaker verification enabled - only your voice will activate HIKARI\n"
-            )
-        else:
-            print("\n⚠️  No enrolled voice yet.")
-            print("   Run with --enroll-voice to lock HIKARI to your voice.\n")
-    else:
-        print("\n⚠️  Speaker verification unavailable (dependencies missing).")
-        print("   HIKARI will respond to any voice until you enable it.\n")
-
-    # Initialize state
-    hikari_state = HikariState.LISTENING
-
-    signal.signal(signal.SIGINT, lambda s, f: (print("\n\nBye!"), sys.exit(0)))
-
-    try:
-        listen_always()  # JARVIS-style: always listening, responds to hikari, bye returns to sleep
-    except Exception as e:
-        print(f"Error: {e}")
-        time.sleep(1)
+    raise SystemExit(main())
