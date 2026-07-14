@@ -35,9 +35,6 @@ except Exception:
 from core.daily_logs import maybe_rotate_daily_log
 from core.runtime_paths import legacy_data_dir
 
-# Force unbuffered output
-sys.stdout = os.fdopen(sys.stdout.fileno(), "w", buffering=1)
-
 WAKE_WORD = "hikari"
 STOP_WORDS = [
     "stop listening",
@@ -55,7 +52,16 @@ daemon_running = True
 LEGACY_DATA_DIR = legacy_data_dir()
 LEARNING_FILE = LEGACY_DATA_DIR / "learning.json"
 VOICE_PRINT_FILE = LEGACY_DATA_DIR / "voiceprint.bin"  # legacy
-LEGACY_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _print_banner() -> None:
+    print(
+        """
+==================================================
+HIKARI - Always-on Voice Daemon
+==================================================
+""".strip()
+    )
 
 
 def log_convo(user: str, hikari: str):
@@ -78,6 +84,7 @@ def load_learnings():
 
 
 def save_learnings(data):
+    LEGACY_DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(LEARNING_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f)
 
@@ -191,36 +198,57 @@ sr = None
 whisper_model = None
 faster_whisper_model = None
 np = None
+r = None
+_audio_initialized = False
 
-# Try to load faster-whisper first (offline, fast)
-try:
-    from faster_whisper import WhisperModel
-    import numpy as np
 
-    print("[OK] faster-whisper loading...")
-    faster_whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-    print("[OK] faster-whisper loaded!")
-except Exception as e:
-    print(f"[INFO] faster-whisper: {e}")
+def initialize_audio_backends() -> bool:
+    """Initialize speech dependencies once, when the daemon actually starts."""
+    global _audio_initialized, faster_whisper_model, whisper_model, np, sr, r
 
-# Try to load Whisper for better STT
-try:
-    import whisper
-    import numpy as np
+    if _audio_initialized:
+        return sr is not None
+    _audio_initialized = True
 
-    print("[OK] Whisper - loading model...")
-    whisper_model = whisper.load_model("base")
-    print("[OK] Whisper model loaded!")
-except Exception as e:
-    print(f"[MISSING] Whisper: {e}")
+    try:
+        from faster_whisper import WhisperModel
+        import numpy as numpy_module
 
-try:
-    import speech_recognition as sr_module
+        np = numpy_module
+        print("[OK] faster-whisper loading...")
+        faster_whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+        print("[OK] faster-whisper loaded!")
+    except Exception as exc:
+        print(f"[INFO] faster-whisper: {exc}")
 
-    sr = sr_module
-    print("[OK] SpeechRecognition")
-except:
-    print("[MISSING] SpeechRecognition")
+    try:
+        import whisper
+        import numpy as numpy_module
+
+        np = numpy_module
+        print("[OK] Whisper - loading model...")
+        whisper_model = whisper.load_model("base")
+        print("[OK] Whisper model loaded!")
+    except Exception as exc:
+        print(f"[MISSING] Whisper: {exc}")
+
+    try:
+        import speech_recognition as sr_module
+
+        sr = sr_module
+        r = sr.Recognizer()
+        r.energy_threshold = 200
+        r.dynamic_energy_threshold = True
+        r.pause_threshold = 1.5
+        r.phrase_time_limit = 10
+        r.non_speaking_duration = 0.5
+        print("[OK] SpeechRecognition")
+    except Exception as exc:
+        sr = None
+        r = None
+        print(f"[MISSING] SpeechRecognition: {exc}")
+
+    return sr is not None
 
 
 def recognize_audio(audio):
@@ -257,17 +285,6 @@ def recognize_audio(audio):
             time.sleep(0.3)
             continue
     return ""
-
-
-print("=" * 50)
-
-if sr:
-    r = sr.Recognizer()
-    r.energy_threshold = 200  # Very low to hear quiet speech
-    r.dynamic_energy_threshold = True  # Auto-adjust for ambient noise
-    r.pause_threshold = 1.5  # Wait longer for you to finish sentence
-    r.phrase_time_limit = 10  # Shorter to be more responsive
-    r.non_speaking_duration = 0.5
 
 
 def speak(text):
@@ -383,7 +400,7 @@ def _listen_for_active_command() -> None:
 
 def listen_always() -> None:
     """Listen for the wake word, then process verified commands until stopped."""
-    if sr is None:
+    if sr is None or r is None:
         raise RuntimeError("SpeechRecognition is not installed")
 
     print("\n" + "=" * 50)
@@ -408,10 +425,18 @@ def listen_always() -> None:
             time.sleep(1)
 
 
-def main() -> int:
-    global hikari_state
+def request_shutdown(_signum=None, _frame=None) -> None:
+    """Ask the owned listener loop to stop at its next boundary."""
+    global daemon_running
 
-    if sr is None:
+    daemon_running = False
+
+
+def main() -> int:
+    global daemon_running, hikari_state
+
+    _print_banner()
+    if not initialize_audio_backends():
         print("\n❌ Install SpeechRecognition before starting the voice daemon.")
         return 1
     if len(sys.argv) > 1 and sys.argv[1] in ["--enroll-voice", "--setup-voice"]:
@@ -427,8 +452,10 @@ def main() -> int:
     else:
         print("⚠️  Speaker verification unavailable; activation is currently open.\n")
 
+    daemon_running = True
     hikari_state = HikariState.LISTENING
-    signal.signal(signal.SIGINT, lambda _s, _f: sys.exit(0))
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
     listen_always()
     return 0
 

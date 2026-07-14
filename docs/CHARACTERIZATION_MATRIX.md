@@ -1,7 +1,7 @@
 # WP-003 Characterization Matrix
 
 Status: active
-Baseline: `develop` at `4fe5608`
+Baseline: `develop` at `b9805c6`
 Reviewed: 2026-07-13
 
 ## Purpose
@@ -20,7 +20,7 @@ This matrix records which current behaviors are protected before architectural m
 | Doctor quick checks | formatting, quick-check names, clean-clone private-layout behavior, live command gate | high | Full-doctor failure aggregation and exit-code behavior are not isolated from expensive subprocesses. Characterize command selection, timeout, and failure reporting. | medium |
 | Brain v2 storage/retrieval | episode separation, reviewed truth, repair lifecycle, rollback, conflict redaction, guest isolation, eval 8/8, live QA | high | Maintain current gates. New architecture work must not weaken reviewed-memory authority, source links, repair history, or live-data isolation. | blocking regression gate |
 | Brain v2 CLI | subprocess isolation, safe accept/no-promote, explicit promotion/repair tokens, read-only reconciliation | high | No immediate characterization gap. Preserve exact tokens, redaction, and copy-only legacy repair behavior. | blocking regression gate |
-| Daemon structure | one entrypoint, one owned loop, wake/active speaker checks, fail-closed verification errors | medium | Tests inspect the AST but do not execute startup, stop, timeout, state transition, or dependency-failure paths. Introduce narrow seams and behavioral tests without redesigning the daemon. | high |
+| Daemon lifecycle | one entrypoint, import-safe lazy audio initialization, one owned loop, graceful SIGINT/SIGTERM stop, timeout continuation, wake/active transitions, missing-dependency failure, speaker checks | high | Resolved in `test/daemon-lifecycle-characterization`. Keep model loading behind explicit startup and preserve fail-closed enrolled-speaker verification. | blocking regression gate |
 | Voice identity math | similarity direction, degenerate cosine fallback, pitch edge cases, guest/owner session context | medium | Model-load failure, cache location, enrollment persistence, malformed profile handling, and no-download status are not characterized. Tests must not download weights or touch live biometric data. | high |
 | Voice recognition backends | import checks and locked clean environment | low | Backend choice, model id, first-use download, cache, offline behavior, and Google audio egress are implicit. Add a read-only model/backend status contract before voice expansion. | high |
 | Frontend API behavior | source-level voice race tests, companion state machine, server voice event ordering, clean production build | medium | The frontend assumes pairing is sufficient but the server does not enforce it; protocol shapes are duplicated rather than generated/shared. First bind behavior to server authorization, then define a versioned schema boundary. | high |
@@ -28,9 +28,8 @@ This matrix records which current behaviors are protected before architectural m
 
 ## Execution order
 
-1. Add behavioral daemon lifecycle seams and tests.
-2. Add read-only voice backend/model/cache status without downloading weights.
-3. Characterize full-doctor subprocess failures and timeouts.
-4. Define a versioned server/frontend message schema and add accessibility checks.
+1. Add read-only voice backend/model/cache status without downloading weights.
+2. Characterize full-doctor subprocess failures and timeouts.
+3. Define a versioned server/frontend message schema and add accessibility checks.
 
 Each item lands through its own branch. Brain v2 full gates remain mandatory for shared orchestration changes, and `main` remains unchanged until the owner explicitly authorizes a release merge.
