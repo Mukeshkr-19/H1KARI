@@ -40,6 +40,11 @@ def test_protocol_v1_declares_exact_message_directions():
         "message",
         "voice",
         "companion_preferences",
+        "document_prepare",
+        "document_confirm",
+        "document_follow_up",
+        "document_cancel",
+        "task_status",
         "status",
     }
     assert set(SERVER_MESSAGES) == {
@@ -57,6 +62,10 @@ def test_protocol_v1_declares_exact_message_directions():
         "companion_update",
         "companion_preferences_ack",
         "companion_preferences_error",
+        "document_confirmation_required",
+        "task_update",
+        "document_explanation",
+        "document_error",
     }
 
 
@@ -70,6 +79,9 @@ def test_protocol_v1_declares_exact_message_directions():
         ({"type": "pair", "code": "ABC123", "device_type": "x" * 65}, "Field too long: device_type"),
         ({"type": "voice"}, "Missing required field: text or listening"),
         ({"type": "pair", "code": "ABC123", "protocol_version": True}, "Invalid field type: protocol_version"),
+        ({"type": "document_prepare", "path": "x" * 4097, "provider": "ollama"}, "Field too long: path"),
+        ({"type": "document_confirm", "task_id": "task-1"}, "Missing required field: provider"),
+        ({"type": "task_status", "task_id": "x" * 65}, "Field too long: task_id"),
         ({"type": "not-real"}, "Unknown message type"),
     ],
 )
@@ -90,6 +102,17 @@ def test_valid_client_messages_pass_schema_validation():
             "companion_type": "cat",
             "presentation": "female",
         },
+        {"type": "document_prepare", "path": "/tmp/selected.txt", "provider": "ollama"},
+        {"type": "document_confirm", "task_id": "task-1", "provider": "ollama"},
+        {
+            "type": "document_follow_up",
+            "task_id": "task-1",
+            "text": "Explain the second point.",
+            "provider": "ollama",
+            "fallback_provider": "google",
+        },
+        {"type": "document_cancel", "task_id": "task-1"},
+        {"type": "task_status", "task_id": "task-1"},
         {"type": "status"},
     ]
 

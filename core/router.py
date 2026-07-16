@@ -12,7 +12,7 @@ import logging
 import contextlib
 import io
 import re
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable, Sequence
 from dataclasses import dataclass, field
 from collections import defaultdict
 from dotenv import load_dotenv
@@ -186,6 +186,14 @@ class ProviderStatus:
     last_request_time: float = 0
     consecutive_failures: int = 0
     cooldown_until: float = 0
+
+
+@dataclass(frozen=True)
+class GenerationResult:
+    text: Optional[str]
+    provider: Optional[str]
+    model: Optional[str]
+    attempted_providers: Tuple[str, ...]
 
 
 class AIRouter:
@@ -648,6 +656,87 @@ class AIRouter:
             _router_log("[ROUTER] All providers failed")
 
         return response
+
+    def generate_document(
+        self,
+        user_input: str,
+        *,
+        allowed_providers: Sequence[str],
+        before_provider_call: Callable[[str], bool],
+        system_prompt: str = "You are HIKARI, a helpful and concise AI assistant. Keep responses brief and friendly.",
+        context: str = "",
+        max_tokens: int = 500,
+        temperature: float = 0.7,
+    ) -> GenerationResult:
+        """Generate with request-scoped provider permission and routing evidence."""
+        if not user_input or not user_input.strip() or not allowed_providers:
+            return GenerationResult(None, None, None, ())
+
+        quality = self._get_quality_level(self._classify_task(user_input))
+        messages = self._build_messages(system_prompt, user_input, context)
+        candidates = []
+        for provider in allowed_providers:
+            if provider in candidates:
+                continue
+            status = self.providers.get(provider)
+            if not status or not status.available:
+                continue
+            if status.consecutive_failures >= 3 or time.time() < status.cooldown_until:
+                continue
+            candidates.append(provider)
+
+        attempted = []
+        for provider in candidates:
+            model = PROVIDER_CONFIGS[provider]["models"][quality]
+            try:
+                approved = before_provider_call(provider)
+            except Exception:
+                approved = False
+            if not approved:
+                continue
+
+            attempted.append(provider)
+            response = self._try_generate_once(
+                provider, model, messages, max_tokens, temperature
+            )
+            if not response:
+                continue
+
+            self.providers[provider].requests_today += 1
+            self.providers[provider].consecutive_failures = 0
+            self.providers[provider].last_request_time = time.time()
+            self.usage_stats[provider]["requests"] += 1
+            self.usage_stats[provider]["tokens"] += len(response.split())
+            return GenerationResult(response, provider, model, tuple(attempted))
+
+        return GenerationResult(None, None, None, tuple(attempted))
+
+    def _try_generate_once(
+        self,
+        provider: str,
+        model: str,
+        messages: list,
+        max_tokens: int,
+        temperature: float,
+    ) -> Optional[str]:
+        """Use exactly one outbound transport for a permissioned attempt."""
+        if provider == "google":
+            return self._call_google_direct(
+                model,
+                messages,
+                max_tokens,
+                temperature,
+                self._get_api_key(provider),
+            )
+        if provider == "ollama":
+            return self._call_ollama(model, messages, max_tokens, temperature)
+        if LITELLM_AVAILABLE:
+            return self._call_litellm(
+                provider, model, messages, max_tokens, temperature
+            )
+        return self._call_direct_api(
+            provider, model, messages, max_tokens, temperature
+        )
 
     def _try_generate(
         self,

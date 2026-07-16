@@ -18,29 +18,19 @@ load_dotenv()
 # Import all core systems
 from agents.base import BaseAgent
 from agents.voice import VoiceAgent
-from agents.research import ResearchAgent
-from agents.files import FileAgent
-from agents.system import SystemAgent
 from agents.code import CodeAgent
 from agents.memory_agent import MemoryAgent
 
 from core.router import AIRouter, get_router
 from core.memory import MemorySystem, get_memory
 from core.voice import VoiceSystem
-from core.scheduler import Scheduler, setup_default_scheduler
 from core.voice_memory import VoiceMemory
 from core.user_profile import UserProfile
 from core.knowledge_graph import KnowledgeGraph
 from core.health_awareness import HealthAwareness
 from core.semantic_memory import SemanticMemory
-from core.action_system import ActionSystem, get_action_system
-from core.desktop_awareness import DesktopAwareness, get_desktop_awareness
-from core.browser_automation import BrowserAutomation, get_browser_automation
-from core.mac_integration import MacIntegration, get_mac_integration
 from core.task_planner import TaskPlanner, get_task_planner
-from core.build_executor import BuildExecutor, get_build_executor
 from skills.skill_system import SkillRegistry, register_builtin_skills
-from core.server import WebSocketServer
 from security.auth import CodenameAuth
 from core.quiet import debug
 from core.brain_statements import (
@@ -48,6 +38,8 @@ from core.brain_statements import (
     is_declarative_memory_statement,
     is_task_or_action_statement,
 )
+from core.action_policy import Actor, ActorContext
+from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
 
 if TYPE_CHECKING:
@@ -82,8 +74,6 @@ from core.family_memory import (
 
 # Import new systems
 from core.personality import get_personality, get_emotional_iq
-from core.mac_control import get_mac_control
-from core.smart_home import get_smart_home
 
 # Wake words that activate HIKARI
 WAKE_WORDS = ["hikari", "hey hikari", "okay hikari", "hi hikari"]
@@ -107,6 +97,7 @@ class HIKARI_Orchestrator:
         if not self.brain_v2_enabled:
             self.brain = self._create_legacy_brain()
         self.brain_v2: Optional[BrainV2Coordinator] = None
+        self.brain_service = BrainService()
         self._brain_v2_session: Optional[str] = None
         self._owner_session_current_location: Optional[tuple[str, str]] = None
         self._pending_memory_choice: Optional[PendingMemoryChoice] = None
@@ -144,17 +135,15 @@ class HIKARI_Orchestrator:
         self.agents: Dict[str, BaseAgent] = {}
         self._init_agents()
 
-        # Mac & Smart Home control
-        self.mac_control = get_mac_control()
-        self.smart_home = get_smart_home()
-
-        # Additional systems
-        self.action_system = get_action_system()
-        self.desktop = get_desktop_awareness()
-        self.browser = get_browser_automation()
-        self.mac = get_mac_integration()
+        # Ungoverned legacy tool surfaces stay unreachable until migrated through policy.
+        self.mac_control = None
+        self.smart_home = None
+        self.action_system = None
+        self.desktop = None
+        self.browser = None
+        self.mac = None
         self.planner = get_task_planner()
-        self.build_executor = get_build_executor()
+        self.build_executor = None
 
         # Skills
         self.skill_registry = SkillRegistry()
@@ -215,7 +204,10 @@ class HIKARI_Orchestrator:
             debug("[HIKARI] Brain v2 disabled (HIKARI_DISABLE_BRAIN_V2=1)")
             return
         try:
-            self.brain_v2 = BrainV2Coordinator(
+            service = getattr(self, "brain_service", None) or BrainService()
+            self.brain_service = service
+            self.brain_v2 = service.initialize_owner(
+                ActorContext("local-owner", Actor.OWNER, "startup", "orchestrator"),
                 neural_bridge=None,
                 allow_neural_procedural=False,
                 allow_neural_conflict_reads=False,
@@ -327,7 +319,17 @@ class HIKARI_Orchestrator:
             meta: Dict[str, Any] = {"source": source, **(metadata or {})}
             if self.speaker.last_was_session_intro or is_temporary_speaker_intro(user_input):
                 meta["session_speaker_intro"] = True
-            self.brain_v2.record_turn(
+            service = getattr(self, "brain_service", None)
+            if service is None or not service.owns(self.brain_v2):
+                service = BrainService(self.brain_v2)
+                self.brain_service = service
+            service.record_turn(
+                ActorContext(
+                    "local-owner",
+                    Actor.OWNER,
+                    self._brain_v2_session,
+                    "orchestrator",
+                ),
                 self._brain_v2_session,
                 user_input,
                 response or "",
@@ -379,14 +381,9 @@ class HIKARI_Orchestrator:
         return "\n\n".join(parts)
 
     def _init_agents(self):
-        """Initialize all agents"""
+        """Initialize only agents without ungoverned file, network, or OS actions."""
         eager_legacy_brain = not self.brain_v2_enabled
         self.agents["voice"] = VoiceAgent()
-        self.agents["research"] = ResearchAgent(
-            eager_legacy_brain=eager_legacy_brain
-        )
-        self.agents["files"] = FileAgent()
-        self.agents["system"] = SystemAgent()
         self.agents["code"] = CodeAgent()
         self.agents["memory"] = MemoryAgent(
             self.memory, eager_legacy_brain=eager_legacy_brain
@@ -400,19 +397,9 @@ class HIKARI_Orchestrator:
         debug(f"[HIKARI] Registered {len(self.skill_registry.skills)} skills")
 
     def _init_scheduler(self):
-        """Initialize proactive scheduler"""
-        if os.getenv("HIKARI_DISABLE_PROACTIVE_SCHEDULER", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        ):
-            self.scheduler = None
-            return
-        try:
-            self.scheduler = setup_default_scheduler(self)
-            self.scheduler.start()
-        except Exception as e:
-            debug(f"[HIKARI] Scheduler init failed: {e}")
+        """Keep autonomous legacy callbacks disabled until they have bounded grants."""
+        self.scheduler = None
+        debug("[HIKARI] Proactive scheduler quarantined pending policy migration")
 
     def process_input(self, user_input: str, source: str = "text") -> Optional[str]:
         """Main entry point - process any user input"""
@@ -847,6 +834,21 @@ class HIKARI_Orchestrator:
         if self._is_ai_runtime_question(lowered):
             return self._get_ai_runtime_summary()
 
+        if re.search(r"\b(?:what(?:'s| is)\s+)?(?:the\s+)?time\b", lowered):
+            return f"The local time is {datetime.now().strftime('%-I:%M %p')}."
+
+        if re.search(r"\b(?:today(?:'s)?\s+date|what(?:'s| is)\s+(?:today|the date)|date)\b", lowered):
+            return f"Today is {datetime.now().strftime('%A, %B %-d, %Y')}."
+
+        if "weather" in lowered:
+            return "Live weather lookup is disabled until its network policy adapter is approved."
+
+        if "news" in lowered or "headline" in lowered:
+            return "News headlines are disabled until their network policy adapter is approved."
+
+        if lowered.startswith(("search ", "find ", "look up ")):
+            return "Web search is disabled until its network policy adapter is approved."
+
         # Status command
         if lowered in ["status", "hikari status", "system status"]:
             return self._get_status_report()
@@ -1254,7 +1256,7 @@ class HIKARI_Orchestrator:
         for name, agent in self.agents.items():
             scores[name] = agent.can_handle(user_input)
 
-        if self._requires_brain_v2_personal_answer(user_input):
+        if self._requires_brain_v2_personal_answer(user_input) and "research" in scores:
             scores["research"] = 0.0
 
         debug(f"[ROUTE] Agent scores: {scores}")
@@ -1614,17 +1616,14 @@ Mood: {self.emotional_iq.current_mood}
         """Get help information"""
         return """HIKARI Commands
 ================
-- "Open [app]" - Open applications
-- "What's on my calendar?" - Calendar events
-- "Play [song]" - Play music
 - "Remember that..." - Store facts
 - "What do you know about me?" - User info
+- Select a local text document in the Phase 1 client to request an explanation
 - "Status" - System status
-- "Lock screen" - Lock Mac
-- "Turn off lights" - Smart home
 - Plus: Ask anything!
 
-Just speak naturally - I'm here to help."""
+Legacy file, browser, scheduler, and Mac-control tools remain disabled until their
+individual policy adapters and approval grants are complete."""
 
 
 # Singleton

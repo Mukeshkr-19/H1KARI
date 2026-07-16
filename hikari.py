@@ -159,6 +159,114 @@ def run_repo_script(script_name: str):
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", script_name)
     raise SystemExit(subprocess.run(["bash", script_path]).returncode)
 
+
+def run_document_cli(args, runtime=None) -> int:
+    """Run the local-owner document flow with an explicit egress confirmation."""
+    providers = tuple(args.document_provider or ())
+    selected_path = args.explain_document
+    task_id = args.document_task
+
+    if selected_path is not None and (
+        not isinstance(selected_path, str)
+        or not selected_path
+        or len(selected_path) > 4096
+        or "\x00" in selected_path
+        or Path(selected_path).suffix.lower() != ".txt"
+    ):
+        print("Invalid document path.", file=sys.stderr)
+        return 2
+    if task_id is not None and (
+        not isinstance(task_id, str) or not task_id or len(task_id) > 64
+    ):
+        print("Invalid document task ID.", file=sys.stderr)
+        return 2
+    if bool(selected_path) == bool(task_id):
+        print("Choose exactly one document path or task ID.", file=sys.stderr)
+        return 2
+    if args.document_follow_up is not None and (
+        not task_id
+        or not isinstance(args.document_follow_up, str)
+        or not args.document_follow_up.strip()
+        or len(args.document_follow_up) > 2000
+    ):
+        print("Invalid document follow-up.", file=sys.stderr)
+        return 2
+    if (
+        len(providers) > 8
+        or len(set(providers)) != len(providers)
+        or any(
+            not isinstance(provider, str)
+            or not re.fullmatch(r"[a-z0-9][a-z0-9_.-]{0,79}", provider)
+            for provider in providers
+        )
+    ):
+        print("Invalid document provider selection.", file=sys.stderr)
+        return 2
+    if args.confirm_document not in (None, "READ_AND_SEND"):
+        print("Invalid document confirmation token.", file=sys.stderr)
+        return 2
+    if args.confirm_document is not None and not providers:
+        print("Document action requires at least one --document-provider.", file=sys.stderr)
+        return 2
+    if providers and args.confirm_document is None:
+        print("Document providers require --confirm-document READ_AND_SEND.", file=sys.stderr)
+        return 2
+    if args.document_follow_up and args.confirm_document != "READ_AND_SEND":
+        print("Document follow-up requires --confirm-document READ_AND_SEND.", file=sys.stderr)
+        return 2
+
+    from core.phase1_runtime import create_phase1_runtime, owner_contexts
+
+    runtime = runtime or create_phase1_runtime()
+    actor, context = owner_contexts(source="cli")
+
+    if selected_path:
+        print(f"Selected document: {selected_path}")
+    if providers:
+        print(f"Selected providers: {', '.join(providers)}")
+
+    if selected_path:
+        result = runtime.documents.prepare(selected_path, actor=actor, context=context)
+        if result.error_code:
+            print(f"Document request failed: {result.error_code}", file=sys.stderr)
+            return 1
+        task_id = result.task_id
+        print(f"Document task: {task_id}")
+        if args.confirm_document is None:
+            print("Confirmation required before reading or sending the document.")
+            return 0
+
+    if task_id and not selected_path and args.confirm_document == "READ_AND_SEND":
+        task = runtime.tasks.get_task(task_id, context=context)
+        if task is not None and task.selected_path:
+            print(f"Selected document: {task.selected_path}")
+
+    if args.document_follow_up:
+        result = runtime.documents.follow_up(
+            task_id,
+            args.document_follow_up,
+            providers,
+            actor=actor,
+            context=context,
+        )
+    elif args.confirm_document is not None:
+        result = runtime.documents.confirm_and_explain(
+            task_id, providers, actor=actor, context=context
+        )
+    else:
+        result = runtime.documents.reconnect(task_id, actor=actor, context=context)
+
+    if result.error_code:
+        print(f"Document request failed: {result.error_code}", file=sys.stderr)
+        return 1
+    if result.explanation is not None:
+        print(result.explanation)
+        if result.provider:
+            print(f"Provider: {result.provider}")
+    else:
+        print(f"Document task {result.task_id}: {result.status}")
+    return 0
+
 def main():
     parser = argparse.ArgumentParser(
         description="HIKARI personal AI assistant",
@@ -477,6 +585,32 @@ def main():
         ),
     )
     parser.add_argument(
+        "--explain-document",
+        metavar="PATH",
+        help="Prepare a local text document for explanation; reading requires confirmation.",
+    )
+    parser.add_argument(
+        "--document-task",
+        metavar="TASK_ID",
+        help="Reconnect to a prepared document task.",
+    )
+    parser.add_argument(
+        "--document-follow-up",
+        metavar="TEXT",
+        help="Ask a follow-up about --document-task after explicit confirmation.",
+    )
+    parser.add_argument(
+        "--document-provider",
+        metavar="PROVIDER",
+        action="append",
+        help="Allowed provider for this confirmed document action; may be repeated.",
+    )
+    parser.add_argument(
+        "--confirm-document",
+        metavar="READ_AND_SEND",
+        help="Exact token required before a document is read or sent to a provider.",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="With --tasks-list, include tasks from all speakers/sessions.",
@@ -515,6 +649,42 @@ def main():
                 file=sys.stderr,
             )
             raise SystemExit(1)
+
+    document_requested = (
+        args.explain_document is not None or args.document_task is not None
+    )
+    other_action_requested = any(
+        bool(getattr(args, name))
+        for name in (
+            "text", "daemon", "tray", "server", "install", "install_cli",
+            "uninstall_cli", "doctor", "doctor_full", "memory_status",
+            "voice_status", "init", "init_plan", "runtime_backup",
+            "migration_plan", "rollback_init", "brain_v2_status",
+            "brain_v2_pending", "brain_v2_show", "brain_v2_accept",
+            "brain_v2_accept_no_promote", "brain_v2_reject",
+            "brain_v2_memories", "brain_v2_consolidate",
+            "brain_v2_retag_accepted", "brain_v2_review", "brain_v2_eval",
+            "brain_live_qa", "brain_v2_conflicts", "brain_v2_retire",
+            "brain_v2_supersede", "brain_v2_edit_metadata",
+            "brain_v2_memory_history", "brain_v2_repair_show",
+            "brain_v2_reconcile_status", "brain_v2_repair_plan",
+            "brain_v2_live_qa_checklist", "brain_v2_readiness",
+            "brain_v2_wiki_preview", "brain_v2_wiki_writeback", "tasks_list",
+        )
+    )
+    if document_requested and other_action_requested:
+        parser.error("document mode cannot be combined with another action or runtime mode")
+    if args.explain_document and args.document_task:
+        parser.error("--explain-document and --document-task cannot be combined")
+    if args.document_follow_up is not None and args.document_task is None:
+        parser.error("--document-follow-up requires --document-task")
+    if (
+        args.document_provider is not None or args.confirm_document is not None
+    ) and not document_requested:
+        parser.error(
+            "--document-provider and --confirm-document require "
+            "--explain-document or --document-task"
+        )
 
     _repair_apply_flags = (
         args.brain_v2_retire,
@@ -607,6 +777,9 @@ def main():
         raise SystemExit(
             run_tasks_list_cli(include_all_scopes=bool(args.all))
         )
+
+    if document_requested:
+        raise SystemExit(run_document_cli(args))
 
     # Isolated Brain v2 modes — do not import core.brain_v2.cli (pulls neural config).
     if args.brain_v2_eval:

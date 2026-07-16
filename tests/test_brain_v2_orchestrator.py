@@ -19,7 +19,7 @@ from core.brain_v2.recall_intent import is_positive_brain_v2_recall_answer
 def test_brain_v2_coordinator_init_failure_leaves_runtime_unavailable(monkeypatch):
     monkeypatch.delenv("HIKARI_DISABLE_BRAIN_V2", raising=False)
     monkeypatch.setattr(
-        "core.orchestrator.BrainV2Coordinator",
+        "core.brain_service.BrainV2Coordinator",
         MagicMock(side_effect=RuntimeError("coordinator init failed")),
     )
     from core.orchestrator import HIKARI_Orchestrator

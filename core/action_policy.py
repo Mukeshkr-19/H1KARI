@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+import re
+
+_ACTOR_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
+_SOURCE_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,31}$")
 
 
 class Actor(StrEnum):
@@ -33,6 +37,35 @@ class PolicyOutcome(StrEnum):
     ALLOW = "allow"
     REQUIRE_CONFIRMATION = "require_confirmation"
     DENY = "deny"
+
+
+@dataclass(frozen=True)
+class ActorContext:
+    """Server-derived identity for one local HIKARI session."""
+
+    actor_id: str
+    actor: Actor
+    session_id: str
+    source: str = "text"
+
+
+def validate_actor_context(context: object) -> tuple[bool, str]:
+    """Validate server-owned actor metadata without trusting type annotations."""
+    if not isinstance(context, ActorContext) or not isinstance(context.actor, Actor):
+        return False, "invalid_actor"
+    if not isinstance(context.actor_id, str) or not _ACTOR_IDENTIFIER.fullmatch(
+        context.actor_id
+    ):
+        return False, "invalid_actor"
+    if not isinstance(context.session_id, str) or not _ACTOR_IDENTIFIER.fullmatch(
+        context.session_id
+    ):
+        return False, "invalid_actor"
+    if not isinstance(context.source, str) or not _SOURCE_IDENTIFIER.fullmatch(
+        context.source
+    ):
+        return False, "invalid_actor"
+    return True, "valid_actor"
 
 
 @dataclass(frozen=True)

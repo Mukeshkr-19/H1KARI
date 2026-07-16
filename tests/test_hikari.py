@@ -302,7 +302,7 @@ class TestOrchestrator(unittest.TestCase):
 
         orch = Orchestrator()
         self.assertIsNotNone(orch)
-        self.assertEqual(len(orch.agents), 6)
+        self.assertEqual(set(orch.agents), {"voice", "code", "memory"})
         self.assertIsNotNone(orch.router)
         self.assertIsNotNone(orch.memory)
 

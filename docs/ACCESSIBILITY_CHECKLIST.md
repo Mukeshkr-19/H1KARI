@@ -43,3 +43,16 @@ complete this representative manual flow in the production build.
 Record browser version, macOS version, assistive settings, result, and any exception in
 the release evidence. Do not record pairing codes, conversation text, voice samples, or
 other private runtime data.
+
+## Phase 1 document flow
+
+- Select one text document and provider, then confirm that the review screen announces
+  the exact immutable document/provider snapshot before any read or provider request.
+- Confirm document status and explanation updates are announced through the live region
+  without moving keyboard focus.
+- While a document task is queued, running, interrupted, or verifying, confirm Cancel is
+  visible, keyboard operable, and remains available during a slow provider response.
+- Reconnect to a task and ask one follow-up. Confirm stale, malformed, or unrelated task
+  events do not replace the active task's state or explanation.
+- At 200% zoom, verify the document controls, confirmation details, errors, status,
+  explanation, follow-up input, and Cancel control remain visible and operable.
