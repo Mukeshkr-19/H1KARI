@@ -37,7 +37,7 @@ def tasks_db_path(tmp_path, monkeypatch):
 
 def test_task_persists_across_service_instances(tasks_db_path):
     first = TaskIntentService()
-    record = first.record_intent("schedule my meeting with Person C")
+    record = first.record_intent("remind me to schedule my meeting with Person C")
     assert isinstance(first.store, SqliteTaskStore)
 
     second = TaskIntentService()
@@ -88,7 +88,7 @@ def test_what_you_remember_excludes_task_text(tasks_db_path, episode_db):
 
 
 def test_tasks_list_cli_against_isolated_db(tasks_db_path):
-    TaskIntentService().record_intent("write code for Topic A")
+    TaskIntentService().record_intent("remind me to write code for Topic A")
 
     env = os.environ.copy()
     env[ENV_HIKARI_TASKS_DB] = str(tasks_db_path)

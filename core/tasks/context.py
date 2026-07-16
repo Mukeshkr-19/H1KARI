@@ -12,3 +12,4 @@ class TaskRecordContext:
     session_id: Optional[str] = None
     source: str = "text"
     is_guest: bool = False
+    actor: Optional[str] = None

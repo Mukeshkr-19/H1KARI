@@ -33,6 +33,42 @@
       },
       "optional": {}
     },
+    "document_prepare": {
+      "required": {
+        "path": {"type": "string", "max_length": 4096},
+        "provider": {"type": "string", "max_length": 64}
+      },
+      "optional": {
+        "fallback_provider": {"type": "string", "max_length": 64}
+      }
+    },
+    "document_confirm": {
+      "required": {
+        "task_id": {"type": "string", "max_length": 64},
+        "provider": {"type": "string", "max_length": 64}
+      },
+      "optional": {
+        "fallback_provider": {"type": "string", "max_length": 64}
+      }
+    },
+    "document_follow_up": {
+      "required": {
+        "task_id": {"type": "string", "max_length": 64},
+        "text": {"type": "string", "max_length": 20000},
+        "provider": {"type": "string", "max_length": 64}
+      },
+      "optional": {
+        "fallback_provider": {"type": "string", "max_length": 64}
+      }
+    },
+    "document_cancel": {
+      "required": {"task_id": {"type": "string", "max_length": 64}},
+      "optional": {}
+    },
+    "task_status": {
+      "required": {"task_id": {"type": "string", "max_length": 64}},
+      "optional": {}
+    },
     "status": {"required": {}, "optional": {}}
   },
   "server_to_client": {
@@ -49,6 +85,10 @@
     "error": ["message"],
     "companion_update": ["companion"],
     "companion_preferences_ack": ["preferences"],
-    "companion_preferences_error": ["message"]
+    "companion_preferences_error": ["message"],
+    "document_confirmation_required": ["task_id", "path", "provider", "fallback_provider"],
+    "task_update": ["task_id", "root_task_id", "status", "progress", "checkpoint"],
+    "document_explanation": ["task_id", "root_task_id", "text", "provider"],
+    "document_error": ["task_id", "root_task_id", "code", "message"]
   }
 }

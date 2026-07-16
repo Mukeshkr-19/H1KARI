@@ -148,6 +148,39 @@ npm run build
 
 The frontend must not depend on remote Google Fonts during build. Keep fonts local or use system fonts.
 
+## Explain one approved text document
+
+Preparing a document records a durable task but does not read the file:
+
+```bash
+.venv/bin/python hikari.py --explain-document /path/to/notes.txt
+```
+
+After reviewing the selected path and provider, run the explicit one-action
+confirmation. Repeat `--document-provider` to define an ordered fallback:
+
+```bash
+.venv/bin/python hikari.py \
+  --explain-document /path/to/notes.txt \
+  --document-provider ollama \
+  --confirm-document READ_AND_SEND
+```
+
+Reconnect or ask a follow-up using the returned task ID:
+
+```bash
+.venv/bin/python hikari.py --document-task TASK_ID
+.venv/bin/python hikari.py \
+  --document-task TASK_ID \
+  --document-follow-up "What are the main risks?" \
+  --document-provider ollama \
+  --confirm-document READ_AND_SEND
+```
+
+Phase 1 accepts one regular, non-symlinked UTF-8 `.txt` file up to 100 KB. It does not
+support PDF, DOCX, OCR, uploads, multiple files, or voice control; those belong to later
+phases.
+
 ## Verification Before Push
 
 ```bash

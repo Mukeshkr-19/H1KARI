@@ -122,7 +122,7 @@ def test_schedule_confirmation_disabled_does_not_call_osascript(
     run_mock.assert_not_called()
 
 
-def test_schedule_confirmation_success_marks_scheduled(tasks_db_path, monkeypatch):
+def test_legacy_schedule_confirmation_stays_quarantined(tasks_db_path, monkeypatch):
     monkeypatch.setenv(ENV_ENABLE_TASK_SCHEDULER, "1")
     scheduler = MacOSReminderScheduler()
     scheduler.schedule_reminder = MagicMock(
@@ -137,12 +137,12 @@ def test_schedule_confirmation_success_marks_scheduled(tasks_db_path, monkeypatc
         context=TaskRecordContext(speaker_label="Owner A", session_id="sess-b")
     )
     assert record is not None
-    assert record.status == TaskStatus.SCHEDULED
-    assert "macos reminders" in reply.lower()
-    scheduler.schedule_reminder.assert_called_once()
+    assert record.status == TaskStatus.NOT_SCHEDULED
+    assert "not enabled" in reply.lower()
+    scheduler.schedule_reminder.assert_not_called()
 
 
-def test_schedule_failure_marks_schedule_failed_and_sanitizes(tasks_db_path, monkeypatch):
+def test_quarantined_scheduler_does_not_persist_backend_failures(tasks_db_path, monkeypatch):
     monkeypatch.setenv(ENV_ENABLE_TASK_SCHEDULER, "1")
     scheduler = MacOSReminderScheduler()
     scheduler.schedule_reminder = MagicMock(
@@ -157,12 +157,13 @@ def test_schedule_failure_marks_schedule_failed_and_sanitizes(tasks_db_path, mon
         context=TaskRecordContext(speaker_label="Owner A", session_id="sess-c")
     )
     assert record is not None
-    assert record.status == TaskStatus.SCHEDULE_FAILED
-    assert len(record.scheduler_result or "") <= 160
-    assert "could not create" in reply.lower()
+    assert record.status == TaskStatus.NOT_SCHEDULED
+    assert record.scheduler_result is None
+    assert "not enabled" in reply.lower()
+    scheduler.schedule_reminder.assert_not_called()
 
 
-def test_schedule_failure_redacts_task_text_from_error(tasks_db_path, monkeypatch):
+def test_quarantined_scheduler_never_exposes_backend_error(tasks_db_path, monkeypatch):
     monkeypatch.setenv(ENV_ENABLE_TASK_SCHEDULER, "1")
     scheduler = MacOSReminderScheduler()
     scheduler.schedule_reminder = MagicMock(
@@ -182,10 +183,10 @@ def test_schedule_failure_redacts_task_text_from_error(tasks_db_path, monkeypatc
     )
 
     assert record is not None
-    assert record.status == TaskStatus.SCHEDULE_FAILED
-    assert "call Person C" not in (record.scheduler_result or "")
+    assert record.status == TaskStatus.NOT_SCHEDULED
+    assert record.scheduler_result is None
     assert "call Person C" not in reply
-    assert "[redacted task]" in (record.scheduler_result or "")
+    scheduler.schedule_reminder.assert_not_called()
 
 
 def test_orchestrator_schedule_that_reminder_honest_when_disabled(
@@ -236,4 +237,4 @@ def test_tasks_list_shows_scoped_fields(tasks_db_path):
 
 def test_scheduler_enabled_flag(monkeypatch):
     monkeypatch.setenv(ENV_ENABLE_TASK_SCHEDULER, "1")
-    assert task_scheduler_enabled() is True
+    assert task_scheduler_enabled() is False

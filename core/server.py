@@ -11,6 +11,7 @@ import asyncio
 import threading
 import html
 import hmac
+import ipaddress
 import secrets
 from typing import Optional, Dict, Any, Set
 from datetime import datetime
@@ -45,7 +46,14 @@ MAX_PAIRING_ATTEMPTS = 5
 class WebSocketServer:
     """WebSocket server for device connections"""
 
-    def __init__(self, orchestrator, host: str = "0.0.0.0", port: int = 8765):
+    def __init__(
+        self,
+        orchestrator,
+        host: str = "0.0.0.0",
+        port: int = 8765,
+        *,
+        phase1_runtime=None,
+    ):
         self.orchestrator = orchestrator
         self.host = host
         self.port = port
@@ -58,6 +66,13 @@ class WebSocketServer:
         self._loop = None
         self.pairing_code = self._generate_pairing_code()
         self._companion_bridges: Dict[str, VoiceCompanionBridge] = {}
+        self._phase1_runtime = phase1_runtime
+        self._phase1_runtime_lock = asyncio.Lock()
+        self._owner_sessions: Dict[str, tuple] = {}
+        self._connection_tokens: Dict[str, str] = {}
+        self._document_jobs: Dict[tuple[str, str], asyncio.Task] = {}
+        self._document_selections: Dict[str, tuple[str, tuple[str, ...]]] = {}
+        self._document_task_roots: Dict[str, str] = {}
 
     def _voice_companion_enabled(self) -> bool:
         return is_voice_companion_enabled()
@@ -109,7 +124,9 @@ class WebSocketServer:
     async def _handle_connection(self, websocket):
         """Handle a new WebSocket connection"""
         client_id = id(websocket)
+        client_key = str(client_id)
         self.connected_clients.add(websocket)
+        self._connection_tokens[client_key] = secrets.token_hex(16)
 
         # Send welcome message
         await websocket.send(
@@ -139,11 +156,166 @@ class WebSocketServer:
         finally:
             self.connected_clients.discard(websocket)
             client_key = str(id(websocket))
+            for key, job in list(self._document_jobs.items()):
+                if key[0] == client_key:
+                    job.cancel()
+                    self._document_jobs.pop(key, None)
+            self._connection_tokens.pop(client_key, None)
             self._paired_client_ids.discard(client_key)
             self._pair_attempts.pop(client_key, None)
             self.device_info.pop(client_key, None)
             self._companion_bridges.pop(client_key, None)
+            self._owner_sessions.pop(client_key, None)
             print(f"[WS] Client disconnected ({len(self.connected_clients)} total)")
+
+    @staticmethod
+    def _is_loopback(websocket) -> bool:
+        remote = getattr(websocket, "remote_address", None)
+        host = remote[0] if isinstance(remote, (tuple, list)) and remote else remote
+        try:
+            address = ipaddress.ip_address(str(host))
+            mapped = getattr(address, "ipv4_mapped", None)
+            return address.is_loopback or bool(mapped and mapped.is_loopback)
+        except ValueError:
+            return False
+
+    async def _document_runtime_and_contexts(self, websocket):
+        """Create owner identity only from the transport peer, never client JSON."""
+        if not self._is_loopback(websocket):
+            return None, None, None
+        if self._phase1_runtime is None:
+            async with self._phase1_runtime_lock:
+                if self._phase1_runtime is None:
+                    from core.phase1_runtime import create_phase1_runtime
+
+                    self._phase1_runtime = await asyncio.to_thread(create_phase1_runtime)
+        key = str(id(websocket))
+        if key not in self._owner_sessions:
+            from core.phase1_runtime import owner_contexts
+
+            self._owner_sessions[key] = owner_contexts(
+                session_id=secrets.token_hex(16), source="websocket"
+            )
+        actor, context = self._owner_sessions[key]
+        return self._phase1_runtime, actor, context
+
+    @staticmethod
+    def _document_providers(data: Dict[str, Any]) -> tuple[str, ...]:
+        return tuple(
+            value
+            for value in (data.get("provider"), data.get("fallback_provider"))
+            if value
+        )
+
+    async def _send_document_result(self, websocket, result, root_task_id: str) -> None:
+        if result.explanation is not None:
+            payload = {
+                "type": "document_explanation",
+                "task_id": result.task_id or "",
+                "root_task_id": root_task_id,
+                "text": result.explanation,
+                "provider": result.provider or "saved",
+            }
+        elif result.error_code:
+            message = {
+                "actor_not_authorized": "Owner authorization is required; reconnect locally and try again.",
+                "invalid_path": "Choose an existing regular .txt file with no symlinks.",
+                "unsupported_type": "Choose a UTF-8 .txt file.",
+                "too_large": "Choose a text file no larger than 100 KB.",
+                "invalid_utf8": "Save the document as UTF-8 text and try again.",
+                "invalid_destinations": "Review and select an available provider again.",
+                "invalid_question": "Enter a non-empty follow-up question and try again.",
+                "invalid_task_state": "Refresh the task status before trying that action again.",
+                "task_not_found": "Reconnect using the original task ID.",
+                "task_cancelled": "The document task was cancelled; prepare it again to restart.",
+                "task_conflict": "The task changed; refresh its status and try again.",
+            }.get(result.error_code, "Try again or choose another approved provider.")
+            payload = {
+                "type": "document_error",
+                "task_id": result.task_id or "",
+                "root_task_id": root_task_id,
+                "code": result.error_code,
+                "message": message,
+            }
+        else:
+            payload = {
+                "type": "task_update",
+                "task_id": result.task_id or "",
+                "root_task_id": root_task_id,
+                "status": result.status,
+                "progress": 0,
+                "checkpoint": result.status,
+            }
+        await websocket.send(json.dumps(payload))
+
+    async def _start_document_job(
+        self,
+        websocket,
+        runtime,
+        actor,
+        context,
+        root_task_id: str,
+        operation,
+        *args,
+        job_task_id: Optional[str] = None,
+    ) -> None:
+        client_key = str(id(websocket))
+        key = (client_key, root_task_id)
+        if key in self._document_jobs:
+            await websocket.send(json.dumps({
+                "type": "document_error",
+                "task_id": root_task_id,
+                "root_task_id": root_task_id,
+                "code": "task_conflict",
+                "message": "Document request could not be completed.",
+            }))
+            return
+        token = self._connection_tokens.setdefault(client_key, secrets.token_hex(16))
+
+        async def run() -> None:
+            response_task_id = job_task_id or root_task_id
+            try:
+                await asyncio.sleep(0)
+                result = await asyncio.to_thread(
+                    operation, *args, actor=actor, context=context
+                )
+                if result.task_id:
+                    response_task_id = result.task_id
+                    self._document_task_roots[result.task_id] = root_task_id
+                latest = await asyncio.to_thread(
+                    runtime.documents.reconnect,
+                    root_task_id,
+                    actor=actor,
+                    context=context,
+                )
+                if latest.status == "cancelled":
+                    return
+                if self._connection_tokens.get(client_key) != token:
+                    return
+                await self._send_document_result(websocket, result, root_task_id)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                if self._connection_tokens.get(client_key) == token:
+                    await websocket.send(json.dumps({
+                        "type": "document_error",
+                        "task_id": response_task_id,
+                        "root_task_id": root_task_id,
+                        "code": "request_failed",
+                        "message": "Document request could not be completed.",
+                    }))
+
+        job = asyncio.create_task(run())
+        self._document_jobs[key] = job
+        if job_task_id and job_task_id != root_task_id:
+            self._document_jobs[(client_key, job_task_id)] = job
+
+        def clean(done) -> None:
+            for job_key, current in list(self._document_jobs.items()):
+                if current is done:
+                    self._document_jobs.pop(job_key, None)
+
+        job.add_done_callback(clean)
 
     def _companion_for(self, websocket) -> VoiceCompanionBridge:
         key = str(id(websocket))
@@ -364,6 +536,168 @@ class WebSocketServer:
                                 {
                                     "type": "companion_preferences_error",
                                     "message": str(exc),
+                                }
+                            )
+                        )
+
+            elif msg_type in {
+                "document_prepare",
+                "document_confirm",
+                "document_follow_up",
+                "document_cancel",
+                "task_status",
+            }:
+                runtime, actor, context = await self._document_runtime_and_contexts(websocket)
+                task_id = str(data.get("task_id", ""))
+                if runtime is None:
+                    await websocket.send(
+                        json.dumps(
+                            {
+                                "type": "document_error",
+                                "task_id": task_id,
+                                "root_task_id": task_id,
+                                "code": "actor_not_authorized",
+                                "message": "Document access is available only on this computer.",
+                            }
+                        )
+                    )
+                elif msg_type == "document_prepare":
+                    result = await asyncio.to_thread(
+                        runtime.documents.prepare,
+                        data["path"],
+                        actor=actor,
+                        context=context,
+                    )
+                    if result.error_code:
+                        await self._send_document_result(
+                            websocket, result, result.task_id or ""
+                        )
+                    else:
+                        providers = self._document_providers(data)
+                        self._document_selections[result.task_id] = (
+                            data["path"], providers
+                        )
+                        self._document_task_roots[result.task_id] = result.task_id
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "document_confirmation_required",
+                                    "task_id": result.task_id,
+                                    "path": data["path"],
+                                    "provider": data["provider"],
+                                    "fallback_provider": providers[1] if len(providers) > 1 else "",
+                                }
+                            )
+                        )
+                elif msg_type == "document_confirm":
+                    selection = self._document_selections.get(task_id)
+                    providers = self._document_providers(data)
+                    if selection is None or providers != selection[1]:
+                        await websocket.send(json.dumps({
+                            "type": "document_error",
+                            "task_id": task_id,
+                            "root_task_id": task_id,
+                            "code": "destination_mismatch",
+                            "message": "Document request could not be completed.",
+                        }))
+                    else:
+                        await self._start_document_job(
+                            websocket,
+                            runtime,
+                            actor,
+                            context,
+                            task_id,
+                            runtime.documents.confirm_and_explain,
+                            task_id,
+                            selection[1],
+                        )
+                elif msg_type == "document_follow_up":
+                    root_task_id = self._document_task_roots.get(task_id, task_id)
+                    selection = self._document_selections.get(root_task_id)
+                    providers = self._document_providers(data)
+                    if selection is None or providers != selection[1]:
+                        await websocket.send(json.dumps({
+                            "type": "document_error",
+                            "task_id": task_id,
+                            "root_task_id": root_task_id,
+                            "code": "destination_mismatch",
+                            "message": "Document request could not be completed.",
+                        }))
+                    else:
+                        prepared = await asyncio.to_thread(
+                            runtime.documents.prepare_follow_up,
+                            root_task_id,
+                            data["text"],
+                            actor=actor,
+                            context=context,
+                        )
+                        if prepared.error_code or not prepared.task_id:
+                            await self._send_document_result(
+                                websocket, prepared, root_task_id
+                            )
+                        else:
+                            child_task_id = prepared.task_id
+                            self._document_task_roots[child_task_id] = root_task_id
+                            await websocket.send(json.dumps({
+                                "type": "task_update",
+                                "task_id": child_task_id,
+                                "root_task_id": root_task_id,
+                                "status": prepared.status,
+                                "progress": 0,
+                                "checkpoint": prepared.status,
+                            }))
+                            await self._start_document_job(
+                                websocket,
+                                runtime,
+                                actor,
+                                context,
+                                root_task_id,
+                                runtime.documents.execute_follow_up,
+                                child_task_id,
+                                selection[1],
+                                job_task_id=child_task_id,
+                            )
+                elif msg_type == "document_cancel":
+                    root_task_id = self._document_task_roots.get(task_id, task_id)
+                    result = await asyncio.to_thread(
+                        runtime.documents.cancel,
+                        task_id,
+                        actor=actor,
+                        context=context,
+                    )
+                    await self._send_document_result(websocket, result, root_task_id)
+                    if result.status == "cancelled":
+                        job = self._document_jobs.pop((client_id, task_id), None)
+                        if job:
+                            for job_key, current in list(self._document_jobs.items()):
+                                if current is job:
+                                    self._document_jobs.pop(job_key, None)
+                            job.cancel()
+                else:
+                    root_task_id = self._document_task_roots.get(task_id, task_id)
+                    result = await asyncio.to_thread(
+                        runtime.documents.reconnect,
+                        task_id,
+                        actor=actor,
+                        context=context,
+                    )
+                    if result.error_code:
+                        await self._send_document_result(websocket, result, root_task_id)
+                    elif result.explanation is not None:
+                        await self._send_document_result(websocket, result, root_task_id)
+                    else:
+                        task = await asyncio.to_thread(
+                            runtime.tasks.get_task, task_id, context=context
+                        )
+                        await websocket.send(
+                            json.dumps(
+                                {
+                                    "type": "task_update",
+                                    "task_id": task_id,
+                                    "root_task_id": root_task_id,
+                                    "status": task.status.value,
+                                    "progress": task.progress,
+                                    "checkpoint": task.checkpoint,
                                 }
                             )
                         )

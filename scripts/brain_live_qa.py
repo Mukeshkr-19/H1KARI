@@ -88,21 +88,13 @@ def _auto_saved_core(reply: str) -> bool:
     return _quiet_memory_saved(reply)
 
 
-def _weather_ok(reply: str) -> bool:
+def _weather_safely_quarantined(reply: str) -> bool:
     low = (reply or "").lower()
-    if "secret" in low or "appid" in low:
-        return False
-    return any(
-        token in low
-        for token in (
-            "°",
-            "humidity",
-            "weather in",
-            "api key",
-            "couldn't find",
-            "weather service is unavailable",
-            "which city",
-        )
+    return (
+        "live weather lookup is disabled" in low
+        and "network policy adapter" in low
+        and "secret" not in low
+        and "appid" not in low
     )
 
 
@@ -545,13 +537,13 @@ def main() -> int:
                 ),
                 Turn(
                     "whats the weather outside",
-                    lambda r: "city b" in r.lower() and _weather_ok(r),
-                    "weather outside resolves session city",
+                    _weather_safely_quarantined,
+                    "weather stays behind network policy",
                 ),
                 Turn(
                     "whats the weather in the city im in now",
-                    lambda r: "city b" in r.lower() and _weather_ok(r),
-                    "weather resolves city b safely",
+                    _weather_safely_quarantined,
+                    "session weather stays behind network policy",
                 ),
             ],
         )
@@ -573,8 +565,8 @@ def main() -> int:
                 ),
                 Turn(
                     "whats the weather outside",
-                    lambda r: "city b" in r.lower() and _weather_ok(r),
-                    "weather uses refined city",
+                    _weather_safely_quarantined,
+                    "weather caller remains quarantined",
                 ),
             ],
         )
@@ -591,8 +583,8 @@ def main() -> int:
                 ),
                 Turn(
                     "whats the weather in the city i live in",
-                    lambda r: "city a" in r.lower() and _weather_ok(r),
-                    "home weather from stable memory",
+                    _weather_safely_quarantined,
+                    "home weather stays behind network policy",
                 ),
             ],
         )

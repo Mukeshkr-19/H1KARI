@@ -352,30 +352,8 @@ sys.path.insert(0, str(repo_root))
 from core.orchestrator import HIKARI_Orchestrator
 
 orch = HIKARI_Orchestrator()
-assert orch.scheduler is not None
-orch.scheduler.stop()
-orch.memory.set_preference("location", "Scheduler City")
-weather_json = {
-    "current_condition": [
-        {
-            "temp_F": "65",
-            "temp_C": "18",
-            "weatherDesc": [{"value": "Cloudy"}],
-            "humidity": "55",
-        }
-    ]
-}
-weather_resp = MagicMock()
-weather_resp.json.return_value = weather_json
-ran = False
-with patch("agents.research.requests.get", return_value=weather_resp):
-    for task in orch.scheduler.tasks:
-        if task.name == "weather_check":
-            result = task.run()
-            ran = True
-            assert result
-            break
-assert ran
+assert orch.scheduler is None
+assert "agents.research" not in sys.modules
 assert "core.neural_memory_bridge" not in sys.modules
 assert not (home / ".hikari").exists()
 print("ok")

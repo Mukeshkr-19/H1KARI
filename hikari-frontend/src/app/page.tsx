@@ -33,6 +33,31 @@ type ClientMessageType = keyof typeof protocolSchema.client_to_server;
 type ServerMessageType = keyof typeof protocolSchema.server_to_client;
 type ServerMessage = Record<string, unknown> & { type: ServerMessageType };
 
+type DocumentConfirmation = {
+  taskId: string;
+  path: string;
+  provider: string;
+  fallbackProvider: string;
+};
+
+const ROOT_DOCUMENT_TASK_KEY = "hikari.rootDocumentTaskId";
+const DOCUMENT_TASK_ID_MAX = 64;
+const DOCUMENT_STATUSES = [
+  "queued",
+  "running",
+  "interrupted",
+  "verifying",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+type DocumentStatus = (typeof DOCUMENT_STATUSES)[number];
+const TERMINAL_DOCUMENT_STATUSES = new Set<DocumentStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 const PROTOCOL_VERSION = protocolSchema.version;
 
 function encodeClientMessage(
@@ -73,6 +98,32 @@ function parseServerMessage(raw: string): ServerMessage | null {
 function stringField(message: ServerMessage, field: string): string {
   const value = message[field];
   return typeof value === "string" ? value : "";
+}
+
+function boundedString(
+  message: ServerMessage,
+  field: string,
+  maxLength: number,
+  allowEmpty = false,
+): string | null {
+  const value = message[field];
+  return typeof value === "string" && value.length <= maxLength && (allowEmpty || value.length > 0)
+    ? value
+    : null;
+}
+
+function documentStatusField(message: ServerMessage): DocumentStatus | null {
+  const value = message.status;
+  return typeof value === "string" && DOCUMENT_STATUSES.includes(value as DocumentStatus)
+    ? (value as DocumentStatus)
+    : null;
+}
+
+function progressField(message: ServerMessage): number | null {
+  const value = message.progress;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100
+    ? value
+    : null;
 }
 
 type BrowserSpeechRecognition = {
@@ -134,9 +185,6 @@ export default function Home() {
   const [isPaired, setIsPaired] = useState(false);
   const [agents] = useState<AgentStatus[]>([
     { name: "voice", active: true, actions: 0 },
-    { name: "research", active: true, actions: 0 },
-    { name: "files", active: true, actions: 0 },
-    { name: "system", active: true, actions: 0 },
     { name: "code", active: true, actions: 0 },
     { name: "memory", active: true, actions: 0 },
   ]);
@@ -149,6 +197,22 @@ export default function Home() {
   const [voiceSessionActive, setVoiceSessionActive] = useState(false);
   const [voiceTurnActive, setVoiceTurnActive] = useState(false);
   const [recognitionCaptureActive, setRecognitionCaptureActive] = useState(false);
+  const [interfaceError, setInterfaceError] = useState("");
+  const [documentPath, setDocumentPath] = useState("");
+  const [documentProvider, setDocumentProvider] = useState("");
+  const [documentFallbackProvider, setDocumentFallbackProvider] = useState("");
+  const [documentTaskId, setDocumentTaskId] = useState("");
+  const [documentConfirmation, setDocumentConfirmation] = useState<DocumentConfirmation | null>(null);
+  const [documentPreparePending, setDocumentPreparePending] = useState(false);
+  const [documentAwaitingConfirmation, setDocumentAwaitingConfirmation] = useState(false);
+  const [documentStatus, setDocumentStatus] = useState("Ready");
+  const [documentStatusCode, setDocumentStatusCode] = useState<DocumentStatus | "">("");
+  const [documentProgress, setDocumentProgress] = useState(0);
+  const [documentCheckpoint, setDocumentCheckpoint] = useState("");
+  const [documentExplanation, setDocumentExplanation] = useState("");
+  const [documentExplanationProvider, setDocumentExplanationProvider] = useState("");
+  const [documentError, setDocumentError] = useState("");
+  const [documentFollowUp, setDocumentFollowUp] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const voiceTurnActiveRef = useRef(false);
@@ -158,6 +222,24 @@ export default function Home() {
   const voiceCaptureGenerationRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const documentTaskIdRef = useRef("");
+  const documentTaskIdsSeenRef = useRef(new Set<string>());
+  const documentPreparePendingRef = useRef(false);
+  const documentPrepareRequestRef = useRef<Omit<DocumentConfirmation, "taskId"> | null>(null);
+  const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
+  const documentErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+
+  const rememberDocumentTask = useCallback((taskId: string) => {
+    documentTaskIdRef.current = taskId;
+    setDocumentTaskId(taskId);
+    window.localStorage.setItem(ROOT_DOCUMENT_TASK_KEY, taskId);
+  }, []);
+
+  const forgetDocumentTask = useCallback(() => {
+    documentTaskIdRef.current = "";
+    setDocumentTaskId("");
+    window.localStorage.removeItem(ROOT_DOCUMENT_TASK_KEY);
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -172,6 +254,14 @@ export default function Home() {
     setCompanionType(prefs.companionType);
     setPresentation(prefs.presentation);
   }, []);
+
+  useEffect(() => {
+    if (documentAwaitingConfirmation) confirmationHeadingRef.current?.focus();
+  }, [documentAwaitingConfirmation]);
+
+  useEffect(() => {
+    if (documentError) documentErrorHeadingRef.current?.focus();
+  }, [documentError]);
 
   const resetVoiceCompanion = useCallback(() => {
     if (voiceErrorResetRef.current !== null) {
@@ -347,6 +437,17 @@ export default function Home() {
       if (!data) return;
       if (data.type === "paired") {
         setIsPaired(true);
+        setInterfaceError("");
+        const savedTaskId = window.localStorage.getItem(ROOT_DOCUMENT_TASK_KEY) ?? "";
+        if (savedTaskId.length > 0 && savedTaskId.length <= DOCUMENT_TASK_ID_MAX) {
+          documentTaskIdRef.current = savedTaskId;
+          documentTaskIdsSeenRef.current.add(savedTaskId);
+          setDocumentTaskId(savedTaskId);
+          ws.send(encodeClientMessage("task_status", { task_id: savedTaskId }));
+          setDocumentStatus("Reconnecting to document task");
+        } else if (savedTaskId) {
+          window.localStorage.removeItem(ROOT_DOCUMENT_TASK_KEY);
+        }
         if (VOICE_COMPANION_UI_ENABLED) {
           resetVoiceCompanion();
           const prefs = loadCompanionPrefs();
@@ -364,10 +465,93 @@ export default function Home() {
         } else {
           setOrbState("idle");
         }
+      } else if (data.type === "document_confirmation_required") {
+        if (!documentPreparePendingRef.current) return;
+        const taskId = boundedString(data, "task_id", DOCUMENT_TASK_ID_MAX);
+        const path = boundedString(data, "path", 4096);
+        const provider = boundedString(data, "provider", 64);
+        const fallbackProvider = boundedString(data, "fallback_provider", 64, true);
+        if (
+          !taskId || !path || !provider || fallbackProvider === null ||
+          documentTaskIdsSeenRef.current.has(taskId)
+        ) return;
+        const request = documentPrepareRequestRef.current;
+        if (
+          !request || request.path !== path || request.provider !== provider ||
+          request.fallbackProvider !== fallbackProvider
+        ) return;
+        documentPreparePendingRef.current = false;
+        documentPrepareRequestRef.current = null;
+        setDocumentPreparePending(false);
+        setDocumentConfirmation({ taskId, path, provider, fallbackProvider });
+        setDocumentAwaitingConfirmation(true);
+        documentTaskIdsSeenRef.current.add(taskId);
+        rememberDocumentTask(taskId);
+        setDocumentStatus("Waiting for your confirmation");
+        setDocumentStatusCode("queued");
+        setDocumentProgress(0);
+        setDocumentCheckpoint("confirmation_required");
+        setDocumentExplanation("");
+        setDocumentError("");
+        setActiveTab("files");
+      } else if (data.type === "task_update") {
+        const taskId = boundedString(data, "task_id", DOCUMENT_TASK_ID_MAX);
+        const rootTaskId = boundedString(data, "root_task_id", DOCUMENT_TASK_ID_MAX);
+        const status = documentStatusField(data);
+        const progress = progressField(data);
+        const checkpoint = boundedString(data, "checkpoint", 128, true);
+        if (
+          taskId && rootTaskId && status && progress !== null && checkpoint !== null &&
+          rootTaskId === documentTaskIdRef.current
+        ) {
+          setDocumentStatus(status.replaceAll("_", " "));
+          setDocumentStatusCode(status);
+          setDocumentProgress(progress);
+          setDocumentCheckpoint(checkpoint);
+          setDocumentAwaitingConfirmation(false);
+          setDocumentError("");
+        }
+      } else if (data.type === "document_explanation") {
+        const taskId = boundedString(data, "task_id", DOCUMENT_TASK_ID_MAX);
+        const rootTaskId = boundedString(data, "root_task_id", DOCUMENT_TASK_ID_MAX);
+        const text = boundedString(data, "text", 20000);
+        const provider = boundedString(data, "provider", 64);
+        if (
+          taskId && rootTaskId && text && provider &&
+          rootTaskId === documentTaskIdRef.current
+        ) {
+          setDocumentExplanation(text);
+          setDocumentExplanationProvider(provider);
+          setDocumentStatus("Explanation ready");
+          setDocumentStatusCode("completed");
+          setDocumentProgress(100);
+          setDocumentCheckpoint("completed");
+          setDocumentAwaitingConfirmation(false);
+          setDocumentError("");
+          setActiveTab("files");
+        }
+      } else if (data.type === "document_error") {
+        const taskId = boundedString(data, "task_id", DOCUMENT_TASK_ID_MAX);
+        const rootTaskId = boundedString(data, "root_task_id", DOCUMENT_TASK_ID_MAX);
+        const code = boundedString(data, "code", 128);
+        const message = boundedString(data, "message", 1000);
+        if (
+          taskId && rootTaskId && code && message &&
+          rootTaskId === documentTaskIdRef.current
+        ) {
+          setDocumentError(message);
+          setDocumentStatus("Document request failed");
+          setDocumentStatusCode("failed");
+          setDocumentAwaitingConfirmation(false);
+          setActiveTab("files");
+          if (code === "task_not_found" || code === "actor_not_authorized") {
+            forgetDocumentTask();
+          }
+        }
       } else if (data.type === "pair_error" || data.type === "pair_locked") {
-        alert(stringField(data, "message") || "Pairing failed");
+        setInterfaceError(stringField(data, "message") || "Pairing failed");
       } else if (data.type === "protocol_error") {
-        alert(stringField(data, "message") || "Unsupported server protocol");
+        setInterfaceError(stringField(data, "message") || "Unsupported server protocol");
       }
     };
 
@@ -377,7 +561,7 @@ export default function Home() {
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -409,7 +593,7 @@ export default function Home() {
         speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
       if (!SpeechRecognition) {
-        alert("Speech recognition not supported in this browser");
+        setInterfaceError("Speech recognition is not supported in this browser.");
         return;
       }
 
@@ -465,7 +649,7 @@ export default function Home() {
       speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      alert("Speech recognition not supported in this browser");
+      setInterfaceError("Speech recognition is not supported in this browser.");
       return;
     }
 
@@ -576,6 +760,105 @@ export default function Home() {
       isListening
     : !isConnected || isListening;
 
+  const sendDocumentMessage = (
+    type: "document_prepare" | "document_confirm" | "document_follow_up" | "document_cancel",
+    fields: Record<string, unknown>,
+  ): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setDocumentError("Connect to HIKARI before using the document reader.");
+      return false;
+    }
+    try {
+      ws.send(encodeClientMessage(type, fields));
+      setDocumentError("");
+      return true;
+    } catch {
+      setDocumentError("The document request could not be sent.");
+      return false;
+    }
+  };
+
+  const prepareDocument = () => {
+    const path = documentPath.trim();
+    const provider = documentProvider.trim();
+    const fallbackProvider = documentFallbackProvider.trim();
+    if (!path || !provider) return;
+    const fields: Record<string, unknown> = { path, provider };
+    if (fallbackProvider) fields.fallback_provider = fallbackProvider;
+    // Set the request guard before send: a fast local server can reply in the
+    // same turn, before React state updates are committed.
+    documentPreparePendingRef.current = true;
+    documentPrepareRequestRef.current = { path, provider, fallbackProvider };
+    setDocumentPreparePending(true);
+    setDocumentAwaitingConfirmation(false);
+    setDocumentConfirmation(null);
+    setDocumentStatus("Checking document access");
+    setDocumentStatusCode("");
+    setDocumentProgress(0);
+    setDocumentCheckpoint("preparing");
+    setDocumentExplanation("");
+    if (!sendDocumentMessage("document_prepare", fields)) {
+      documentPreparePendingRef.current = false;
+      documentPrepareRequestRef.current = null;
+      setDocumentPreparePending(false);
+    }
+  };
+
+  const confirmDocument = () => {
+    if (!documentAwaitingConfirmation || !documentConfirmation) return;
+    const fields: Record<string, unknown> = {
+      task_id: documentConfirmation.taskId,
+      provider: documentConfirmation.provider,
+    };
+    if (documentConfirmation.fallbackProvider) {
+      fields.fallback_provider = documentConfirmation.fallbackProvider;
+    }
+    if (sendDocumentMessage("document_confirm", fields)) {
+      setDocumentAwaitingConfirmation(false);
+      setDocumentStatus("Reading and explaining document");
+      setDocumentStatusCode("running");
+      setDocumentCheckpoint("confirmed");
+    }
+  };
+
+  const cancelDocument = () => {
+    if (!documentTaskId) return;
+    if (sendDocumentMessage("document_cancel", { task_id: documentTaskId })) {
+      documentPreparePendingRef.current = false;
+      documentPrepareRequestRef.current = null;
+      setDocumentPreparePending(false);
+      setDocumentAwaitingConfirmation(false);
+      setDocumentStatus("Cancelling document request");
+    }
+  };
+
+  const sendDocumentFollowUp = () => {
+    const text = documentFollowUp.trim();
+    const provider = documentConfirmation?.provider ?? documentProvider.trim();
+    const fallbackProvider = documentConfirmation?.fallbackProvider ?? documentFallbackProvider.trim();
+    if (!documentTaskId || !text || !provider) return;
+    const fields: Record<string, unknown> = {
+      task_id: documentTaskId,
+      text,
+      provider,
+    };
+    if (fallbackProvider) {
+      fields.fallback_provider = fallbackProvider;
+    }
+    if (sendDocumentMessage("document_follow_up", fields)) {
+      setDocumentFollowUp("");
+      setDocumentStatus("Answering follow-up");
+      setDocumentStatusCode("running");
+      setDocumentProgress(0);
+      setDocumentCheckpoint("follow_up");
+    }
+  };
+
+  const documentRequestLocked = documentPreparePending || documentAwaitingConfirmation;
+  const canCancelDocument = Boolean(documentTaskId) &&
+    (!documentStatusCode || !TERMINAL_DOCUMENT_STATUSES.has(documentStatusCode));
+
   if (!isPaired) {
     return (
       <main
@@ -636,6 +919,11 @@ export default function Home() {
               Connecting...
             </p>
           )}
+          {interfaceError && (
+            <p className="text-red-300 text-sm" role="alert">
+              {interfaceError}
+            </p>
+          )}
         </div>
       </main>
     );
@@ -687,6 +975,11 @@ export default function Home() {
 
       {/* Tab Content */}
       <main className="flex-1 overflow-hidden">
+        {interfaceError && (
+          <div className="mx-4 mt-3 rounded-lg border border-red-500/40 bg-red-950/40 p-3 text-sm text-red-200" role="alert">
+            {interfaceError}
+          </div>
+        )}
         {activeTab === "chat" && (
           <div className="flex flex-col h-full">
             {/* Messages */}
@@ -808,26 +1101,181 @@ export default function Home() {
         )}
 
         {activeTab === "files" && (
-          <div className="p-4 overflow-y-auto h-full">
-            <h2 className="text-xl font-bold mb-4">File Access</h2>
-            <p className="text-gray-400 text-sm">
-              Ask HIKARI to read, search, or list files using voice or text commands.
-            </p>
-            <div className="mt-4 space-y-2">
-              <p className="text-xs text-gray-500">Quick commands:</p>
-              {["List my Documents", "Search for project files", "Read my resume"].map((cmd) => (
-                <button
-                  key={cmd}
-                  onClick={() => {
-                    setInput(cmd);
-                    setActiveTab("chat");
-                  }}
-                  className="w-full text-left px-4 py-3 bg-[#1a1a2e] border border-gray-800 rounded-lg text-sm text-gray-300 hover:border-purple-500 transition"
-                >
-                  {cmd}
-                </button>
-              ))}
+          <div className="p-4 overflow-y-auto h-full space-y-5">
+            <div>
+              <h2 className="text-xl font-bold">Explain a document</h2>
+              <p className="mt-1 text-gray-400 text-sm">
+                Enter the path to a UTF-8 text file already stored on this HIKARI computer.
+                The file is not uploaded by this page.
+              </p>
             </div>
+
+            <div className="space-y-4 rounded-xl border border-gray-800 bg-[#1a1a2e] p-4">
+              <div>
+                <label htmlFor="document-path" className="block text-sm font-medium text-gray-200 mb-2">
+                  Path on the HIKARI computer
+                </label>
+                <input
+                  id="document-path"
+                  type="text"
+                  value={documentPath}
+                  onChange={(event) => setDocumentPath(event.target.value)}
+                  disabled={documentRequestLocked}
+                  placeholder="/path/to/notes.txt"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-gray-700 bg-[#0f0f1a] px-3 py-2 text-white placeholder-gray-600 focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="document-provider" className="block text-sm font-medium text-gray-200 mb-2">
+                  Primary provider
+                </label>
+                <input
+                  id="document-provider"
+                  type="text"
+                  value={documentProvider}
+                  onChange={(event) => setDocumentProvider(event.target.value)}
+                  disabled={documentRequestLocked}
+                  placeholder="Provider name"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-gray-700 bg-[#0f0f1a] px-3 py-2 text-white placeholder-gray-600 focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+              <div>
+                <label htmlFor="document-fallback-provider" className="block text-sm font-medium text-gray-200 mb-2">
+                  Fallback provider <span className="font-normal text-gray-500">(optional)</span>
+                </label>
+                <input
+                  id="document-fallback-provider"
+                  type="text"
+                  value={documentFallbackProvider}
+                  onChange={(event) => setDocumentFallbackProvider(event.target.value)}
+                  disabled={documentRequestLocked}
+                  placeholder="Fallback provider name"
+                  autoComplete="off"
+                  className="w-full rounded-lg border border-gray-700 bg-[#0f0f1a] px-3 py-2 text-white placeholder-gray-600 focus:border-purple-500 focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={prepareDocument}
+                disabled={documentRequestLocked || !isConnected || !documentPath.trim() || !documentProvider.trim()}
+                className="w-full rounded-lg bg-purple-600 px-4 py-2.5 font-semibold text-white hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Review document request
+              </button>
+            </div>
+
+            {documentAwaitingConfirmation && documentConfirmation && (
+              <section
+                className="rounded-xl border border-yellow-500/40 bg-yellow-950/20 p-4"
+                aria-labelledby="document-confirmation-heading"
+              >
+                <h3
+                  id="document-confirmation-heading"
+                  ref={confirmationHeadingRef}
+                  tabIndex={-1}
+                  className="text-lg font-semibold text-yellow-200"
+                >
+                  Confirm document access
+                </h3>
+                <p className="mt-2 text-sm text-gray-200">
+                  HIKARI will read <strong className="break-all">{documentConfirmation.path}</strong> and
+                  send its text to <strong>{documentConfirmation.provider}</strong>
+                  {documentConfirmation.fallbackProvider ? (
+                    <> with <strong>{documentConfirmation.fallbackProvider}</strong> as fallback.</>
+                  ) : (
+                    <> with no fallback provider.</>
+                  )}
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    onClick={confirmDocument}
+                    className="rounded-lg bg-green-600 px-4 py-2 font-semibold text-white hover:bg-green-500"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelDocument}
+                    className="rounded-lg border border-gray-600 px-4 py-2 font-semibold text-gray-100 hover:bg-gray-800"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </section>
+            )}
+
+            {documentError && (
+              <section className="rounded-xl border border-red-500/50 bg-red-950/30 p-4" role="alert">
+                <h3 ref={documentErrorHeadingRef} tabIndex={-1} className="font-semibold text-red-200">
+                  Document request error
+                </h3>
+                <p className="mt-1 text-sm text-red-100">{documentError}</p>
+              </section>
+            )}
+
+            {documentTaskId && (
+              <section className="rounded-xl border border-gray-800 bg-[#1a1a2e] p-4" aria-labelledby="document-progress-heading">
+                <h3 id="document-progress-heading" className="font-semibold">Document progress</h3>
+                <label htmlFor="document-progress" className="mt-3 block text-sm text-gray-300">
+                  {documentStatus}
+                </label>
+                <progress
+                  id="document-progress"
+                  value={documentProgress}
+                  max={100}
+                  className="mt-2 h-3 w-full"
+                >
+                  {documentProgress}%
+                </progress>
+                <p className="mt-2 text-sm text-gray-400" role="status" aria-live="polite" aria-atomic="true">
+                  {documentStatus}. {documentProgress}% complete
+                  {documentCheckpoint ? `; checkpoint: ${documentCheckpoint}` : ""}.
+                </p>
+                {canCancelDocument && (
+                  <button
+                    type="button"
+                    onClick={cancelDocument}
+                    className="mt-3 rounded-lg border border-gray-600 px-4 py-2 font-semibold text-gray-100 hover:bg-gray-800"
+                  >
+                    Cancel document task
+                  </button>
+                )}
+              </section>
+            )}
+
+            {documentExplanation && documentTaskId && (
+              <section className="rounded-xl border border-green-500/30 bg-green-950/20 p-4" aria-labelledby="document-explanation-heading">
+                <h3 id="document-explanation-heading" className="font-semibold text-green-200">
+                  Explanation from {documentExplanationProvider}
+                </h3>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-gray-100">
+                  {documentExplanation}
+                </p>
+                <div className="mt-5">
+                  <label htmlFor="document-follow-up" className="block text-sm font-medium text-gray-200 mb-2">
+                    Follow-up question about this document
+                  </label>
+                  <textarea
+                    id="document-follow-up"
+                    value={documentFollowUp}
+                    onChange={(event) => setDocumentFollowUp(event.target.value)}
+                    rows={3}
+                    className="w-full rounded-lg border border-gray-700 bg-[#0f0f1a] px-3 py-2 text-white focus:border-purple-500 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={sendDocumentFollowUp}
+                    disabled={!documentFollowUp.trim() || !(documentConfirmation?.provider ?? documentProvider.trim())}
+                    className="mt-3 rounded-lg bg-purple-600 px-4 py-2 font-semibold text-white hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Ask follow-up
+                  </button>
+                </div>
+              </section>
+            )}
           </div>
         )}
 

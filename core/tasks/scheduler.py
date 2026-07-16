@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -21,12 +20,8 @@ class SchedulerResult:
 
 
 def task_scheduler_enabled() -> bool:
-    return os.getenv(ENV_ENABLE_TASK_SCHEDULER, "").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    """Legacy Reminders execution is quarantined until its policy adapter lands."""
+    return False
 
 
 def _escape_applescript_string(value: str) -> str:

@@ -1,13 +1,13 @@
 # HIKARI Threat Model
 
-Status: WP-007 public threat model and central policy skeleton
+Status: Phase 1 policy, grant, audit, and document boundary
 
 ## Scope
 
 This model covers HIKARI-owned code, private runtime state, local model caches,
 microphone and speaker identity data, provider requests, browser and macOS control,
-task scheduling, memory writes, and connected clients. It does not claim that all
-existing action callers already use the central policy skeleton.
+task scheduling, memory writes, and connected clients. Phase 1 activates only the
+governed document workflow; legacy action callers that have not migrated are disabled.
 
 ## Assets
 
@@ -49,26 +49,32 @@ existing action callers already use the central policy skeleton.
 4. A side effect requires explicit user intent plus a verified, action-bound grant.
 5. Destructive and privileged actions remain denied until an action-specific policy, recovery path, and tests exist.
 6. Denial and confirmation requirements occur before importing or invoking an action implementation.
-7. Specific existing safeguards—Brain repair tokens, scheduler confirmation, pairing authorization, and the osascript kill switch—remain in force during migration.
+7. Specific existing safeguards—Brain repair tokens, pairing authorization, and the osascript kill switch—remain in force during migration.
 8. Private runtime state, credentials, biometrics, and backups never enter the public repository.
 
-## Central skeleton
+## Active Phase 1 boundary
 
-`core/action_policy.py` defines the initial actor, data-scope, risk, and decision
-types. `evaluate_action()` is pure and deterministic. It allows bounded reads,
-requires confirmation for owner-initiated reversible/network/OS side effects, and
-denies guest side effects plus destructive, privileged, unknown, and autonomous
-requests.
+`core/action_policy.py` and `core/policy_service.py` define server-owned action
+descriptions and deterministic decisions. Callers cannot choose an action's risk or
+scope. Unknown actions, guests, and autonomous actors are denied. `core/grants.py`
+binds a one-use approval to an actor, session, action, resource, task, destination,
+and expiry. `core/action_audit.py` records content-free decisions using a resource
+digest rather than a private path.
 
-`confirmation_granted=True` represents a future verified grant, not a raw user
-string or model assertion. Callers must not set it until action id, target, actor,
-scope, expiry, and replay behavior are bound by the later grant contract.
+The selected-document reader accepts one regular, non-symlinked UTF-8 `.txt` file no
+larger than 100 KB. Selection does not read content. Reading and each provider egress
+require separate one-use grants, and the egress grant is issued immediately before
+the transport call. Cancellation and task state are rechecked before egress. Document
+content, paths, explanations, credentials, and grant tokens are not written to audit
+records. Brain v2 remains owner-gated and the document flow performs no Brain writes.
 
 ## Current gaps and migration order
 
-The repository still contains direct AppleScript, `open`, clipboard, screenshot,
-power, application, browser, file, smart-home, and scheduler callers. WP-007 does
-not reroute them silently.
+The repository still contains legacy AppleScript, `open`, clipboard, screenshot,
+power, application, browser, file, smart-home, and scheduler implementations. Phase 1
+does not expose them through the active orchestrator: file, system, browser, research,
+desktop/build action executors, and proactive scheduling are quarantined until their
+callers complete policy migration.
 
 Caller migration order:
 
@@ -78,5 +84,5 @@ Caller migration order:
 4. add denial, confirmation, guest, timeout, and rollback tests
 5. remove the older local gate only after behavior parity and integration verification
 
-Until a caller completes those steps, its existing guard is authoritative and its
-central-policy coverage remains an explicit release gap.
+Until a caller completes those steps, it must remain unreachable from active request
+routing. Re-enabling a legacy environment flag is not an accepted bypass.
