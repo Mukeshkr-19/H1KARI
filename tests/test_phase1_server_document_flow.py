@@ -139,6 +139,18 @@ def test_local_prepare_discloses_only_confirmation_path_and_task():
     assert call.kwargs["actor"].session_id == call.kwargs["context"].session_id
 
 
+def test_local_prepare_uses_empty_string_for_missing_fallback():
+    runtime = _runtime()
+    server = WebSocketServer(MagicMock(), phase1_runtime=runtime)
+    socket = Socket("127.0.0.1")
+
+    _send(server, socket, {
+        "type": "document_prepare", "path": "/private/report.txt", "provider": "ollama"
+    })
+
+    assert socket.sent[0]["fallback_provider"] == ""
+
+
 def test_confirmation_returns_explanation_without_internal_grant_ids():
     runtime = _runtime()
     server = WebSocketServer(MagicMock(), phase1_runtime=runtime)

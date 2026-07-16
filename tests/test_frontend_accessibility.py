@@ -136,6 +136,14 @@ def test_document_confirmation_freezes_server_returned_request():
     assert "provider: documentConfirmation.provider" in text
 
 
+def test_document_prepare_arms_reply_guard_before_websocket_send():
+    text = PAGE.read_text(encoding="utf-8")
+
+    arm = text.index("documentPreparePendingRef.current = true;")
+    send = text.index('sendDocumentMessage("document_prepare", fields)')
+    assert arm < send
+
+
 def test_document_cancel_remains_available_for_nonterminal_tasks():
     text = PAGE.read_text(encoding="utf-8")
 

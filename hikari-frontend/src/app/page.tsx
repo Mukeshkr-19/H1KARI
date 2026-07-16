@@ -786,17 +786,22 @@ export default function Home() {
     if (!path || !provider) return;
     const fields: Record<string, unknown> = { path, provider };
     if (fallbackProvider) fields.fallback_provider = fallbackProvider;
-    if (sendDocumentMessage("document_prepare", fields)) {
-      documentPreparePendingRef.current = true;
-      documentPrepareRequestRef.current = { path, provider, fallbackProvider };
-      setDocumentPreparePending(true);
-      setDocumentAwaitingConfirmation(false);
-      setDocumentConfirmation(null);
-      setDocumentStatus("Checking document access");
-      setDocumentStatusCode("");
-      setDocumentProgress(0);
-      setDocumentCheckpoint("preparing");
-      setDocumentExplanation("");
+    // Set the request guard before send: a fast local server can reply in the
+    // same turn, before React state updates are committed.
+    documentPreparePendingRef.current = true;
+    documentPrepareRequestRef.current = { path, provider, fallbackProvider };
+    setDocumentPreparePending(true);
+    setDocumentAwaitingConfirmation(false);
+    setDocumentConfirmation(null);
+    setDocumentStatus("Checking document access");
+    setDocumentStatusCode("");
+    setDocumentProgress(0);
+    setDocumentCheckpoint("preparing");
+    setDocumentExplanation("");
+    if (!sendDocumentMessage("document_prepare", fields)) {
+      documentPreparePendingRef.current = false;
+      documentPrepareRequestRef.current = null;
+      setDocumentPreparePending(false);
     }
   };
 

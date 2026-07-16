@@ -585,7 +585,7 @@ class WebSocketServer:
                                     "task_id": result.task_id,
                                     "path": data["path"],
                                     "provider": data["provider"],
-                                    "fallback_provider": data.get("fallback_provider"),
+                                    "fallback_provider": providers[1] if len(providers) > 1 else "",
                                 }
                             )
                         )
