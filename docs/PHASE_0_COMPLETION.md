@@ -88,4 +88,5 @@ worktree limit is exceeded, or private/helper state appears in tracked content.
 - Every shipped dependency, runtime-downloaded model, external service, and asset
   has a known provenance source and a fail-closed distribution disposition.
 - The final H1KARI license remains unselected pending explicit owner approval.
-- `main` remains unchanged and Phase 1 has not started.
+- At Phase 0 closure, `main` remained unchanged and Phase 1 had not started;
+  Phase 1 was merged later and is tracked as a separate release boundary.

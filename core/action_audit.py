@@ -19,6 +19,16 @@ _ACTOR_IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,127}$")
 _RESOURCE_REFERENCE = re.compile(r"^sha256\.[0-9a-f]{64}$")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Preserve sqlite transaction contexts while closing deterministically."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class AuditResultStatus(StrEnum):
     SUCCESS = "success"
     FAILED = "failed"
@@ -64,7 +74,7 @@ class ActionAuditStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = sqlite3.connect(self.db_path, timeout=10, factory=_ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 

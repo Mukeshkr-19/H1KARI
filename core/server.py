@@ -23,8 +23,9 @@ from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
 from core.voice_companion.status import is_voice_companion_enabled
 
 try:
-    import websockets
-    from websockets.server import serve
+    from websockets.asyncio.server import serve
+    from websockets.datastructures import Headers
+    from websockets.http11 import Response
 
     WEBSOCKETS_AVAILABLE = True
 except ImportError:
@@ -91,35 +92,52 @@ class WebSocketServer:
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
-        async def handler(websocket, path=None):
-            await self._handle_connection(websocket)
-
-        async def process_request(path, request_headers):
-            """Handle HTTP requests for web interface and QR code"""
-            if path == "/qr":
-                return self._serve_qr_code()
-            if path == "/connect":
-                return self._serve_connect_page()
-            if path == "/api/status":
-                return self._serve_api_status()
-            return None  # Let WebSocket handle it
-
-        start_server = serve(
-            handler,
-            self.host,
-            self.port,
-            process_request=process_request,
-        )
-
         print(f"[WS] Server starting on {self.host}:{self.port}")
         print(f"[WS] Pairing code: {self.pairing_code}")
         print(f"[WS] Connect from phone: http://<your-ip>:{self.port}/connect")
 
-        self._loop.run_until_complete(start_server)
+        self._loop.run_until_complete(self._start_server())
         try:
             self._loop.run_forever()
         except KeyboardInterrupt:
             self.stop()
+        finally:
+            if self._server is not None:
+                self._server.close()
+                self._loop.run_until_complete(self._server.wait_closed())
+
+    async def _start_server(self):
+        """Create the asyncio WebSocket server on the active event loop."""
+        self._server = await serve(
+            self._handle_connection,
+            self.host,
+            self.port,
+            process_request=self._process_request,
+        )
+        return self._server
+
+    async def _process_request(self, _connection, request):
+        """Translate HIKARI's HTTP helpers to the asyncio server response."""
+        route = {
+            "/qr": self._serve_qr_code,
+            "/connect": self._serve_connect_page,
+            "/api/status": self._serve_api_status,
+        }.get(request.path)
+        if route is None:
+            return None
+
+        route_response = route()
+        if route_response is None:
+            return None
+
+        status, headers, body = route_response
+        status_code = int(status)
+        return Response(
+            status_code,
+            HTTPStatus(status_code).phrase,
+            Headers(headers),
+            body,
+        )
 
     async def _handle_connection(self, websocket):
         """Handle a new WebSocket connection"""

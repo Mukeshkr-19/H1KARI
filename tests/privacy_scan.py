@@ -236,12 +236,40 @@ def collect_public_source_files() -> List[Path]:
     return paths
 
 
-def _redact_snippet(line: str, match: re.Match[str], *, max_len: int = 120) -> str:
-    redacted = line[: match.start()] + "[REDACTED]" + line[match.end() :]
+def _redact_snippet(
+    line: str, rules: Sequence[PrivacyRule], *, max_len: int = 120
+) -> str:
+    redacted = line
+    for rule in rules:
+        redacted = rule.pattern.sub("[REDACTED]", redacted)
     redacted = redacted.strip()
     if len(redacted) > max_len:
         return redacted[: max_len - 3] + "..."
     return redacted
+
+
+def _is_safe_documentation_match(rule: PrivacyRule, line: str, path: Path) -> bool:
+    """Allow narrowly defined documentation-only dotenv references."""
+    if rule.rule_id != "env_dotenv":
+        return False
+
+    dotenv = _join(".", "env")
+    command = _join("cp ", dotenv, ".example ", dotenv)
+    if path.suffix.lower() not in {".md", ".markdown"}:
+        return False
+
+    normalized = line.strip().removeprefix("$ ").strip("`").strip()
+    if normalized == command:
+        return True
+
+    lowered = line.lower().replace("`", "")
+    if re.search(r"\b(?:upload|send|publish|commit)\b", lowered):
+        return False
+    if re.search(rf"\bignored local {re.escape(dotenv)} file\b", lowered):
+        return True
+    ignored_by_git = f"{dotenv} is ignored by git" in lowered
+    stays_private = "remain local" in lowered or "uncommitted" in lowered
+    return ignored_by_git and stays_private
 
 
 def scan_file(path: Path, rules: Sequence[PrivacyRule] | None = None) -> List[Tuple[int, str, str, str]]:
@@ -258,12 +286,14 @@ def scan_file(path: Path, rules: Sequence[PrivacyRule] | None = None) -> List[Tu
             match = rule.pattern.search(line)
             if match is None:
                 continue
+            if _is_safe_documentation_match(rule, line, path):
+                continue
             hits.append(
                 (
                     line_no,
                     rule.rule_id,
                     rule.category,
-                    _redact_snippet(line, match),
+                    _redact_snippet(line, active_rules),
                 )
             )
             break
@@ -345,3 +375,17 @@ def _has_disallowed_string_tuple_fragments(source: str) -> bool:
         if len(string_parts) == 1 and len(string_parts[0]) <= 3:
             return True
     return False
+
+
+def main() -> int:
+    violations = find_violations()
+    if violations:
+        for violation in violations:
+            print(violation)
+        return 1
+    print("Privacy scan passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

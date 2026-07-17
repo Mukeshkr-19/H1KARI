@@ -8,33 +8,45 @@ This guide matches the current repo layout as of May 19, 2026.
 cd path/to/H1KARI
 ```
 
-## 2. Use Python 3.12
+## 2. Install PortAudio And Use Python 3.12
 
-The project should use Python 3.12. Avoid creating the venv with Python 3.14.
+The macOS arm64 lock is verified only with Python 3.12. PyAudio requires the
+native PortAudio library, so install both prerequisites with Homebrew. Discover
+the interpreter through `PATH` instead of assuming a fixed installation path.
 
 ```bash
-/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .venv
+brew install python@3.12 portaudio
+PYTHON312="$(command -v python3.12)"
+if [ -z "$PYTHON312" ]; then echo "Python 3.12 was not found on PATH." >&2; exit 1; fi
+"$PYTHON312" --version
+"$PYTHON312" -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
 .venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
 bash scripts/install-hikari-cli.sh
 ```
 
-The lock is verified for macOS arm64 with Python 3.12. Other platforms use `requirements.txt` plus `requirements-dev.txt` until their own clean-environment lock is published.
+Confirm that the discovered interpreter reports Python 3.12 before creating the
+environment. The repository `install.sh` script similarly discovers `python3`
+from `PATH` and uses the verified lock only for Python 3.12 on macOS arm64.
+Other platforms must install PortAudio through their package manager, then use
+`requirements.txt` plus `requirements-dev.txt` until their own clean-environment
+lock is published.
 
 ## 3. Configure API Keys
 
 ```bash
-cp .env.example your-local-env-file
+cp .env.example .env
 ```
 
-Edit your local environment file and add at least one key:
+Edit the ignored local `.env` file and add at least one key. Runtime
+`load_dotenv()` calls load this filename automatically:
 
 ```text
 GOOGLE_AI_STUDIO_KEY=your-key-here
 GROQ_API_KEY=your-key-here
 ```
 
-Keep real keys local. Never commit environment files with secrets.
+This file is ignored by Git. Keep it local and never commit credentials.
 
 ## 4. Run HIKARI
 

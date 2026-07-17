@@ -20,7 +20,8 @@ This is the Phase 0 inventory for shipped components, dependencies, models, asse
 |---|---|---|---|
 | CLI and orchestration | `hikari.py`, `core/orchestrator.py`, `core/router.py` | local Python plus optional hosted/local model calls | project code; initial clean-room release commit `a3837d5` |
 | Brain v2 and neural memory | `core/brain_v2/`, `core/neural_memory/` | local SQLite and private runtime storage | project code; private databases are not shipped |
-| Agents and actions | `agents/`, action modules under `core/` | network and macOS side effects | project code; Phase 0 policy interface is `core/action_policy.py` |
+| Agents and project-authored actions | `agents/`, action modules under `core/` except the adapted paths listed below | network and macOS side effects | project code; Phase 0 policy interface is `core/action_policy.py` |
+| JARVIS-adapted planning and actions | `core/task_planner.py`, `core/action_system.py`, `core/desktop_awareness.py`, `core/mac_integration.py` | planning, desktop observation, and macOS side effects | portions adapted from `ethanplusai/jarvis` at reviewed revision `df3044fcf238c8e270c2ecd32302cea159435c48`; subject to the upstream personal, educational, and non-commercial license reproduced in `THIRD_PARTY_NOTICES.md`; commercial release is blocked without separate permission or clean-room replacement |
 | Voice and speaker identity | `core/voice.py`, `core/speaker_auth.py`, voice services | microphone, local model downloads, macOS speech | project code with third-party model obligations listed below |
 | Pairing server | `core/server.py` | local HTTP and WebSocket listener | project code; QR generation is third-party |
 | Background services | `services/`, login-agent scripts | microphone, launchd, macOS commands | project code; supported daemon and tray imports are declared |
@@ -152,9 +153,12 @@ The standard library and native macOS commands avoid additional package provenan
 6. ~~Generate the frontend third-party input, publish source-distribution notices, and block prebuilt artifacts pending exact binary notice review.~~
 7. ~~Record hosted provider model ids, terms, egress, retention, and disable/rollback behavior; remove the conflicting unused provider config.~~
 8. ~~Keep the project license undecided pending owner approval and state that boundary in public governance documents.~~
+9. ~~Record the JARVIS-adapted planner, action, desktop-awareness, and macOS-integration portions and reproduce their upstream notice.~~ Commercial release of those portions remains blocked without separate permission or clean-room replacement.
 
 WP-001 remediation is complete for the Phase 0 source release. Every shipped
 dependency and asset has a provenance record or exact manifest source, supported
 runtime downloads are pinned and disclosed, and unknown distribution rights fail
-closed. This record does not select a H1KARI project license or authorize a future
-binary artifact without its artifact-specific notice review.
+closed. The adapted JARVIS portions remain limited by their upstream license;
+their notice is recorded, but commercial distribution is not cleared. This record
+does not select a H1KARI project license or authorize a future binary artifact
+without its artifact-specific notice review.

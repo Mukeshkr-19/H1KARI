@@ -16,6 +16,16 @@ from core.action_policy import Actor, ActorContext, validate_actor_context
 _IDENTIFIER = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Preserve sqlite transaction contexts while closing deterministically."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def canonicalize_resource(resource: Optional[str]) -> Optional[str]:
     if resource is None:
         return None
@@ -56,7 +66,7 @@ class GrantStore:
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path, timeout=10)
+        conn = sqlite3.connect(self.db_path, timeout=10, factory=_ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 

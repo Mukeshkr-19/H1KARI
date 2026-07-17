@@ -19,7 +19,6 @@ H1KARI is a local-first personal AI assistant for macOS. The assistant and CLI s
 H1KARI/
 ├── agents/             # Agent implementations
 ├── bin/                # Launchers, including bin/Hikari
-├── config/             # Provider configuration
 ├── core/               # Orchestrator, server, memory, voice, integrations
 ├── docs/               # Public project docs
 ├── hikari-frontend/    # Optional Next.js frontend
@@ -65,20 +64,35 @@ sessions isolated from household-owner memories.
 
 ## Setup
 
-Use Python 3.12. Python 3.14 has caused native dependency install failures for this project.
+Use Python 3.12. The macOS arm64 lock is verified only with Python 3.12. PyAudio
+also requires the native PortAudio library; install it with Homebrew before the
+Python dependencies.
 
 ```bash
 cd path/to/H1KARI
-/Library/Frameworks/Python.framework/Versions/3.12/bin/python3.12 -m venv .venv
+brew install python@3.12 portaudio
+PYTHON312="$(command -v python3.12)"
+if [ -z "$PYTHON312" ]; then echo "Python 3.12 was not found on PATH." >&2; exit 1; fi
+"$PYTHON312" --version
+"$PYTHON312" -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
 .venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
-cp .env.example local-environment-file
+cp .env.example .env
 bash scripts/install-hikari-cli.sh
 ```
 
-That exact lock is verified for macOS arm64 with Python 3.12. On another platform, install `requirements.txt` and `requirements-dev.txt`; that portable path resolves direct constraints but is not yet a verified lock.
+Confirm that the discovered interpreter reports Python 3.12 before creating the
+environment. This avoids relying on a Python installation at any fixed path.
+The exact lock above is verified for macOS arm64 with Python 3.12. On another
+platform, install PortAudio through the platform package manager, then install
+`requirements.txt` and `requirements-dev.txt`; that portable path resolves
+direct constraints but is not yet a verified lock. The repository `install.sh`
+script similarly discovers `python3` from `PATH` and selects the verified lock
+only when the created environment is Python 3.12 on macOS arm64.
 
-Edit your local environment file (from `.env.example`) and add at least one provider key, for example `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`.
+Edit the ignored local `.env` file and add at least one provider key, for example
+`GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`. The file is ignored by Git and is
+loaded automatically at runtime. Keep it local and never commit credentials.
 
 ## Run
 

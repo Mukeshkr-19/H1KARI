@@ -19,7 +19,6 @@ H1KARI is a local-first personal AI assistant for macOS with:
 H1KARI/
 ├── agents/                  # Voice, research, files, system, code, memory agents
 ├── bin/                     # Launchers
-├── config/                  # Provider config
 ├── core/
 │   ├── orchestrator.py      # Central coordinator
 │   ├── router.py            # Multi-provider AI routing

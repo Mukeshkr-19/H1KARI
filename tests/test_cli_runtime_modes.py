@@ -25,7 +25,7 @@ RUNTIME_MODES = (
 )
 
 
-@pytest.mark.parametrize("first,second", itertools.combinations(RUNTIME_MODES, 2))
+@pytest.mark.parametrize("first,second", tuple(itertools.combinations(RUNTIME_MODES, 2)))
 def test_conflicting_runtime_modes_fail_before_mac_ui_import(
     tmp_path: Path,
     first: str,

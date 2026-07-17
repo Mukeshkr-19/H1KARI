@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -100,3 +103,128 @@ def test_find_violations_never_echoes_api_secret(tmp_path):
     violations = find_violations([sample])
     assert violations
     assert secret not in violations[0]
+
+
+def test_violation_snippet_redacts_every_sensitive_match(tmp_path):
+    private_path = "/" + "Users" + "/private-account/"
+    secret = "sk-" + ("a" * 24)
+    sample = tmp_path / "multiple.txt"
+    sample.write_text(f"{private_path} token={secret}\n", encoding="utf-8")
+
+    violations = find_violations([sample])
+
+    assert violations
+    assert private_path not in violations[0]
+    assert secret not in violations[0]
+    assert violations[0].count("[REDACTED]") == 2
+
+
+def _privacy_scan_sandbox(tmp_path: Path) -> Path:
+    repo = tmp_path / "public-repo"
+    tests_dir = repo / "tests"
+    tests_dir.mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "tests/privacy_scan.py", tests_dir / "privacy_scan.py")
+    return repo
+
+
+def test_privacy_scan_cli_succeeds_for_safe_public_source(tmp_path):
+    repo = _privacy_scan_sandbox(tmp_path)
+    dotenv = "." + "env"
+    safe_doc = "\n".join(
+        [
+            f"cp {dotenv}.example {dotenv}",
+            f"The ignored local `{dotenv}` file is not committed.",
+        ]
+    )
+    (repo / "README.md").write_text(safe_doc, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(repo / "tests/privacy_scan.py")],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "Privacy scan passed."
+    assert result.stderr == ""
+
+
+def test_privacy_scan_cli_fails_with_redacted_violation(tmp_path):
+    repo = _privacy_scan_sandbox(tmp_path)
+    private_path = "/" + "Users" + "/private-account/brain.txt"
+    (repo / "README.md").write_text(private_path, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(repo / "tests/privacy_scan.py")],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    assert "README.md:1: path_macos_users (private_path)" in result.stdout
+    assert "[REDACTED]" in result.stdout
+    assert private_path not in result.stdout
+    assert result.stderr == ""
+
+
+def test_privacy_scan_still_flags_unapproved_dotenv_reference(tmp_path):
+    rule = next(r for r in privacy_rules() if r.rule_id == "env_dotenv")
+    dotenv = "." + "env"
+    sample = tmp_path / "setup.md"
+    sample.write_text(f"Upload {dotenv} to the server.\n", encoding="utf-8")
+
+    hits = scan_file(sample, rules=[rule])
+
+    assert len(hits) == 1
+    assert hits[0][1] == "env_dotenv"
+    assert dotenv not in hits[0][3]
+
+
+def test_privacy_scan_rejects_dangerous_dotenv_instruction_with_safe_words(tmp_path):
+    rule = next(r for r in privacy_rules() if r.rule_id == "env_dotenv")
+    dotenv = "." + "env"
+    sample = tmp_path / "setup.md"
+    sample.write_text(
+        f"Upload the ignored local {dotenv} file to the server.\n",
+        encoding="utf-8",
+    )
+
+    hits = scan_file(sample, rules=[rule])
+
+    assert len(hits) == 1
+    assert hits[0][1] == "env_dotenv"
+    assert dotenv not in hits[0][3]
+
+
+def test_privacy_scan_allows_safe_dotenv_prose_only_in_markdown(tmp_path):
+    rule = next(r for r in privacy_rules() if r.rule_id == "env_dotenv")
+    dotenv = "." + "env"
+    sample = tmp_path / "setup.py"
+    sample.write_text(
+        f"# The ignored local {dotenv} file is not committed.\n",
+        encoding="utf-8",
+    )
+
+    hits = scan_file(sample, rules=[rule])
+
+    assert len(hits) == 1
+    assert hits[0][1] == "env_dotenv"
+
+
+def test_privacy_scan_allows_copy_command_only_in_markdown(tmp_path):
+    rule = next(r for r in privacy_rules() if r.rule_id == "env_dotenv")
+    dotenv = "." + "env"
+    command = f"cp {dotenv}.example {dotenv}\n"
+    markdown = tmp_path / "setup.md"
+    source = tmp_path / "setup.sh"
+    markdown.write_text(command, encoding="utf-8")
+    source.write_text(command, encoding="utf-8")
+
+    assert scan_file(markdown, rules=[rule]) == []
+    source_hits = scan_file(source, rules=[rule])
+    assert len(source_hits) == 1
+    assert source_hits[0][1] == "env_dotenv"

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 # Set isolation env before any core.neural_memory import side effects.
 _LEGACY_DATA_DIR = Path(tempfile.mkdtemp(prefix="hikari-test-legacy-data-"))
+atexit.register(shutil.rmtree, _LEGACY_DATA_DIR, ignore_errors=True)
 os.environ["HIKARI_LEGACY_DATA_DIR"] = str(_LEGACY_DATA_DIR)
 
 _BRAIN_V2_TEST_ROOT = Path(tempfile.mkdtemp(prefix="hikari-test-brain-v2-"))
+atexit.register(shutil.rmtree, _BRAIN_V2_TEST_ROOT, ignore_errors=True)
 from core.path_literals import EPISODES_DB, HIKARI_MEMORY_DB
 
 _BRAIN_V2_TEST_DB = _BRAIN_V2_TEST_ROOT / "brain_v2" / EPISODES_DB

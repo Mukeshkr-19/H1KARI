@@ -226,6 +226,7 @@ export default function Home() {
   const documentTaskIdsSeenRef = useRef(new Set<string>());
   const documentPreparePendingRef = useRef(false);
   const documentPrepareRequestRef = useRef<Omit<DocumentConfirmation, "taskId"> | null>(null);
+  const dashboardHeadingRef = useRef<HTMLHeadingElement>(null);
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
   const documentErrorHeadingRef = useRef<HTMLHeadingElement>(null);
 
@@ -262,6 +263,10 @@ export default function Home() {
   useEffect(() => {
     if (documentError) documentErrorHeadingRef.current?.focus();
   }, [documentError]);
+
+  useEffect(() => {
+    if (isPaired) dashboardHeadingRef.current?.focus();
+  }, [isPaired]);
 
   const resetVoiceCompanion = useCallback(() => {
     if (voiceErrorResetRef.current !== null) {
@@ -552,6 +557,24 @@ export default function Home() {
         setInterfaceError(stringField(data, "message") || "Pairing failed");
       } else if (data.type === "protocol_error") {
         setInterfaceError(stringField(data, "message") || "Unsupported server protocol");
+      } else if (data.type === "error") {
+        setInterfaceError(boundedString(data, "message", 1000) ?? "Server request failed");
+        setIsTyping(false);
+        setOrbState("idle");
+        if (
+          voiceSessionActiveRef.current ||
+          voiceTurnActiveRef.current ||
+          recognitionRef.current
+        ) {
+          cancelVoiceCapture();
+        }
+        if (documentPreparePendingRef.current) {
+          documentPreparePendingRef.current = false;
+          documentPrepareRequestRef.current = null;
+          setDocumentPreparePending(false);
+          setDocumentStatus("Document request failed");
+          setDocumentCheckpoint("");
+        }
       }
     };
 
@@ -940,7 +963,11 @@ export default function Home() {
             aria-hidden="true"
           />
           <div>
-            <h1 className="text-lg font-bold bg-gradient-to-r from-purple-400 to-blue-500 bg-clip-text text-transparent">
+            <h1
+              ref={dashboardHeadingRef}
+              tabIndex={-1}
+              className="text-lg font-bold bg-gradient-to-r from-purple-400 to-blue-500 bg-clip-text text-transparent"
+            >
               HIKARI
             </h1>
             <div className="flex items-center gap-1.5" role="status" aria-live="polite">

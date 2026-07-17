@@ -102,6 +102,16 @@ CREATE INDEX IF NOT EXISTS idx_slm_episode ON source_linked_memories(episode_id)
 """
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Preserve sqlite transaction contexts while closing deterministically."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class EpisodeStore:
     """Persists raw episodes, transcript segments, structured summaries, and candidates."""
 
@@ -129,9 +139,13 @@ class EpisodeStore:
     def _connect(self) -> sqlite3.Connection:
         if self.readonly:
             uri = f"file:{self.db_path.resolve()}?mode=ro"
-            conn = sqlite3.connect(uri, uri=True, timeout=10.0)
+            conn = sqlite3.connect(
+                uri, uri=True, timeout=10.0, factory=_ClosingConnection
+            )
         else:
-            conn = sqlite3.connect(self.db_path, timeout=10.0)
+            conn = sqlite3.connect(
+                self.db_path, timeout=10.0, factory=_ClosingConnection
+            )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         return conn

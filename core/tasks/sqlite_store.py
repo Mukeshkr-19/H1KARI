@@ -86,6 +86,16 @@ CREATE INDEX IF NOT EXISTS idx_task_intents_parent_created
 """
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Preserve sqlite transaction contexts while closing deterministically."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class SqliteTaskStore(TaskStore):
     """Persistent task intents scoped by speaker/session."""
 
@@ -100,7 +110,7 @@ class SqliteTaskStore(TaskStore):
         os.chmod(self.db_path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), factory=_ClosingConnection)
         conn.row_factory = sqlite3.Row
         return conn
 
