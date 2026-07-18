@@ -15,7 +15,7 @@ When disabled, voice text still reaches the orchestrator via `type: "voice"` or 
 
 ## What it does
 
-- Shows a small on-screen companion during **active voice interaction** (listening, thinking, speaking, or error).
+- Shows a small on-screen companion during **active voice interaction** (listening, thinking, speaking, or error). The current **speaking** state presents the assistant caption in the overlay only; it does not yet guarantee audible TTS output.
 - Reflects session state: hidden, idle, listening, thinking, speaking, or error (idle/hidden = overlay off).
 - Displays **live, ephemeral captions** near the companion (role, text, final/interim flag, timestamp). Captions are **not persisted** by the companion layer.
 - Streams state over the existing WebSocket server as `companion_update` events. Caption text in those events is capped at **500 characters**; the normal `response` channel always carries the **full** orchestrator text.
@@ -57,13 +57,22 @@ There is **no** arbitrary pet upload, custom pet generation, or user-created pet
 - Components: `hikari-frontend/src/components/VoiceCompanionOverlay.tsx`, `CompanionSettings.tsx`
 - Helpers: `hikari-frontend/src/utils/companion/` (tracked; not under repo-root `lib/` ignore)
 - Overlay visibility: only while an explicit **voice session** is active (`voiceSessionActive`) — never during typed chat, even if the header orb shows loading/thinking.
-- The header microphone is disabled while a voice session, in-flight voice turn, or speech-recognition capture is active; `startListening()` also returns early if capture is already in progress (no second `SpeechRecognition` instance).
+- During capture, the header microphone remains operable as **Stop listening**. It is disabled while a submitted voice turn is awaiting a response, and `startListening()` still rejects re-entry so only one `SpeechRecognition` instance exists.
+- When the companion UI is enabled, browser interim recognition results appear as bounded local captions. Only a complete final transcript is submitted to the server.
 - On server `companion_update` idle/hidden, or after speech-recognition error (bounded reset), the overlay hides and voice-only caption state clears.
 - Starting a new voice session clears any prior caption before listening.
 
 ## State machine
 
 Normal voice turns follow the transition matrix starting from `hidden` or `idle` through `listening`. **Operational** transitions bypass the matrix only for lifecycle resets such as `hide()`. Rejected transitions never emit companion payloads.
+
+## Phase 2 planned work
+
+The following Phase 2 voice features are planned but not yet available in this build:
+
+- Audible text-to-speech (TTS) during the `speaking` state.
+- Voice control for the Phase 1 document flow (prepare, confirm, follow-up,
+  cancel, and reconnect without a keyboard).
 
 ## Intentionally later
 

@@ -83,7 +83,12 @@ bash scripts/install-hikari-cli.sh
 
 Confirm that the discovered interpreter reports Python 3.12 before creating the
 environment. This avoids relying on a Python installation at any fixed path.
-The exact lock above is verified for macOS arm64 with Python 3.12. On another
+The exact lock above is verified for macOS arm64 with Python 3.12.
+
+`constraints-macos-arm64-py312.txt` is an optional, narrow compatibility constraint
+set for selected packages on macOS arm64 with Python 3.12. It affects installation
+only when passed explicitly to pip with `--constraint`; it is not a substitute for
+the complete, authoritative platform lock above. On another
 platform, install PortAudio through the platform package manager, then install
 `requirements.txt` and `requirements-dev.txt`; that portable path resolves
 direct constraints but is not yet a verified lock. The repository `install.sh`

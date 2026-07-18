@@ -45,6 +45,9 @@ jobs:
       - name: Run Python suite
         run: python -m pytest tests -q
 
+      - name: Run read-only voice status
+        run: python hikari.py --voice-status
+
       - name: Run public-source privacy scan
         run: python tests/privacy_scan.py
 

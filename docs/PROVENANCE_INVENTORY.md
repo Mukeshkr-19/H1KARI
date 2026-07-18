@@ -47,6 +47,7 @@ redistribution.
 | `PyAudio==0.2.14` | microphone audio | MIT | direct dependency; native PortAudio provenance must be recorded by installer/platform |
 | `python-dotenv==1.2.2` | local configuration | BSD-3-Clause | direct dependency; exact in manifest and platform lock |
 | `qrcode[pil]>=7.4.2` | pairing QR image | BSD family | direct dependency; qrcode and Pillow are exact in the platform lock |
+| `certifi==2024.12.14` | SSL certificate bundle (imported by `core/voice.py`) | MPL-2.0 | direct dependency; exact in manifest and platform lock |
 | `requests==2.33.0` | research and provider HTTP | Apache-2.0 | direct dependency; exact in manifest and platform lock |
 | `rumps==0.4.0` (macOS) | supported menu-bar mode | BSD-3-Clause | Darwin-only direct dependency; PyObjC Cocoa boundary is exact in the platform lock |
 | `SpeechRecognition==3.13.0` | microphone recognition fallback | BSD family | direct dependency; external recognizer behavior must remain explicit |

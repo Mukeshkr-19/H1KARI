@@ -52,6 +52,37 @@ governed document workflow; legacy action callers that have not migrated are dis
 7. Specific existing safeguards—Brain repair tokens, pairing authorization, and the osascript kill switch—remain in force during migration.
 8. Private runtime state, credentials, biometrics, and backups never enter the public repository.
 
+## Phase 2 voice boundary
+
+Phase 1 tasks remain recoverable when voice interaction fails. Phase 2 adds a
+voice channel over the Phase 1 document flow without weakening the existing safety
+kernel.
+
+- Pairing is transport authentication, **not** proof of owner identity. The
+  server derives the local-owner actor from the loopback transport; a paired
+  client does not automatically inherit owner scope.
+- Unknown voice input defaults to guest/session scope. A voice turn does not
+  implicitly read owner memory, write durable memories, or authorize side effects.
+- Speaker identity is supplementary evidence and is **never** sole authorization
+  for a high-risk action. Voice enrollment is opt-in and stores a local embedding,
+  not raw audio.
+- Local and cloud audio processing (STT, TTS, VAD) requires explicit disclosure
+  before use. Provider destinations are recorded in docs/PROVIDER_PROVENANCE.md
+  and docs/VOICE_COMPANION.md. Processing must be disableable without affecting
+  text-mode operation.
+- Raw audio is not retained by default. Transient capture buffers are discarded
+  after processing. Enrollment audio is not stored. Unintended background speech
+  and ambient sound must not enter durable storage.
+- HIKARI-owned logs, audit records, and diagnostics must not contain raw
+  transcripts, private response text, speaker embeddings, or voice-auth
+  enrollment data. Structural and aggregate metrics without content are the
+  safe default.
+- Voice channel failure (STT error, TTS unavailable, disconnected microphone)
+  must not destroy or discard an already-created durable document task. The task
+  ledger in Phase 1 already preserves state across transport interruptions;
+  Phase 2 extends that guarantee to voice-only interaction without reimplementing
+  it.
+
 ## Active Phase 1 boundary
 
 `core/action_policy.py` and `core/policy_service.py` define server-owned action
