@@ -9,6 +9,8 @@ export type CompanionCaption = {
   timestamp: string;
 };
 
+const CAPTION_DISPLAY_MAX = 500;
+
 type Props = {
   visible: boolean;
   state: CompanionState;
@@ -50,6 +52,10 @@ function CompanionGlyph({ type, state }: { type: CompanionType; state: Companion
   );
 }
 
+function displayCaptionText(text: string): string {
+  return text.length <= CAPTION_DISPLAY_MAX ? text : text.slice(0, CAPTION_DISPLAY_MAX);
+}
+
 export function VoiceCompanionOverlay({
   visible,
   state,
@@ -70,6 +76,8 @@ export function VoiceCompanionOverlay({
             ? "Error"
             : "Ready";
 
+  const captionText = caption?.text ? displayCaptionText(caption.text) : "";
+
   return (
     <div
       className="pointer-events-none fixed bottom-24 left-0 right-0 z-40 flex justify-center px-4"
@@ -84,15 +92,15 @@ export function VoiceCompanionOverlay({
         <p className="text-xs font-medium uppercase tracking-wide text-purple-300/90">
           {statusLabel}
         </p>
-        {caption?.text ? (
+        {captionText ? (
           <p
             className="max-w-xs text-center text-sm text-gray-200"
             aria-live="polite"
             aria-atomic="true"
           >
-            <span className="text-gray-500">{caption.role}: </span>
-            {caption.text}
-            {!caption.is_final && (
+            <span className="text-gray-500">{caption?.role}: </span>
+            {captionText}
+            {caption && !caption.is_final && (
               <span className="text-gray-500"> …</span>
             )}
           </p>

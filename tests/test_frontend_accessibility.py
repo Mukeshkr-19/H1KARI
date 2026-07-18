@@ -24,9 +24,30 @@ def test_pairing_inputs_have_programmatic_labels_and_landmark():
 def test_icon_buttons_have_names_and_decorative_icons_are_hidden():
     text = PAGE.read_text(encoding="utf-8")
 
-    assert 'aria-label={isListening ? "Listening for voice input" : "Start voice input"}' in text
+    assert 'microphoneCapturing ? "Stop listening" : "Start voice input"' in text
     assert 'aria-label="Send message"' in text
     assert text.count('aria-hidden="true" focusable="false"') >= 3
+
+
+def test_microphone_stop_control_and_hit_target_are_accessible():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert "onClick={handleMicrophoneClick}" in text
+    assert "const handleMicrophoneClick = () => {" in text
+    handle_start = text.index("const handleMicrophoneClick = () => {")
+    handle_end = text.index("const getOrbGradient = () => {", handle_start)
+    handle_block = text[handle_start:handle_end]
+    assert "cancelVoiceCapture()" in handle_block
+    assert "min-h-11 min-w-11" in text
+    assert "disabled={microphoneDisabled}" in text
+    assert "aria-disabled={microphoneDisabled}" in text
+    assert "const microphoneCapturing = isListening || recognitionCaptureActive" in text
+    disabled_start = text.index("const microphoneDisabled =")
+    disabled_end = text.index("const sendDocumentMessage =", disabled_start)
+    disabled_block = text[disabled_start:disabled_end]
+    assert "voiceTurnActive" in disabled_block
+    assert "microphoneCapturing" in disabled_block
+    assert "|| isListening" not in disabled_block
 
 
 def test_conversation_connection_and_voice_updates_are_announced():
@@ -161,3 +182,77 @@ def test_document_events_have_bounded_typed_guards_and_root_correlation():
     assert "Number.isInteger(value) && value >= 0 && value <= 100" in text
     assert text.count('boundedString(data, "root_task_id", DOCUMENT_TASK_ID_MAX)') == 3
     assert text.count("rootTaskId === documentTaskIdRef.current") == 3
+
+
+def test_document_prepare_failure_paths_clear_lock_and_reject_unsolicited():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert "failDocumentPrepare(" in text
+    fail_start = text.index("const failDocumentPrepare = useCallback")
+    fail_end = text.index("const scrollToBottom = useCallback")
+    fail_block = text[fail_start:fail_end]
+    assert "setDocumentAwaitingConfirmation(false)" in fail_block
+    assert "setDocumentConfirmation(null)" in fail_block
+    assert 'setDocumentStatusCode("failed")' in fail_block
+    assert "setDocumentProgress(0)" in fail_block
+    assert "forgetDocumentTask" not in fail_block
+    confirm_start = text.index('} else if (data.type === "document_confirmation_required")')
+    confirm_end = text.index('} else if (data.type === "task_update")', confirm_start)
+    confirm_block = text[confirm_start:confirm_end]
+    assert "if (!documentPreparePendingRef.current) return;" in confirm_block
+    assert "failDocumentPrepare(" in confirm_block
+    error_start = text.index('} else if (data.type === "document_error")')
+    error_end = text.index('} else if (data.type === "companion_preferences_error")', error_start)
+    error_block = text[error_start:error_end]
+    assert "documentPreparePendingRef.current" in error_block
+    assert "failDocumentPrepare(message)" in error_block
+    pending_branch = error_block.split("if (documentPreparePendingRef.current)")[1].split(
+        "if (rootTaskId === documentTaskIdRef.current)"
+    )[0]
+    assert "forgetDocumentTask()" not in pending_branch
+    close_start = text.index("ws.onclose = () => {")
+    close_block = text[close_start : close_start + 500]
+    assert "failDocumentPrepare(" in close_block
+
+
+def test_speech_recognition_aggregates_results_before_final_submit():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert "function aggregateSpeechRecognitionTranscript(" in text
+    assert "resultIndex: number" in text
+    voice_start = text.index("recognition.onresult")
+    voice_end = text.index("recognition.onerror", voice_start)
+    onresult = text[voice_start:voice_end]
+    assert "aggregateSpeechRecognitionTranscript(event)" in onresult
+    assert "captureSubmitted" in onresult
+    assert "if (!complete)" in onresult
+    assert "event.results[event.results.length - 1]" not in onresult
+
+
+def test_speech_recognition_errors_announce_keyboard_fallback():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert "function speechRecognitionErrorMessage(errorCode: string)" in text
+    assert "Type your message instead." in text
+    assert "inputRef.current?.focus()" in text
+    assert 'id="chat-input"' in text
+    assert 'htmlFor="chat-input"' in text
+
+
+def test_companion_preferences_error_is_surfaced_accessibly():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert 'data.type === "companion_preferences_error"' in text
+    prefs_start = text.index('} else if (data.type === "companion_preferences_error")')
+    prefs_block = text[prefs_start : prefs_start + 350]
+    assert "setInterfaceError(" in prefs_block
+    assert 'role="alert"' in text
+
+
+def test_overlay_bounds_caption_display_for_interim_text():
+    overlay = OVERLAY.read_text(encoding="utf-8")
+
+    assert "CAPTION_DISPLAY_MAX = 500" in overlay
+    assert "function displayCaptionText(text: string)" in overlay
+    assert "displayCaptionText(caption.text)" in overlay
+    assert "!caption.is_final" in overlay or "caption && !caption.is_final" in overlay

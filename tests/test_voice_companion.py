@@ -82,10 +82,10 @@ def _frontend_page_source() -> str:
 
 
 def _companion_enabled_voice_block(text: str) -> str:
-    """Companion UI path inside startListening (after disabled-mode early return)."""
+    """Safe recognition lifecycle inside startListening (single path)."""
     marker = "if (!canStartMicrophoneCapture())"
     start = text.index(marker)
-    end = text.index("const getOrbGradient = () => {", start)
+    end = text.index("const handleMicrophoneClick = () => {", start)
     return text[start:end]
 
 
@@ -487,18 +487,42 @@ def test_frontend_start_listening_blocks_reentry_while_voice_active():
     assert second_recognition == 1
 
 
-def test_frontend_microphone_disabled_during_listening_and_awaiting_response():
+def test_frontend_microphone_stop_remains_operable_during_capture():
     text = _frontend_page_source()
+    assert "const microphoneCapturing = isListening || recognitionCaptureActive" in text
     assert "const microphoneDisabled =" in text
-    assert "voiceSessionActive" in text
     assert "voiceTurnActive" in text
-    assert "recognitionCaptureActive" in text
+    assert "(voiceSessionActive && !microphoneCapturing)" in text
+    assert "isListening || recognitionCaptureActive" in text
+    mic_disabled_start = text.index("const microphoneDisabled =")
+    mic_disabled_end = text.index("const sendDocumentMessage =", mic_disabled_start)
+    mic_disabled_block = text[mic_disabled_start:mic_disabled_end]
+    assert "recognitionCaptureActive ||" not in mic_disabled_block
+    assert "|| isListening" not in mic_disabled_block
     assert "disabled={microphoneDisabled}" in text
     assert "aria-disabled={microphoneDisabled}" in text
+    assert 'aria-label={\n              microphoneCapturing ? "Stop listening" : "Start voice input"\n            }' in text or (
+        'microphoneCapturing ? "Stop listening" : "Start voice input"' in text
+    )
+    handle_start = text.index("const handleMicrophoneClick = () => {")
+    handle_end = text.index("const getOrbGradient = () => {", handle_start)
+    handle_block = text[handle_start:handle_end]
+    assert "cancelVoiceCapture()" in handle_block
+    assert "startListening()" in handle_block
+    assert "onClick={handleMicrophoneClick}" in text
     submit_start = text.index("const submitVoiceRequest = useCallback")
     submit_end = text.index("const syncCompanionPrefs = useCallback")
     submit_block = text[submit_start:submit_end]
     assert "setVoiceTurnActive(true)" in submit_block
+
+
+def test_frontend_microphone_has_minimum_44px_hit_target():
+    text = _frontend_page_source()
+    assert "min-h-11 min-w-11" in text
+    button_start = text.index("onClick={handleMicrophoneClick}")
+    button_block = text[button_start : button_start + 450]
+    assert "min-h-11" in button_block
+    assert "min-w-11" in button_block
 
 
 def test_frontend_recognition_released_without_cancelling_submitted_turn():
@@ -729,13 +753,208 @@ def test_frontend_listening_update_clears_stale_caption():
     assert "setCompanionCaption(null)" in apply_block
 
 
-def test_frontend_recognition_error_bounded_reset():
+def test_frontend_recognition_error_maps_bounded_privacy_safe_messages():
     text = _frontend_page_source()
+    assert "function speechRecognitionErrorMessage(errorCode: string)" in text
+    helper_start = text.index("function speechRecognitionErrorMessage")
+    helper_end = text.index("export default function Home()")
+    helper = text[helper_start:helper_end]
+    assert 'case "not-allowed":' in helper
+    assert 'case "service-not-allowed":' in helper
+    assert 'case "no-speech":' in helper
+    assert 'case "audio-capture":' in helper
+    assert 'case "network":' in helper
+    assert "Microphone permission is blocked. Type your message instead." in helper
+    assert "No speech was detected. Try again or type your message." in helper
+    assert "No microphone is available. Type your message instead." in helper
+    assert "Voice recognition is temporarily unavailable. Type your message instead." in helper
+    assert "Voice input failed. Type your message instead." in helper
     voice_block = _companion_enabled_voice_block(text)
     assert "recognition.onerror" in voice_block
-    assert "Voice input error" in voice_block
-    assert "setTimeout" in voice_block
+    assert "speechRecognitionErrorMessage(" in voice_block
+    assert "setInterfaceError(message)" in voice_block
+    assert "inputRef.current?.focus()" in voice_block
     assert "cancelVoiceCapture()" in voice_block
+    assert "setTimeout" in voice_block
+    assert "event.message" not in voice_block
+    assert "String(event)" not in voice_block
+    assert "error.message" not in voice_block
+
+
+def test_frontend_single_safe_recognition_path_preserves_message_types():
+    text = _frontend_page_source()
+    assert text.count("const startListening = () => {") == 1
+    assert "if (!VOICE_COMPANION_UI_ENABLED)" not in text.split("const startListening = () => {", 1)[1].split(
+        "const handleMicrophoneClick = () => {", 1
+    )[0]
+    voice_block = _companion_enabled_voice_block(text)
+    assert "canStartMicrophoneCapture()" in voice_block
+    assert "voiceCaptureGenerationRef.current += 1" in voice_block
+    assert "const captureToken = voiceCaptureGenerationRef.current" in voice_block
+    assert "captureToken !== voiceCaptureGenerationRef.current" in voice_block
+    submit_start = text.index("const submitVoiceRequest = useCallback")
+    submit_end = text.index("const syncCompanionPrefs = useCallback")
+    submit_block = text[submit_start:submit_end]
+    assert 'encodeClientMessage("voice", { text: trimmed })' in submit_block
+    assert 'encodeClientMessage("message", { text: trimmed })' in submit_block
+    assert "VOICE_COMPANION_UI_ENABLED" in submit_block
+    assert 'encodeClientMessage("voice", { listening: true })' in voice_block
+    response_start = text.index('} else if (data.type === "response")')
+    response_end = text.index('} else if (data.type === "document_confirmation_required")', response_start)
+    response_block = text[response_start:response_end]
+    assert "resetVoiceCompanion()" in response_block
+    assert "!VOICE_COMPANION_UI_ENABLED" in response_block
+
+
+def test_frontend_interim_results_update_local_captions_without_server_send():
+    text = _frontend_page_source()
+    voice_block = _companion_enabled_voice_block(text)
+    assert "recognition.interimResults = VOICE_COMPANION_UI_ENABLED" in voice_block
+    onresult_start = voice_block.index("recognition.onresult")
+    onresult_end = voice_block.index("recognition.onerror", onresult_start)
+    onresult_block = voice_block[onresult_start:onresult_end]
+    assert "aggregateSpeechRecognitionTranscript(event)" in onresult_block
+    assert "boundCaptionText(transcript)" in onresult_block
+    assert "is_final: complete" in onresult_block
+    assert "if (!complete)" in onresult_block
+    assert "submitVoiceRequest(transcript, captureToken)" in onresult_block
+    assert onresult_block.index("if (!complete)") < onresult_block.index(
+        "submitVoiceRequest(transcript, captureToken)"
+    )
+    interim_return = onresult_block.split("if (!complete)")[1].split("captureSubmitted = true")[0]
+    assert "return;" in interim_return
+    assert "ws.send" not in onresult_block
+    assert "encodeClientMessage" not in onresult_block
+    begin_start = text.index("const beginVoiceCapture = useCallback")
+    begin_end = text.index("const submitVoiceRequest = useCallback")
+    assert "setCompanionCaption(null)" in text[begin_start:begin_end]
+    cancel_start = text.index("const cancelVoiceCapture = useCallback")
+    cancel_end = text.index("const canStartMicrophoneCapture = useCallback")
+    assert "resetVoiceCompanion()" in text[cancel_start:cancel_end]
+    assert "setCompanionCaption(null)" in text[
+        text.index("const resetVoiceCompanion = useCallback") : text.index(
+            "const releaseRecognitionInstance = useCallback"
+        )
+    ]
+
+
+def test_frontend_speech_aggregates_mixed_final_and_interim_results_once():
+    """Earlier finals plus a trailing interim must not submit; complete finals submit once."""
+    text = _frontend_page_source()
+    assert "function aggregateSpeechRecognitionTranscript(" in text
+    assert "resultIndex: number" in text
+    helper_start = text.index("function aggregateSpeechRecognitionTranscript(")
+    helper_end = text.index("type SpeechRecognitionErrorEvent", helper_start)
+    helper = text[helper_start:helper_end]
+    assert "for (let index = 0; index < event.results.length; index += 1)" in helper
+    assert "transcript += result?.[0]?.transcript ?? \"\"" in helper
+    assert "if (!result?.isFinal)" in helper
+    assert "complete = false" in helper
+    assert "event.results.length - 1" not in helper
+    assert "event.results[event.results.length - 1]" not in text[
+        text.index("recognition.onresult") : text.index("recognition.onerror")
+    ]
+
+    voice_block = _companion_enabled_voice_block(text)
+    onresult_start = voice_block.index("recognition.onresult")
+    onresult_end = voice_block.index("recognition.onerror", onresult_start)
+    onresult_block = voice_block[onresult_start:onresult_end]
+    assert "let captureSubmitted = false" in voice_block
+    assert "if (captureSubmitted)" in onresult_block
+    assert "captureSubmitted = true" in onresult_block
+    assert onresult_block.index("if (captureSubmitted)") < onresult_block.index(
+        "aggregateSpeechRecognitionTranscript(event)"
+    )
+    assert onresult_block.index("if (!complete)") < onresult_block.index("captureSubmitted = true")
+    assert onresult_block.index("captureSubmitted = true") < onresult_block.index(
+        "submitVoiceRequest(transcript, captureToken)"
+    )
+    assert onresult_block.count("submitVoiceRequest(transcript, captureToken)") == 1
+
+    # Behavioral contract for the pure aggregator: mixed final+interim stays incomplete.
+    # Executed via a tiny Python mirror of the TypeScript loop semantics.
+    def aggregate(results):
+        transcript = ""
+        complete = len(results) > 0
+        for result in results:
+            transcript += result["transcript"]
+            if not result["isFinal"]:
+                complete = False
+        return transcript, complete
+
+    mixed = [
+        {"transcript": "explain the ", "isFinal": True},
+        {"transcript": "notes", "isFinal": False},
+    ]
+    mixed_text, mixed_complete = aggregate(mixed)
+    assert mixed_text == "explain the notes"
+    assert mixed_complete is False
+
+    finals = [
+        {"transcript": "explain the ", "isFinal": True},
+        {"transcript": "notes", "isFinal": True},
+    ]
+    final_text, final_complete = aggregate(finals)
+    assert final_text == "explain the notes"
+    assert final_complete is True
+
+
+def test_frontend_document_prepare_unlocks_on_invalid_confirmation_prepare_error_and_disconnect():
+    text = _frontend_page_source()
+    assert "const failDocumentPrepare = useCallback((message: string) => {" in text
+    fail_start = text.index("const failDocumentPrepare = useCallback")
+    fail_end = text.index("const scrollToBottom = useCallback")
+    fail_block = text[fail_start:fail_end]
+    assert "documentPreparePendingRef.current = false" in fail_block
+    assert "documentPrepareRequestRef.current = null" in fail_block
+    assert "setDocumentPreparePending(false)" in fail_block
+    assert "setDocumentAwaitingConfirmation(false)" in fail_block
+    assert "setDocumentConfirmation(null)" in fail_block
+    assert "setDocumentError(message)" in fail_block
+    assert 'setDocumentStatusCode("failed")' in fail_block
+    assert "setDocumentProgress(0)" in fail_block
+    assert "setDocumentCheckpoint(\"\")" in fail_block or "setDocumentCheckpoint(\"\")" in fail_block
+    assert "forgetDocumentTask" not in fail_block
+    confirm_start = text.index('} else if (data.type === "document_confirmation_required")')
+    confirm_end = text.index('} else if (data.type === "task_update")', confirm_start)
+    confirm_block = text[confirm_start:confirm_end]
+    assert "if (!documentPreparePendingRef.current) return;" in confirm_block
+    assert confirm_block.count("failDocumentPrepare(") == 2
+    assert "Document confirmation was invalid." in confirm_block
+    assert "Document confirmation did not match your request." in confirm_block
+    error_start = text.index('} else if (data.type === "document_error")')
+    error_end = text.index('} else if (data.type === "companion_preferences_error")', error_start)
+    error_block = text[error_start:error_end]
+    assert "if (documentPreparePendingRef.current)" in error_block
+    assert "failDocumentPrepare(message)" in error_block
+    pending_branch = error_block.split("if (documentPreparePendingRef.current)")[1].split(
+        "if (rootTaskId === documentTaskIdRef.current)"
+    )[0]
+    assert "forgetDocumentTask()" not in pending_branch
+    assert "actor_not_authorized" not in pending_branch
+    assert "task_not_found" not in pending_branch
+    assert error_block.index("documentPreparePendingRef.current") < error_block.index(
+        "rootTaskId === documentTaskIdRef.current"
+    )
+    # Established-task errors may still forget; prepare-time path must not.
+    established_branch = error_block.split("if (rootTaskId === documentTaskIdRef.current)")[1]
+    assert "forgetDocumentTask()" in established_branch
+    close_start = text.index("ws.onclose = () => {")
+    close_end = text.index("}, [serverUrl", close_start)
+    close_block = text[close_start:close_end]
+    assert "documentPreparePendingRef.current" in close_block
+    assert "failDocumentPrepare(" in close_block
+    assert "Connection lost while preparing the document." in close_block
+
+
+def test_frontend_companion_preferences_error_uses_interface_error_surface():
+    text = _frontend_page_source()
+    prefs_start = text.index('} else if (data.type === "companion_preferences_error")')
+    prefs_end = text.index('} else if (data.type === "pair_error"', prefs_start)
+    prefs_block = text[prefs_start:prefs_end]
+    assert 'boundedString(data, "message", 1000)' in prefs_block
+    assert "setInterfaceError(" in prefs_block
+    assert "Companion preferences could not be saved." in prefs_block
 
 
 def test_global_brain_v2_episodes_db_isolated_from_live_home():

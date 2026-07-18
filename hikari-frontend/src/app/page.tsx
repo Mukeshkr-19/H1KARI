@@ -126,13 +126,15 @@ function progressField(message: ServerMessage): number | null {
     : null;
 }
 
+const LOCAL_CAPTION_MAX = 500;
+
 type BrowserSpeechRecognition = {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
   onstart: (() => void) | null;
   onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
   onend: (() => void) | null;
   start: () => void;
   stop?: () => void;
@@ -142,13 +144,35 @@ type BrowserSpeechRecognition = {
 type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
 type SpeechRecognitionResultEvent = {
+  resultIndex: number;
   results: {
+    length: number;
     [index: number]: {
+      isFinal: boolean;
       [index: number]: {
         transcript: string;
       };
     };
   };
+};
+
+function aggregateSpeechRecognitionTranscript(
+  event: SpeechRecognitionResultEvent,
+): { transcript: string; complete: boolean } {
+  let transcript = "";
+  let complete = event.results.length > 0;
+  for (let index = 0; index < event.results.length; index += 1) {
+    const result = event.results[index];
+    transcript += result?.[0]?.transcript ?? "";
+    if (!result?.isFinal) {
+      complete = false;
+    }
+  }
+  return { transcript, complete };
+}
+
+type SpeechRecognitionErrorEvent = {
+  error: string;
 };
 
 type SpeechRecognitionWindow = Window & {
@@ -171,6 +195,30 @@ function terminateSpeechRecognition(recognition: BrowserSpeechRecognition): void
     } catch {
       // preserve generation invalidation even if termination throws
     }
+  }
+}
+
+function boundCaptionText(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= LOCAL_CAPTION_MAX) {
+    return trimmed;
+  }
+  return trimmed.slice(0, LOCAL_CAPTION_MAX);
+}
+
+function speechRecognitionErrorMessage(errorCode: string): string {
+  switch (errorCode) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone permission is blocked. Type your message instead.";
+    case "no-speech":
+      return "No speech was detected. Try again or type your message.";
+    case "audio-capture":
+      return "No microphone is available. Type your message instead.";
+    case "network":
+      return "Voice recognition is temporarily unavailable. Type your message instead.";
+    default:
+      return "Voice input failed. Type your message instead.";
   }
 }
 
@@ -240,6 +288,20 @@ export default function Home() {
     documentTaskIdRef.current = "";
     setDocumentTaskId("");
     window.localStorage.removeItem(ROOT_DOCUMENT_TASK_KEY);
+  }, []);
+
+  const failDocumentPrepare = useCallback((message: string) => {
+    documentPreparePendingRef.current = false;
+    documentPrepareRequestRef.current = null;
+    setDocumentPreparePending(false);
+    setDocumentAwaitingConfirmation(false);
+    setDocumentConfirmation(null);
+    setDocumentError(message);
+    setDocumentStatus("Document request failed");
+    setDocumentStatusCode("failed");
+    setDocumentProgress(0);
+    setDocumentCheckpoint("");
+    setActiveTab("files");
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -328,7 +390,9 @@ export default function Home() {
     setVoiceSessionActive(true);
     setVoiceTurnActive(false);
     setCompanionCaption(null);
-    setCompanionState("listening");
+    if (VOICE_COMPANION_UI_ENABLED) {
+      setCompanionState("listening");
+    }
   }, []);
 
   const submitVoiceRequest = useCallback(
@@ -350,7 +414,11 @@ export default function Home() {
         return false;
       }
       try {
-        ws.send(encodeClientMessage("voice", { text: trimmed }));
+        if (VOICE_COMPANION_UI_ENABLED) {
+          ws.send(encodeClientMessage("voice", { text: trimmed }));
+        } else {
+          ws.send(encodeClientMessage("message", { text: trimmed }));
+        }
       } catch {
         cancelVoiceCapture();
         return false;
@@ -465,8 +533,12 @@ export default function Home() {
         setIsTyping(false);
         addMessage(stringField(data, "text"), "ai");
         if (voiceTurnActiveRef.current || voiceSessionActiveRef.current) {
-          voiceTurnActiveRef.current = false;
-          setVoiceTurnActive(false);
+          if (!VOICE_COMPANION_UI_ENABLED) {
+            resetVoiceCompanion();
+          } else {
+            voiceTurnActiveRef.current = false;
+            setVoiceTurnActive(false);
+          }
         } else {
           setOrbState("idle");
         }
@@ -479,12 +551,22 @@ export default function Home() {
         if (
           !taskId || !path || !provider || fallbackProvider === null ||
           documentTaskIdsSeenRef.current.has(taskId)
-        ) return;
+        ) {
+          failDocumentPrepare(
+            "Document confirmation was invalid. Check the path and provider, then try again.",
+          );
+          return;
+        }
         const request = documentPrepareRequestRef.current;
         if (
           !request || request.path !== path || request.provider !== provider ||
           request.fallbackProvider !== fallbackProvider
-        ) return;
+        ) {
+          failDocumentPrepare(
+            "Document confirmation did not match your request. Try again.",
+          );
+          return;
+        }
         documentPreparePendingRef.current = false;
         documentPrepareRequestRef.current = null;
         setDocumentPreparePending(false);
@@ -540,10 +622,14 @@ export default function Home() {
         const rootTaskId = boundedString(data, "root_task_id", DOCUMENT_TASK_ID_MAX);
         const code = boundedString(data, "code", 128);
         const message = boundedString(data, "message", 1000);
-        if (
-          taskId && rootTaskId && code && message &&
-          rootTaskId === documentTaskIdRef.current
-        ) {
+        if (!(taskId && rootTaskId && code && message)) {
+          return;
+        }
+        if (documentPreparePendingRef.current) {
+          failDocumentPrepare(message);
+          return;
+        }
+        if (rootTaskId === documentTaskIdRef.current) {
           setDocumentError(message);
           setDocumentStatus("Document request failed");
           setDocumentStatusCode("failed");
@@ -553,6 +639,10 @@ export default function Home() {
             forgetDocumentTask();
           }
         }
+      } else if (data.type === "companion_preferences_error") {
+        setInterfaceError(
+          boundedString(data, "message", 1000) ?? "Companion preferences could not be saved.",
+        );
       } else if (data.type === "pair_error" || data.type === "pair_locked") {
         setInterfaceError(stringField(data, "message") || "Pairing failed");
       } else if (data.type === "protocol_error") {
@@ -569,22 +659,23 @@ export default function Home() {
           cancelVoiceCapture();
         }
         if (documentPreparePendingRef.current) {
-          documentPreparePendingRef.current = false;
-          documentPrepareRequestRef.current = null;
-          setDocumentPreparePending(false);
-          setDocumentStatus("Document request failed");
-          setDocumentCheckpoint("");
+          failDocumentPrepare("Document request failed");
         }
       }
     };
 
     ws.onclose = () => {
+      if (documentPreparePendingRef.current) {
+        failDocumentPrepare(
+          "Connection lost while preparing the document. Reconnect and try again.",
+        );
+      }
       cancelVoiceCapture();
       setIsConnected(false);
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -610,59 +701,6 @@ export default function Home() {
   };
 
   const startListening = () => {
-    if (!VOICE_COMPANION_UI_ENABLED) {
-      const speechWindow = window as SpeechRecognitionWindow;
-      const SpeechRecognition =
-        speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
-
-      if (!SpeechRecognition) {
-        setInterfaceError("Speech recognition is not supported in this browser.");
-        return;
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setOrbState("listening");
-      };
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        setInput(transcript);
-        setIsListening(false);
-        setOrbState("idle");
-
-        if (transcript.trim()) {
-          setTimeout(() => {
-            setInput(transcript);
-            if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-              addMessage(transcript, "user");
-              wsRef.current.send(encodeClientMessage("message", { text: transcript }));
-              setIsTyping(true);
-              setOrbState("thinking");
-            }
-          }, 100);
-        }
-      };
-
-      recognition.onerror = () => {
-        setIsListening(false);
-        setOrbState("idle");
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-        setOrbState("idle");
-      };
-
-      recognition.start();
-      return;
-    }
-
     if (!canStartMicrophoneCapture()) {
       return;
     }
@@ -672,7 +710,8 @@ export default function Home() {
       speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      setInterfaceError("Speech recognition is not supported in this browser.");
+      setInterfaceError("Speech recognition is not supported in this browser. Type your message instead.");
+      inputRef.current?.focus();
       return;
     }
 
@@ -681,18 +720,20 @@ export default function Home() {
     setRecognitionCaptureActive(true);
     voiceCaptureGenerationRef.current += 1;
     const captureToken = voiceCaptureGenerationRef.current;
+    let captureSubmitted = false;
     recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.interimResults = VOICE_COMPANION_UI_ENABLED;
     recognition.lang = "en-US";
 
     recognition.onstart = () => {
       if (captureToken !== voiceCaptureGenerationRef.current) {
         return;
       }
+      setInterfaceError("");
       setIsListening(true);
       setOrbState("listening");
       beginVoiceCapture();
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      if (VOICE_COMPANION_UI_ENABLED && wsRef.current?.readyState === WebSocket.OPEN) {
         try {
           wsRef.current.send(encodeClientMessage("voice", { listening: true }));
         } catch {
@@ -705,24 +746,48 @@ export default function Home() {
       if (captureToken !== voiceCaptureGenerationRef.current) {
         return;
       }
-      const transcript = event.results[0][0].transcript;
+      if (captureSubmitted) {
+        return;
+      }
+      const { transcript, complete } = aggregateSpeechRecognitionTranscript(event);
+
+      if (VOICE_COMPANION_UI_ENABLED && transcript) {
+        setCompanionCaption({
+          role: "user",
+          text: boundCaptionText(transcript),
+          is_final: complete,
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      if (!complete) {
+        return;
+      }
+
+      captureSubmitted = true;
       setInput(transcript);
       setIsListening(false);
       submitVoiceRequest(transcript, captureToken);
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
       if (captureToken !== voiceCaptureGenerationRef.current) {
         return;
       }
       setIsListening(false);
       releaseRecognitionInstance(recognition);
-      if (voiceSessionActiveRef.current) {
+      const message = speechRecognitionErrorMessage(
+        typeof event?.error === "string" ? event.error : "",
+      );
+      setInterfaceError(message);
+      inputRef.current?.focus();
+      setCompanionCaption(null);
+      if (VOICE_COMPANION_UI_ENABLED && voiceSessionActiveRef.current) {
         setOrbState("idle");
         setCompanionState("error");
         setCompanionCaption({
           role: "system",
-          text: "Voice input error",
+          text: boundCaptionText(message),
           is_final: true,
           timestamp: new Date().toISOString(),
         });
@@ -731,6 +796,7 @@ export default function Home() {
           voiceErrorResetRef.current = null;
         }, 1500);
       } else {
+        cancelVoiceCapture();
         setOrbState("idle");
       }
     };
@@ -747,6 +813,14 @@ export default function Home() {
     };
 
     recognition.start();
+  };
+
+  const handleMicrophoneClick = () => {
+    if (isListening || recognitionCaptureActive) {
+      cancelVoiceCapture();
+      return;
+    }
+    startListening();
   };
 
   const getOrbGradient = () => {
@@ -775,13 +849,11 @@ export default function Home() {
     }
   };
 
-  const microphoneDisabled = VOICE_COMPANION_UI_ENABLED
-    ? !isConnected ||
-      voiceSessionActive ||
-      voiceTurnActive ||
-      recognitionCaptureActive ||
-      isListening
-    : !isConnected || isListening;
+  const microphoneCapturing = isListening || recognitionCaptureActive;
+  const microphoneDisabled =
+    !isConnected ||
+    voiceTurnActive ||
+    (voiceSessionActive && !microphoneCapturing);
 
   const sendDocumentMessage = (
     type: "document_prepare" | "document_confirm" | "document_follow_up" | "document_cancel",
@@ -981,12 +1053,14 @@ export default function Home() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={startListening}
+            onClick={handleMicrophoneClick}
             disabled={microphoneDisabled}
             aria-disabled={microphoneDisabled}
-            aria-label={isListening ? "Listening for voice input" : "Start voice input"}
-            className={`p-2.5 rounded-full transition-all ${
-              isListening
+            aria-label={
+              microphoneCapturing ? "Stop listening" : "Start voice input"
+            }
+            className={`inline-flex min-h-11 min-w-11 items-center justify-center rounded-full p-2.5 transition-all ${
+              microphoneCapturing
                 ? "bg-red-500/20 text-red-400 animate-pulse"
                 : microphoneDisabled
                   ? "bg-gray-800/50 text-gray-600 cursor-not-allowed"
