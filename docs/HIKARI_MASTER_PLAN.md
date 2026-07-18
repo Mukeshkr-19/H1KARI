@@ -301,6 +301,8 @@ Exit:
 - unknown speakers cannot access owner memory
 - voice failure does not lose the task
 
+Completion evidence: `docs/PHASE_2_COMPLETION.md`.
+
 ### Phase 3 - Safe productivity tools
 
 Outcome: approved everyday tasks can be drafted and executed with transparent scopes.

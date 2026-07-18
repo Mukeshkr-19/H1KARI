@@ -10,6 +10,10 @@ H1KARI is a local-first personal AI assistant for macOS. The assistant and CLI s
 - HTTP routes: `/api/status`, `/connect`, `/qr`
 - Multi-agent routing: voice, research, files, system, code, memory
 - Neural memory bridge connected through the live brain directory (not committed)
+- Push-to-talk voice companion with visible capture state, bounded captions, and text fallback
+- Voice-controlled document prepare, confirmation, cancellation, and follow-up flow
+- Explicit local or cloud speech-recognition selection with no silent cloud fallback
+- Optional browser spoken output, off by default, with stop, repeat, and slower controls
 - Next.js frontend builds and lints
 - Tests pass with Python 3.12
 
@@ -48,6 +52,9 @@ H1KARI/
 - `docs/MODEL_PROVENANCE.md` - reviewed voice-model sources and download policy.
 - `docs/PROVIDER_PROVENANCE.md` - hosted-provider and external-service data flows.
 - `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
+- `docs/PHASE_1_COMPLETION.md` - safe companion kernel completion record.
+- `docs/PHASE_2_COMPLETION.md` - voice companion completion record.
+- `docs/VOICE_COMPANION.md` - voice behavior, controls, privacy, and failure boundaries.
 - `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
 - `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.
 
@@ -196,9 +203,11 @@ Reconnect or ask a follow-up using the returned task ID:
   --confirm-document READ_AND_SEND
 ```
 
-Phase 1 accepts one regular, non-symlinked UTF-8 `.txt` file up to 100 KB. It does not
-support PDF, DOCX, OCR, uploads, multiple files, or voice control; those belong to later
-phases.
+The document workflow accepts one regular, non-symlinked UTF-8 `.txt` file up to
+100 KB. It does not support PDF, DOCX, OCR, uploads, or multiple files; those belong
+to later phases. When the voice companion is explicitly enabled, the same prepare,
+confirmation, cancellation, and follow-up flow can be driven with the bounded voice
+commands documented in `docs/VOICE_COMPANION.md`.
 
 ## Verification Before Push
 
