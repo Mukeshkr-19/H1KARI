@@ -56,6 +56,18 @@ def collect_voice_status(
     speaker_cache = legacy_dir / "hf_cache" / "speechbrain_spkrec_ecapa"
     enrollment_file = legacy_dir / "voice_auth.json"
 
+    from core.runtime_setup import get_voice_backend_name
+
+    configured_backend = get_voice_backend_name(root=state_home)
+    core_backend = configured_backend or "openai-whisper"
+    daemon_backend = configured_backend or "faster-whisper"
+
+    def backend_policy(backend: str) -> str:
+        if backend == "google-speech":
+            return "Google Speech Recognition; captured audio is sent off-device"
+        label = "OpenAI Whisper base" if backend == "openai-whisper" else "faster-whisper base"
+        return f"{label} locally; no silent cloud fallback"
+
     packages = {
         "speech_recognition": _installed("speech_recognition"),
         "openai_whisper": _installed("whisper"),
@@ -94,10 +106,12 @@ def collect_voice_status(
         "packages": packages,
         "models": models,
         "policies": {
-            "core_voice": "OpenAI Whisper base locally, then Google Speech fallback",
-            "wake_daemon": "faster-whisper base locally, then Google Speech fallback",
-            "simple_service": "Google Speech Recognition",
+            "configured_backend": configured_backend,
+            "core_voice": backend_policy(core_backend),
+            "wake_daemon": backend_policy(daemon_backend),
+            "simple_service": "Google Speech Recognition (explicit cloud selection only)",
             "google_audio_egress": True,
+            "adapter_local_only": "Local backends fail with a bounded error instead of falling back to cloud STT",
         },
     }
 
@@ -115,6 +129,8 @@ def format_voice_status(status: dict | None = None) -> str:
         f"core.voice: {status['policies']['core_voice']}",
         f"wake daemon: {status['policies']['wake_daemon']}",
         f"simple service: {status['policies']['simple_service']}",
+        "Google Speech Recognition sends audio off-device only when explicitly selected.",
+        "Local backends fail with a bounded error; they never silently fall back to cloud STT.",
         "",
     ]
     labels = {
@@ -140,8 +156,6 @@ def format_voice_status(status: dict | None = None) -> str:
         [
             f"Speaker enrollment file present: {yes(speaker['enrollment_present'])} "
             "(contents not read)",
-            "Google fallback may send captured audio off-device when local recognition "
-            "is unavailable or fails.",
         ]
     )
     return "\n".join(lines)

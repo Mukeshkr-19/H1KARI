@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:unit": "tsc --target ES2020 --module commonjs --moduleResolution node --esModuleInterop --strict --skipLibCheck --outDir .test-unit-build --rootDir src/utils/companion src/utils/companion/constants.ts src/utils/companion/storage.ts src/utils/companion/speechOutput.ts src/utils/companion/speechOutput.test.ts src/utils/companion/voiceDocumentIntent.ts src/utils/companion/voiceDocumentIntent.test.ts && node --test .test-unit-build/voiceDocumentIntent.test.js .test-unit-build/speechOutput.test.js"
   },
   "dependencies": {
     "next": "^15.5.18",

@@ -38,7 +38,7 @@ from core.brain_statements import (
     is_declarative_memory_statement,
     is_task_or_action_statement,
 )
-from core.action_policy import Actor, ActorContext
+from core.action_policy import Actor, ActorContext, validate_actor_context
 from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
 
@@ -401,38 +401,76 @@ class HIKARI_Orchestrator:
         self.scheduler = None
         debug("[HIKARI] Proactive scheduler quarantined pending policy migration")
 
-    def process_input(self, user_input: str, source: str = "text") -> Optional[str]:
-        """Main entry point - process any user input"""
+    def _default_local_owner_context(self, source: str = "text") -> ActorContext:
+        """Return a server-owned local-owner context for trusted local entrypoints."""
+        return ActorContext(
+            actor_id="local-owner",
+            actor=Actor.OWNER,
+            session_id="local",
+            source=source,
+        )
+
+    def process_input(
+        self,
+        user_input: str,
+        source: str = "text",
+        *,
+        context: Optional[ActorContext] = None,
+    ) -> Optional[str]:
+        """Main entry point - process any user input.
+
+        Args:
+            user_input: The user's text input.
+            source: Channel identifier (e.g. "text", "device", "voice_remote").
+            context: Optional server-derived actor context. If omitted, a local-owner
+                default is used so existing CLI/direct callers remain trusted.
+        """
         user_input = self._normalize_user_input_text(user_input)
         if not user_input:
             return None
 
-        debug(f"\n[INPUT] ({source}): {user_input}")
+        if context is None:
+            context = self._default_local_owner_context(source)
+        else:
+            valid, _reason = validate_actor_context(context)
+            if not valid:
+                debug("[INPUT] source=%s actor=unknown outcome=denied", source)
+                return "I cannot complete this request."
+
+        if context.actor is Actor.UNKNOWN:
+            debug(f"[INPUT] source={source} actor=unknown outcome=denied")
+            return "I cannot complete this request."
 
         if not hasattr(self, "_pending_memory_choice"):
             self._pending_memory_choice = None
 
-        self.speaker.update_from_input(user_input)
-        self.speaker.note_guest_relation_from_input(user_input)
-        reset_check = getattr(self.speaker, "consume_speaker_reset", None)
-        speaker_reset = reset_check() is True if callable(reset_check) else False
-        if speaker_reset and self._brain_v2_runtime_ready():
-            try:
-                self.brain_v2.working.clear()
-                self._restore_owner_current_location()
-            except Exception as e:
-                debug(f"[BRAIN_V2] Working memory clear after speaker reset failed: {e}")
-        guest = self.speaker.is_guest_speaker()
-        if (
-            guest
-            and getattr(self.speaker, "last_was_session_intro", False)
-            and self._brain_v2_runtime_ready()
-        ):
-            try:
-                self._snapshot_owner_current_location()
-                self.brain_v2.working.clear()
-            except Exception as e:
-                debug(f"[BRAIN_V2] Working memory clear after guest intro failed: {e}")
+        # Remote/guest turns must not mutate the shared SpeakerContext.  Local CLI
+        # turns continue to use SpeakerContext for backward compatibility.
+        is_remote_guest = context.actor is Actor.GUEST
+        if is_remote_guest:
+            return self._remote_guest_reply(user_input)
+        else:
+            self.speaker.update_from_input(user_input)
+            self.speaker.note_guest_relation_from_input(user_input)
+            reset_check = getattr(self.speaker, "consume_speaker_reset", None)
+            speaker_reset = reset_check() is True if callable(reset_check) else False
+            if speaker_reset and self._brain_v2_runtime_ready():
+                try:
+                    self.brain_v2.working.clear()
+                    self._restore_owner_current_location()
+                except Exception as e:
+                    debug(f"[BRAIN_V2] Working memory clear after speaker reset failed: {e}")
+            guest = self.speaker.is_guest_speaker()
+            if (
+                guest
+                and getattr(self.speaker, "last_was_session_intro", False)
+                and self._brain_v2_runtime_ready()
+            ):
+                try:
+                    self._snapshot_owner_current_location()
+                    self.brain_v2.working.clear()
+                except Exception as e:
+                    debug(f"[BRAIN_V2] Working memory clear after guest intro failed: {e}")
         brain_memory_text = self._normalize_brain_memory_statement(user_input)
 
         if guest and getattr(self.speaker, "last_was_session_intro", False):
@@ -948,6 +986,28 @@ class HIKARI_Orchestrator:
             "I will not store guest personal details in the household owner's "
             "Brain v2 memory."
         )
+
+    def _remote_guest_reply(self, user_input: str) -> str:
+        """Bounded generic reply for remote/guest turns.
+
+        Remote guests cannot read owner memory, write durable memory, modify the
+        speaker identity, access documents, execute side effects, or call providers.
+        This method returns a safe generic response without exposing owner identity,
+        memory contents, paths, provider credentials, internal exceptions, or policy
+        internals.
+        """
+        lowered = (user_input or "").lower().strip()
+        if not lowered:
+            return "Hello. How can I help?"
+        if any(
+            lowered.startswith(wake) for wake in ["hi", "hello", "hey", "good morning", "good afternoon"]
+        ):
+            return "Hello. How can I help?"
+        if any(phrase in lowered for phrase in ("who are you", "what is your name", "what can you do")):
+            return "I'm HIKARI, a local assistant. I can answer general questions, but I cannot access household memory or documents from this device."
+        if any(phrase in lowered for phrase in ("status", "memory", "remember", "profile", "document")):
+            return "I cannot access that from this device. Please use the local computer for household memory, documents, or status."
+        return "I cannot complete this request from this device."
 
     def _task_intent_service(self):
         if not hasattr(self, "_task_intents"):

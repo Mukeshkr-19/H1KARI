@@ -1,21 +1,29 @@
 """
 HIKARI v2.0 - Voice I/O System
-Uses Whisper for local speech recognition (works offline, any accent)
-Fallback to Google Speech Recognition
+
+Uses bounded speech adapters so that backend selection follows the runtime
+configuration and local backends never silently fall back to cloud services.
 """
+
+from __future__ import annotations
 
 import os
 import re
 import sys
-import time
-import json
-import wave
 import threading
-import tempfile
-from typing import Optional, Callable
-from datetime import datetime
+import time
 from pathlib import Path
+from typing import Optional
+
 from dotenv import load_dotenv
+
+from core.speech_adapters import (
+    CapturedAudio,
+    SpeechAdapterError,
+    SpeechBackendUnavailable,
+    build_stt_adapter,
+    build_tts_adapter,
+)
 
 # Fix SSL certificate issue on macOS
 try:
@@ -47,27 +55,55 @@ try:
 except ImportError:
     NUMPY_AVAILABLE = False
 
-try:
-    import whisper
-
-    WHISPER_AVAILABLE = True
-except ImportError:
-    WHISPER_AVAILABLE = False
-
 load_dotenv()
 
 
-class VoiceSystem:
-    """Handles all voice I/O operations with Whisper as primary"""
+def _get_configured_stt_backend() -> str:
+    """Return the STT backend name from the runtime configuration.
 
-    def __init__(self):
+    Falls back to ``openai-whisper`` when no runtime configuration exists so
+    that the interactive text/daemon paths remain usable.
+    """
+    try:
+        from core.runtime_setup import get_voice_backend_name
+
+        backend = get_voice_backend_name()
+        if backend:
+            return backend
+    except Exception:
+        pass
+    return "openai-whisper"
+
+
+def _get_configured_tts_backend() -> str:
+    """Return the TTS backend name from the runtime configuration.
+
+    Defaults to ``macos-say``.  The adapter's ``is_available`` method reports
+    whether the platform actually supports it.
+    """
+    try:
+        from core.runtime_setup import get_tts_backend_name
+
+        backend = get_tts_backend_name()
+        if backend:
+            return backend
+    except Exception:
+        pass
+    return "macos-say"
+
+
+class VoiceSystem:
+    """Handles all voice I/O operations using bounded speech adapters."""
+
+    def __init__(self, backend: Optional[str] = None):
         self.recognizer = sr.Recognizer() if SR_AVAILABLE else None
         self.is_listening = False
         self._audio = None
         self._warmup_done = False
         self._mic_index = 0
-        self._whisper_model = None
-        self._use_whisper = True  # Use Whisper by default
+        self._backend_name = backend or _get_configured_stt_backend()
+        self._stt = build_stt_adapter(self._backend_name)
+        self._tts = build_tts_adapter(_get_configured_tts_backend())
 
         if self.recognizer:
             self.recognizer.energy_threshold = 4000
@@ -92,17 +128,6 @@ class VoiceSystem:
             pass
         return 0
 
-    def _load_whisper(self):
-        """Load Whisper model (lazy loading)"""
-        if self._whisper_model is None and WHISPER_AVAILABLE:
-            print("[VOICE] Loading Whisper model (first time takes ~30 seconds)...")
-            try:
-                self._whisper_model = whisper.load_model("base")
-                print("[VOICE] Whisper model loaded successfully")
-            except Exception as e:
-                print(f"[VOICE] Whisper load failed: {e}")
-                self._use_whisper = False
-
     def warmup(self):
         """Warm up microphone"""
         if not SR_AVAILABLE or not PYAUDIO_AVAILABLE:
@@ -120,23 +145,28 @@ class VoiceSystem:
                 )
             self._warmup_done = True
 
-            # Pre-load Whisper in background
-            if WHISPER_AVAILABLE:
-                threading.Thread(target=self._load_whisper, daemon=True).start()
+            # Pre-load the local model in background only if that is the selected backend.
+            if self._stt.audio_egress is False and self._stt.is_available():
+                threading.Thread(target=self._stt.prepare, daemon=True).start()
 
             print("[VOICE] Mic ready")
-        except Exception as e:
-            print(f"[VOICE] Mic warmup failed: {e}")
+        except Exception:
+            print("[VOICE] Mic warmup failed")
+
+    def _audio_to_captured(self, audio) -> CapturedAudio:
+        """Convert a speech_recognition AudioData to a CapturedAudio value."""
+        return CapturedAudio(
+            pcm_bytes=audio.get_raw_data(),
+            sample_rate=audio.sample_rate,
+            sample_width=audio.sample_width,
+            channel_count=1,
+        )
 
     def listen(self, timeout: int = 10, phrase_time_limit: int = 15) -> Optional[str]:
-        """Listen for speech and return recognized text using Whisper"""
+        """Listen for speech and return recognized text using the configured adapter."""
         if not SR_AVAILABLE:
             print("[VOICE] SpeechRecognition not available")
             return None
-
-        # Load Whisper if not loaded
-        if self._use_whisper and self._whisper_model is None:
-            self._load_whisper()
 
         try:
             with sr.Microphone(device_index=self._mic_index) as source:
@@ -147,72 +177,41 @@ class VoiceSystem:
                     source, timeout=timeout, phrase_time_limit=phrase_time_limit
                 )
 
-            # Try Whisper first (local, works with any accent)
-            if self._use_whisper and self._whisper_model:
-                try:
-                    text = self._recognize_with_whisper(audio)
-                    if text:
-                        print(f"[VOICE] Recognized (Whisper): {text}")
-                        return text
-                except Exception as e:
-                    print(f"[VOICE] Whisper error: {e}")
-
-            # Fallback to Google
-            try:
-                text = self.recognizer.recognize_google(audio)
-                print(f"[VOICE] Recognized (Google): {text}")
-                return text
-            except sr.UnknownValueError:
-                print("[VOICE] Could not understand - try speaking closer")
-                return None
-            except sr.RequestError as e:
-                print(f"[VOICE] Google API error: {e}")
-                return None
-
+            captured = self._audio_to_captured(audio)
+            text = self._stt.transcribe(captured)
+            print(f"[VOICE] Recognition succeeded ({self._backend_name})")
+            return text
         except sr.WaitTimeoutError:
             print("[VOICE] No speech detected")
             return None
-        except Exception as e:
-            print(f"[VOICE] Error: {e}")
+        except SpeechAdapterError:
+            print("[VOICE] Recognition failed; falling back to text")
             return None
-
-    def _recognize_with_whisper(self, audio) -> Optional[str]:
-        """Recognize speech using local Whisper model"""
-        try:
-            # Convert audio to numpy array
-            audio_data = (
-                np.frombuffer(audio.get_raw_data(), dtype=np.int16).astype(np.float32)
-                / 32768.0
-            )
-            result = self._whisper_model.transcribe(
-                audio_data, language="en", fp16=False
-            )
-            text = result["text"].strip()
-            return text if text else None
-        except Exception as e:
-            print(f"[VOICE] Whisper recognition failed: {e}")
+        except Exception:
+            print("[VOICE] Recognition encountered an unexpected error")
             return None
 
     def speak(self, text: str):
-        """Text-to-speech using macOS say command"""
+        """Text-to-speech using the configured TTS adapter."""
         try:
             clean_text = re.sub(r"[^\w\s:,.!?']", "", text)
-            print(f"[TTS] {clean_text}")
-            if sys.platform == "darwin":
-                os.system(f'say "{clean_text}"')
-            elif sys.platform.startswith("linux"):
-                os.system(f'espeak "{clean_text}"')
-            else:
-                print(f"[TTS] {clean_text}")
-        except Exception as e:
-            print(f"[TTS Error] {e}")
+            print("[TTS] Synthesizing response")
+            self._tts.synthesize(clean_text)
+        except SpeechBackendUnavailable:
+            # TTS unavailable is not fatal; callers can fall back to text.
+            pass
+        except SpeechAdapterError:
+            print("[TTS] Synthesis failed")
+        except Exception:
+            print("[TTS] Synthesis encountered an unexpected error")
 
     def get_status(self) -> dict:
         return {
             "listening": self.is_listening,
             "warmup_done": self._warmup_done,
-            "whisper_available": WHISPER_AVAILABLE,
-            "whisper_loaded": self._whisper_model is not None,
+            "backend": self._backend_name,
+            "stt_available": self._stt.is_available(),
+            "tts_available": self._tts.is_available(),
             "speech_recognition": SR_AVAILABLE,
             "pyaudio": PYAUDIO_AVAILABLE,
         }
@@ -225,9 +224,9 @@ class ClapDetector:
         self.clap_count = clap_count
         self.threshold = threshold
         self._running = False
-        self._callback: Optional[Callable] = None
+        self._callback = None
 
-    def start(self, callback: Callable):
+    def start(self, callback):
         if not PYAUDIO_AVAILABLE or not NUMPY_AVAILABLE:
             return
         self._callback = callback

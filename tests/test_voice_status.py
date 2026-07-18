@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -50,6 +51,34 @@ def test_status_reports_packages_caches_and_enrollment_without_reading(
     assert status["models"]["speechbrain_ecapa"]["revision"] == voice_status.SPEECHBRAIN_ECAPA_REVISION
     assert status["models"]["speechbrain_ecapa"]["enrollment_present"] is True
     assert status["policies"]["google_audio_egress"] is True
+    assert status["policies"]["adapter_local_only"] == (
+        "Local backends fail with a bounded error instead of falling back to cloud STT"
+    )
+
+
+def test_status_reports_explicit_configured_cloud_backend(tmp_path: Path):
+    state = tmp_path / ".hikari"
+    state.mkdir()
+    (state / "runtime.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "startup_mode": "voice",
+                "voice": {"backend": "google-speech"},
+                "created_paths": ["."],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status = voice_status.collect_voice_status(
+        environ={"HIKARI_HOME": str(state)},
+        home=tmp_path,
+    )
+
+    assert status["policies"]["configured_backend"] == "google-speech"
+    assert "sent off-device" in status["policies"]["core_voice"]
+    assert "sent off-device" in status["policies"]["wake_daemon"]
 
 
 def test_formatter_discloses_egress_and_no_load_contract(monkeypatch, tmp_path: Path):
@@ -63,7 +92,10 @@ def test_formatter_discloses_egress_and_no_load_contract(monkeypatch, tmp_path: 
     assert voice_status.FASTER_WHISPER_REVISION in report
     assert voice_status.SPEECHBRAIN_ECAPA_REVISION in report
     assert "contents not read" in report
-    assert "send captured audio off-device" in report
+    assert "sends audio off-device" in report
+    assert "only when explicitly selected" in report
+    assert "never silently fall back" in report
+    assert "is unavailable or fails" not in report
 
 
 def test_voice_status_cli_does_not_import_model_packages(tmp_path: Path):
@@ -94,11 +126,12 @@ def test_voice_status_cli_does_not_import_model_packages(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert "Voice backend status" in result.stdout
-    assert "Google fallback" in result.stdout
+    assert "only when explicitly selected" in result.stdout
+    assert "never silently fall back" in result.stdout
     assert not marker.exists()
 
 
 def test_runtime_download_sites_use_reviewed_model_revisions():
-    daemon = (REPO_ROOT / "services" / "hikari_daemon.py").read_text(encoding="utf-8")
+    speech_adapters = (REPO_ROOT / "core" / "speech_adapters.py").read_text(encoding="utf-8")
 
-    assert "revision=FASTER_WHISPER_REVISION" in daemon
+    assert "FASTER_WHISPER_REVISION" in speech_adapters

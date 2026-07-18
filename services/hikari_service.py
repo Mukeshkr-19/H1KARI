@@ -62,9 +62,9 @@ class HIKARI_Daemon:
                     check=False,
                 )
             else:
-                print(f"[TTS] {clean}")
-        except Exception as e:
-            print(f"[TTS Error] {e}")
+                print("[TTS] Spoken output unavailable on this platform")
+        except Exception:
+            print("[TTS] Synthesis failed")
 
     def listen_and_respond(self):
         """Listen for speech and respond - no wake word needed"""
@@ -92,7 +92,7 @@ class HIKARI_Daemon:
                         text = r.recognize_google(audio).lower().strip()
 
                         if text and len(text) > 0:
-                            print(f"[YOU] {text}")
+                            print("[HIKARI] Recognition succeeded")
 
                             # Check for exit command
                             if any(w in text for w in ["exit", "quit", "goodbye", "stop"]):
@@ -103,7 +103,6 @@ class HIKARI_Daemon:
                             response = self.orchestrator.process_input(text, source="voice")
 
                             if response:
-                                print(f"[HIKARI] {response}")
                                 self.speak(response)
 
                             print("\n[HIKARI] Listening... (say something or 'exit' to stop)")
@@ -113,16 +112,16 @@ class HIKARI_Daemon:
                     except sr.UnknownValueError:
                         print("\n[HIKARI] Couldn't understand - try again")
                         continue
-                    except Exception as e:
-                        print(f"\n[HIKARI] Error: {e}")
+                    except Exception:
+                        print("\n[HIKARI] Voice processing error")
                         continue
 
         except ImportError:
             print("[HIKARI] SpeechRecognition not available!")
             print("[HIKARI] Run: pip install SpeechRecognition")
             print("[HIKARI] Also install: brew install portaudio")
-        except Exception as e:
-            print(f"[HIKARI] Error: {e}")
+        except Exception:
+            print("[HIKARI] Voice service error")
 
     def run(self):
         """Run the daemon"""

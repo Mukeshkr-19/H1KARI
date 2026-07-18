@@ -37,7 +37,7 @@ def test_init_creates_private_layout_and_config(tmp_path):
     assert config["startup_mode"] == "voice"
     assert config["voice"]["backend"] == "openai-whisper"
     assert "download" in config["voice"]["download"].lower()
-    assert config["voice"]["audio_egress"] is True
+    assert config["voice"]["audio_egress"] is False
     assert (root / "brain" / "brain_v2").is_dir()
     assert (root / "brain" / "tasks").is_dir()
     assert (root / "brain" / "legacy-data").is_dir()
@@ -108,6 +108,37 @@ def test_voice_selection_validation():
         initialization_plan("voice")
     with pytest.raises(ValueError, match="requires startup mode voice"):
         initialization_plan("text", "google-speech")
+
+
+def test_legacy_openai_whisper_runtime_with_audio_egress_is_idempotent(tmp_path):
+    """A legacy runtime.json with derived audio_egress=true must not be rewritten."""
+    from core.runtime_setup import initialize_runtime_home
+
+    root = tmp_path / "state"
+    root.mkdir(parents=True)
+    legacy_config = {
+        "version": 1,
+        "startup_mode": "voice",
+        "voice": {
+            "backend": "openai-whisper",
+            "model": "base",
+            "download": "May download the base model on first voice use.",
+            "audio_egress": True,
+            "egress": "Legacy disclosure wording differs from current derived text.",
+        },
+        "created_paths": [".", "brain", "brain/brain_v2", "brain/tasks", "brain/legacy-data", "backups"],
+    }
+    config_path = root / "runtime.json"
+    config_path.write_text(json.dumps(legacy_config), encoding="utf-8")
+    for sub in ("brain", "brain/brain_v2", "brain/tasks", "brain/legacy-data", "backups"):
+        (root / sub).mkdir(parents=True)
+
+    result = initialize_runtime_home("voice", "openai-whisper", root=root)
+
+    assert result["already_initialized"] is True
+    current = json.loads(config_path.read_text(encoding="utf-8"))
+    assert current["voice"]["audio_egress"] is True
+    assert current["voice"]["backend"] == "openai-whisper"
 
 
 def test_init_cli_loads_no_voice_model(tmp_path):

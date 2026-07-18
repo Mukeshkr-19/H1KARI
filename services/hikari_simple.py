@@ -22,7 +22,7 @@ print("🎯 HIKARI starting...")
 def speak(text):
     global state
     state = "SPEAKING"
-    print(f"🔊 {text}")
+    print("🔊 Synthesizing response")
     subprocess.run(["say", "-r", "200", text], capture_output=True)
     state = "ACTIVE"
 
@@ -32,8 +32,8 @@ def process(text):
         from core.orchestrator import get_orchestrator
 
         return get_orchestrator().process_input(text, source="voice")
-    except Exception as e:
-        return f"Oops: {e}"
+    except Exception:
+        return "The request could not be completed. Please try again or use text input."
 
 
 def is_wake(text):
@@ -57,7 +57,7 @@ while True:
 
         print("🎤 Got audio, recognizing...")
         text = r.recognize_google(audio).lower().strip()
-        print(f"📝 '{text}'")
+        print("📝 Recognition succeeded")
 
         if state == "LISTENING":
             if is_wake(text):
@@ -68,14 +68,12 @@ while True:
                 print("(ignored)")
 
         elif state == "ACTIVE":
-            print(f"You: {text}")
             if is_stop(text):
                 print("💤 Sleeping...")
                 speak("Talk to you later!")
                 state = "LISTENING"
             else:
                 resp = process(text)
-                print(f"HIKARI: {resp}")
                 speak(resp)
 
     except sr.WaitTimeoutError:
@@ -85,6 +83,6 @@ while True:
     except KeyboardInterrupt:
         print("\nBye!")
         break
-    except Exception as e:
-        print(f"Error: {e}")
+    except Exception:
+        print("Voice processing error")
         time.sleep(1)

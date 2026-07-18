@@ -24,7 +24,11 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _REPO_ROOT)
 
-from core.voice_status import FASTER_WHISPER_REVISION
+from core.speech_adapters import (
+    CapturedAudio,
+    SpeechAdapterError,
+    build_stt_adapter,
+)
 
 # Speaker verification (local-first); must run after sys.path includes repo root
 try:
@@ -66,15 +70,13 @@ HIKARI - Always-on Voice Daemon
     )
 
 
-def log_convo(user: str, hikari: str):
-    """Log conversation"""
+def log_convo(_user: str, hikari: str):
+    """Log structural completion only; never persist voice content."""
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     log_path = maybe_rotate_daily_log(Path(_REPO_ROOT), "conversations.log")
     with open(log_path, "a") as f:
-        f.write(f"[{timestamp}] YOU: {user}\n")
-        if hikari:
-            f.write(f"[{timestamp}] HIKARI: {hikari}\n")
-        f.write("\n")
+        outcome = "response" if hikari else "no_response"
+        f.write(f"[{timestamp}] voice_turn={outcome}\n")
 
 
 def load_learnings():
@@ -128,16 +130,16 @@ def enroll_voice():
             embeddings.append(emb)
             print("✓ captured")
             time.sleep(0.8)
-        except Exception as e:
-            print(f"Error capturing sample: {e}")
+        except Exception:
+            print("Error capturing enrollment sample")
             return False
 
     try:
         auth.enroll_from_embeddings(embeddings)
         print("\n✅ Voice enrolled! HIKARI will ignore other speakers.\n")
         return True
-    except Exception as e:
-        print(f"Error saving enrollment: {e}")
+    except Exception:
+        print("Error saving enrollment")
         return False
 
 
@@ -188,44 +190,44 @@ def verify_speaker(audio) -> bool:
                 f"❌ Speaker mismatch (score={res.score:.3f}, th={res.threshold:.3f})"
             )
         return res.ok
-    except ImportError as e:
-        print(f"⚠️  Speaker verification unavailable (missing: {e}). Access denied.")
+    except ImportError:
+        print("⚠️  Speaker verification unavailable. Access denied.")
         return False
-    except Exception as e:
-        print(f"⚠️  Speaker verification error: {e}. Access denied.")
+    except Exception:
+        print("⚠️  Speaker verification error. Access denied.")
         return False
 
 
 sr = None
-faster_whisper_model = None
-np = None
+stt_adapter = None
 r = None
 _audio_initialized = False
 
 
+def _get_configured_stt_backend() -> str:
+    """Return the STT backend name from runtime configuration.
+
+    The wake daemon defaults to the local faster-whisper backend.  Cloud STT
+    is only used when the user has explicitly selected it.
+    """
+    try:
+        from core.runtime_setup import get_voice_backend_name
+
+        backend = get_voice_backend_name()
+        if backend:
+            return backend
+    except Exception:
+        pass
+    return "faster-whisper"
+
+
 def initialize_audio_backends() -> bool:
     """Initialize speech dependencies once, when the daemon actually starts."""
-    global _audio_initialized, faster_whisper_model, np, sr, r
+    global _audio_initialized, sr, stt_adapter, r
 
     if _audio_initialized:
         return sr is not None
     _audio_initialized = True
-
-    try:
-        from faster_whisper import WhisperModel
-        import numpy as numpy_module
-
-        np = numpy_module
-        print("[OK] faster-whisper loading...")
-        faster_whisper_model = WhisperModel(
-            "base",
-            device="cpu",
-            compute_type="int8",
-            revision=FASTER_WHISPER_REVISION,
-        )
-        print("[OK] faster-whisper loaded!")
-    except Exception as exc:
-        print(f"[INFO] faster-whisper: {exc}")
 
     try:
         import speech_recognition as sr_module
@@ -237,56 +239,46 @@ def initialize_audio_backends() -> bool:
         r.pause_threshold = 1.5
         r.phrase_time_limit = 10
         r.non_speaking_duration = 0.5
+        backend_name = _get_configured_stt_backend()
+        stt_adapter = build_stt_adapter(backend_name)
         print("[OK] SpeechRecognition")
-    except Exception as exc:
+        print(f"[OK] STT backend: {backend_name}")
+    except Exception:
         sr = None
         r = None
-        print(f"[MISSING] SpeechRecognition: {exc}")
 
     return sr is not None
 
 
 def recognize_audio(audio):
-    """Use faster-whisper first (offline), then Google"""
-    # Try faster-whisper first (offline, fastest)
-    if faster_whisper_model is not None and np is not None:
-        try:
-            audio_data = (
-                np.frombuffer(audio.get_raw_data(), dtype=np.int16).astype(np.float32)
-                / 32768.0
-            )
-            segments, info = faster_whisper_model.transcribe(
-                audio_data, language="en", beam_size=1
-            )
-            text = "".join(seg.text for seg in segments).strip().lower()
-            # Only return if we got actual text (not empty)
-            if text and len(text) > 2:
-                print(f"📝 (faster-whisper) '{text}'", flush=True)
-                return text
-        except Exception as e:
-            pass  # Fall through
+    """Transcribe captured audio through the bounded adapter boundary."""
+    if stt_adapter is None:
+        return ""
 
-    # Fallback to Google (more reliable for wake word)
-    for attempt in range(2):
-        try:
-            text = r.recognize_google(audio, language="en-US").lower().strip()
-            if text:
-                print(f"📝 (Google) '{text}'", flush=True)
-                return text
-        except sr.UnknownValueError:
-            if attempt == 1:
-                break
-        except sr.RequestError:
-            time.sleep(0.3)
-            continue
-    return ""
+    try:
+        captured = CapturedAudio(
+            pcm_bytes=audio.get_raw_data(),
+            sample_rate=audio.sample_rate,
+            sample_width=audio.sample_width,
+            channel_count=1,
+        )
+        text = stt_adapter.transcribe(captured)
+        if text:
+            print("[DAEMON] Recognition succeeded", flush=True)
+        return text.lower().strip()
+    except SpeechAdapterError:
+        print("[DAEMON] Recognition failed; falling back to text", flush=True)
+        return ""
+    except Exception:
+        print("[DAEMON] Recognition encountered an unexpected error", flush=True)
+        return ""
 
 
 def speak(text):
     """Speak using macOS say command"""
     global hikari_state
     hikari_state = HikariState.SPEAKING
-    print(f"🔊 TTS: {text}", flush=True)
+    print("[DAEMON] Synthesizing response", flush=True)
     # Use macOS say with faster rate
     subprocess.run(["say", "-r", "200", text], capture_output=True)
     time.sleep(0.3)
@@ -305,8 +297,8 @@ def process(text):
         orch = get_orchestrator()
         response = orch.process_input(text, source="voice")
         return response
-    except Exception as e:
-        return f"Oops! {str(e)[:80]}"
+    except Exception:
+        return "The request could not be completed. Please use text input or try again."
 
 
 def is_stop_command(text: str) -> bool:
@@ -356,7 +348,7 @@ def _listen_for_wake_word() -> None:
         print("❌ Voice not recognized, ignoring...\n")
         return
 
-    print(f"\n🎉 '{text}' - ACTIVATED!\n")
+    print("\n🎉 ACTIVATED!\n")
     hikari_state = HikariState.ACTIVE
     speak("Go ahead!")
 
@@ -375,7 +367,6 @@ def _listen_for_active_command() -> None:
     text = recognize_audio(audio)
     if not text:
         return
-    print(f"You: {text}")
 
     if any(phrase in text for phrase in ["that's wrong", "mistake", "incorrect"]):
         speak("What should I have said?")
@@ -388,7 +379,6 @@ def _listen_for_active_command() -> None:
 
     response = process(text)
     if response:
-        print(f"HIKARI: {response}")
         speak(response)
         log_convo(text, response)
 
@@ -412,11 +402,11 @@ def listen_always() -> None:
                 _listen_for_active_command()
         except (sr.WaitTimeoutError, sr.UnknownValueError):
             continue
-        except OSError as exc:
-            print(f"🎤 Mic error: {exc}", flush=True)
+        except OSError:
+            print("🎤 Microphone error", flush=True)
             time.sleep(2)
-        except Exception as exc:
-            print(f"Daemon loop error: {exc}", flush=True)
+        except Exception:
+            print("Daemon loop error", flush=True)
             time.sleep(1)
 
 

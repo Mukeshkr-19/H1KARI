@@ -4,11 +4,22 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { VoiceCompanionOverlay, type CompanionCaption } from "@/components/VoiceCompanionOverlay";
 import { CompanionSettings } from "@/components/CompanionSettings";
 import {
+  DEFAULT_SPEAK_RESPONSES,
+  DEFAULT_SPEECH_RATE,
   type CompanionState,
   type CompanionType,
   type Presentation,
 } from "@/utils/companion/constants";
 import { loadCompanionPrefs, saveCompanionPrefs } from "@/utils/companion/storage";
+import {
+  SpeechOutputController,
+  createBrowserSpeechEngine,
+  parseSpeechControlIntent,
+} from "@/utils/companion/speechOutput";
+import {
+  boundVoiceTranscript,
+  parseVoiceDocumentIntent,
+} from "@/utils/companion/voiceDocumentIntent";
 import protocolSchema from "../../../protocol/hikari-v1.json";
 
 /** Off by default; set NEXT_PUBLIC_HIKARI_VOICE_COMPANION=1 at build time to enable overlay UI. */
@@ -242,6 +253,9 @@ export default function Home() {
   const [companionCaption, setCompanionCaption] = useState<CompanionCaption | null>(null);
   const [companionType, setCompanionType] = useState<CompanionType>("cat");
   const [presentation, setPresentation] = useState<Presentation>("non-binary");
+  const [speakResponses, setSpeakResponses] = useState(DEFAULT_SPEAK_RESPONSES);
+  const [speechRate, setSpeechRate] = useState(DEFAULT_SPEECH_RATE);
+  const [isSpeakingAloud, setIsSpeakingAloud] = useState(false);
   const [voiceSessionActive, setVoiceSessionActive] = useState(false);
   const [voiceTurnActive, setVoiceTurnActive] = useState(false);
   const [recognitionCaptureActive, setRecognitionCaptureActive] = useState(false);
@@ -274,6 +288,14 @@ export default function Home() {
   const documentTaskIdsSeenRef = useRef(new Set<string>());
   const documentPreparePendingRef = useRef(false);
   const documentPrepareRequestRef = useRef<Omit<DocumentConfirmation, "taskId"> | null>(null);
+  const documentAwaitingConfirmationRef = useRef(false);
+  const documentStatusCodeRef = useRef<DocumentStatus | "">("");
+  const documentTaskVoiceOriginRef = useRef(false);
+  const speakResponsesRef = useRef(DEFAULT_SPEAK_RESPONSES);
+  const speechOutputRef = useRef<SpeechOutputController | null>(null);
+  if (speechOutputRef.current === null) {
+    speechOutputRef.current = new SpeechOutputController(createBrowserSpeechEngine());
+  }
   const dashboardHeadingRef = useRef<HTMLHeadingElement>(null);
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
   const documentErrorHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -291,6 +313,7 @@ export default function Home() {
   }, []);
 
   const failDocumentPrepare = useCallback((message: string) => {
+    documentTaskVoiceOriginRef.current = false;
     documentPreparePendingRef.current = false;
     documentPrepareRequestRef.current = null;
     setDocumentPreparePending(false);
@@ -316,11 +339,43 @@ export default function Home() {
     const prefs = loadCompanionPrefs();
     setCompanionType(prefs.companionType);
     setPresentation(prefs.presentation);
+    setSpeakResponses(prefs.speakResponses);
+    setSpeechRate(prefs.speechRate);
+    speakResponsesRef.current = prefs.speakResponses;
+    speechOutputRef.current?.setRate(prefs.speechRate);
+  }, []);
+
+  useEffect(() => {
+    speakResponsesRef.current = speakResponses;
+  }, [speakResponses]);
+
+  useEffect(() => {
+    const speech = speechOutputRef.current;
+    if (!speech) return;
+    speech.setCallbacks({
+      onFailure: (message) => {
+        setInterfaceError(message);
+      },
+      onSpeakingChange: (speaking) => {
+        setIsSpeakingAloud(speaking);
+      },
+    });
+    return () => {
+      speech.dispose();
+    };
   }, []);
 
   useEffect(() => {
     if (documentAwaitingConfirmation) confirmationHeadingRef.current?.focus();
   }, [documentAwaitingConfirmation]);
+
+  useEffect(() => {
+    documentAwaitingConfirmationRef.current = documentAwaitingConfirmation;
+  }, [documentAwaitingConfirmation]);
+
+  useEffect(() => {
+    documentStatusCodeRef.current = documentStatusCode;
+  }, [documentStatusCode]);
 
   useEffect(() => {
     if (documentError) documentErrorHeadingRef.current?.focus();
@@ -356,7 +411,7 @@ export default function Home() {
     [],
   );
 
-  const cancelVoiceCapture = useCallback(() => {
+  const endVoiceCaptureSession = useCallback(() => {
     voiceCaptureGenerationRef.current += 1;
     const recognition = recognitionRef.current;
     recognitionRef.current = null;
@@ -366,6 +421,11 @@ export default function Home() {
     }
     resetVoiceCompanion();
   }, [resetVoiceCompanion]);
+
+  const cancelVoiceCapture = useCallback(() => {
+    speechOutputRef.current?.cancel();
+    endVoiceCaptureSession();
+  }, [endVoiceCaptureSession]);
 
   const canStartMicrophoneCapture = useCallback((): boolean => {
     if (!isConnected) {
@@ -381,6 +441,7 @@ export default function Home() {
   }, [isConnected, isListening]);
 
   const beginVoiceCapture = useCallback(() => {
+    speechOutputRef.current?.cancel();
     if (voiceErrorResetRef.current !== null) {
       window.clearTimeout(voiceErrorResetRef.current);
       voiceErrorResetRef.current = null;
@@ -395,6 +456,136 @@ export default function Home() {
     }
   }, []);
 
+  const sendDocumentMessage = useCallback((
+    type: "document_prepare" | "document_confirm" | "document_follow_up" | "document_cancel",
+    fields: Record<string, unknown>,
+  ): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setDocumentError("Connect to HIKARI before using the document reader.");
+      return false;
+    }
+    try {
+      ws.send(encodeClientMessage(type, fields));
+      setDocumentError("");
+      return true;
+    } catch {
+      setDocumentError("The document request could not be sent.");
+      return false;
+    }
+  }, []);
+
+  const prepareDocumentRequest = useCallback((
+    path: string,
+    provider: string,
+    fallbackProvider = "",
+  ): boolean => {
+    const trimmedPath = path.trim();
+    const trimmedProvider = provider.trim();
+    const trimmedFallback = fallbackProvider.trim();
+    if (!trimmedPath || !trimmedProvider) return false;
+    const fields: Record<string, unknown> = {
+      path: trimmedPath,
+      provider: trimmedProvider,
+    };
+    if (trimmedFallback) fields.fallback_provider = trimmedFallback;
+    documentPreparePendingRef.current = true;
+    documentPrepareRequestRef.current = {
+      path: trimmedPath,
+      provider: trimmedProvider,
+      fallbackProvider: trimmedFallback,
+    };
+    setDocumentPath(trimmedPath);
+    setDocumentProvider(trimmedProvider);
+    setDocumentFallbackProvider(trimmedFallback);
+    setDocumentPreparePending(true);
+    setDocumentAwaitingConfirmation(false);
+    setDocumentConfirmation(null);
+    setDocumentStatus("Checking document access");
+    setDocumentStatusCode("");
+    setDocumentProgress(0);
+    setDocumentCheckpoint("preparing");
+    setDocumentExplanation("");
+    if (!sendDocumentMessage("document_prepare", fields)) {
+      const connected = wsRef.current?.readyState === WebSocket.OPEN;
+      failDocumentPrepare(
+        connected
+          ? "The document request could not be sent."
+          : "Connect to HIKARI before using the document reader.",
+      );
+      return false;
+    }
+    return true;
+  }, [failDocumentPrepare, sendDocumentMessage]);
+
+  const confirmDocumentRequest = useCallback((): boolean => {
+    if (!documentAwaitingConfirmationRef.current) return false;
+    if (!documentConfirmation) return false;
+    const fields: Record<string, unknown> = {
+      task_id: documentConfirmation.taskId,
+      provider: documentConfirmation.provider,
+    };
+    if (documentConfirmation.fallbackProvider) {
+      fields.fallback_provider = documentConfirmation.fallbackProvider;
+    }
+    if (sendDocumentMessage("document_confirm", fields)) {
+      setDocumentAwaitingConfirmation(false);
+      setDocumentStatus("Reading and explaining document");
+      setDocumentStatusCode("running");
+      setDocumentCheckpoint("confirmed");
+      return true;
+    }
+    return false;
+  }, [documentConfirmation, sendDocumentMessage]);
+
+  const cancelDocumentRequest = useCallback((): boolean => {
+    const taskId = documentTaskIdRef.current;
+    if (!taskId) return false;
+    if (sendDocumentMessage("document_cancel", { task_id: taskId })) {
+      documentTaskVoiceOriginRef.current = false;
+      documentPreparePendingRef.current = false;
+      documentPrepareRequestRef.current = null;
+      setDocumentPreparePending(false);
+      setDocumentAwaitingConfirmation(false);
+      setDocumentStatus("Cancelling document request");
+      return true;
+    }
+    return false;
+  }, [sendDocumentMessage]);
+
+  const followUpDocumentRequest = useCallback((
+    taskId: string,
+    text: string,
+  ): boolean => {
+    const provider = documentConfirmation?.provider ?? documentProvider.trim();
+    const fallbackProvider =
+      documentConfirmation?.fallbackProvider ?? documentFallbackProvider.trim();
+    if (!taskId || !text.trim() || !provider) return false;
+    if (taskId !== documentTaskIdRef.current) return false;
+    const fields: Record<string, unknown> = {
+      task_id: taskId,
+      text: text.trim(),
+      provider,
+    };
+    if (fallbackProvider) {
+      fields.fallback_provider = fallbackProvider;
+    }
+    if (sendDocumentMessage("document_follow_up", fields)) {
+      setDocumentFollowUp("");
+      setDocumentStatus("Answering follow-up");
+      setDocumentStatusCode("running");
+      setDocumentProgress(0);
+      setDocumentCheckpoint("follow_up");
+      return true;
+    }
+    return false;
+  }, [
+    documentConfirmation,
+    documentProvider,
+    documentFallbackProvider,
+    sendDocumentMessage,
+  ]);
+
   const submitVoiceRequest = useCallback(
     (transcript: string, captureToken: number): boolean => {
       if (
@@ -403,11 +594,108 @@ export default function Home() {
       ) {
         return false;
       }
-      const trimmed = transcript.trim();
+      const trimmed = boundVoiceTranscript(transcript);
       if (!trimmed) {
         cancelVoiceCapture();
         return false;
       }
+
+      const speechControl = parseSpeechControlIntent(trimmed);
+      if (speechControl.type !== "none") {
+        const speech = speechOutputRef.current;
+        if (speechControl.type === "stop") {
+          speech?.cancel();
+          endVoiceCaptureSession();
+          return true;
+        }
+        if (speechControl.type === "repeat") {
+          const last = speech?.getLastVoiceResponse() ?? "";
+          endVoiceCaptureSession();
+          if (speakResponsesRef.current && last) {
+            speech?.speak(last);
+          }
+          return true;
+        }
+        if (speechControl.type === "slower") {
+          const wasSpeaking = speech?.isSpeaking() ?? false;
+          const nextRate = speech?.slower() ?? DEFAULT_SPEECH_RATE;
+          setSpeechRate(nextRate);
+          saveCompanionPrefs({
+            companionType,
+            presentation,
+            speakResponses: speakResponsesRef.current,
+            speechRate: nextRate,
+          });
+          const last = speech?.getLastVoiceResponse() ?? "";
+          endVoiceCaptureSession();
+          if (speakResponsesRef.current && last && wasSpeaking) {
+            speech?.speak(last);
+          }
+          return true;
+        }
+      }
+
+      const statusCode = documentStatusCodeRef.current;
+      const canCancelDocument = Boolean(documentTaskIdRef.current) &&
+        (!statusCode || !TERMINAL_DOCUMENT_STATUSES.has(statusCode));
+      const intent = parseVoiceDocumentIntent(trimmed, {
+        awaitingConfirmation: documentAwaitingConfirmationRef.current,
+        documentTaskId: documentTaskIdRef.current,
+        canCancelDocument,
+      });
+
+      if (intent.type === "reject") {
+        setDocumentError(intent.message);
+        setActiveTab("files");
+        cancelVoiceCapture();
+        return true;
+      }
+
+      if (intent.type === "prepare") {
+        documentTaskVoiceOriginRef.current = true;
+        setActiveTab("files");
+        prepareDocumentRequest(
+          intent.path,
+          intent.provider,
+          intent.fallbackProvider,
+        );
+        cancelVoiceCapture();
+        return true;
+      }
+
+      if (intent.type === "confirm") {
+        documentTaskVoiceOriginRef.current = true;
+        setActiveTab("files");
+        const confirmed = confirmDocumentRequest();
+        cancelVoiceCapture();
+        if (!confirmed) {
+          setDocumentError("Document confirmation could not be sent.");
+        }
+        return true;
+      }
+
+      if (intent.type === "cancel") {
+        setActiveTab("files");
+        const cancelled = cancelDocumentRequest();
+        cancelVoiceCapture();
+        if (!cancelled) {
+          setDocumentError("Document cancellation could not be sent.");
+        }
+        return true;
+      }
+
+      if (intent.type === "follow_up") {
+        documentTaskVoiceOriginRef.current = true;
+        setActiveTab("files");
+        const sent = followUpDocumentRequest(intent.taskId, intent.text);
+        cancelVoiceCapture();
+        if (!sent) {
+          setDocumentError("Document follow-up could not be sent.");
+        }
+        return true;
+      }
+
+      speechOutputRef.current?.cancel();
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         cancelVoiceCapture();
@@ -430,12 +718,26 @@ export default function Home() {
       setOrbState("thinking");
       return true;
     },
-    [cancelVoiceCapture],
+    [
+      cancelVoiceCapture,
+      companionType,
+      endVoiceCaptureSession,
+      presentation,
+      prepareDocumentRequest,
+      confirmDocumentRequest,
+      cancelDocumentRequest,
+      followUpDocumentRequest,
+    ],
   );
 
   const syncCompanionPrefs = useCallback(
     (type: CompanionType, pres: Presentation) => {
-      saveCompanionPrefs({ companionType: type, presentation: pres });
+      saveCompanionPrefs({
+        companionType: type,
+        presentation: pres,
+        speakResponses: speakResponsesRef.current,
+        speechRate: speechOutputRef.current?.getRate() ?? DEFAULT_SPEECH_RATE,
+      });
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
           encodeClientMessage("companion_preferences", {
@@ -447,6 +749,21 @@ export default function Home() {
     },
     [],
   );
+
+  const persistSpeakResponses = useCallback((enabled: boolean) => {
+    setSpeakResponses(enabled);
+    speakResponsesRef.current = enabled;
+    saveCompanionPrefs({
+      companionType,
+      presentation,
+      speakResponses: enabled,
+      speechRate: speechOutputRef.current?.getRate() ?? speechRate,
+    });
+  }, [companionType, presentation, speechRate]);
+
+  const stopSpeaking = useCallback(() => {
+    speechOutputRef.current?.cancel();
+  }, []);
 
   const applyCompanionUpdate = useCallback((companion: Record<string, unknown>) => {
     const prefs = companion.preferences as
@@ -531,8 +848,17 @@ export default function Home() {
         applyCompanionUpdate(data.companion as Record<string, unknown>);
       } else if (data.type === "response") {
         setIsTyping(false);
-        addMessage(stringField(data, "text"), "ai");
-        if (voiceTurnActiveRef.current || voiceSessionActiveRef.current) {
+        const responseText = stringField(data, "text");
+        const fromVoice =
+          voiceTurnActiveRef.current || voiceSessionActiveRef.current;
+        addMessage(responseText, "ai");
+        if (fromVoice && responseText) {
+          speechOutputRef.current?.rememberVoiceResponse(responseText);
+          if (speakResponsesRef.current) {
+            speechOutputRef.current?.speak(responseText);
+          }
+        }
+        if (fromVoice) {
           if (!VOICE_COMPANION_UI_ENABLED) {
             resetVoiceCompanion();
           } else {
@@ -616,6 +942,14 @@ export default function Home() {
           setDocumentAwaitingConfirmation(false);
           setDocumentError("");
           setActiveTab("files");
+          const shouldSpeak = documentTaskVoiceOriginRef.current;
+          documentTaskVoiceOriginRef.current = false;
+          if (shouldSpeak) {
+            speechOutputRef.current?.rememberVoiceResponse(text);
+            if (speakResponsesRef.current) {
+              speechOutputRef.current?.speak(text);
+            }
+          }
         }
       } else if (data.type === "document_error") {
         const taskId = boundedString(data, "task_id", DOCUMENT_TASK_ID_MAX);
@@ -670,6 +1004,8 @@ export default function Home() {
           "Connection lost while preparing the document. Reconnect and try again.",
         );
       }
+      speechOutputRef.current?.cancel();
+      speechOutputRef.current?.clearLastVoiceResponse();
       cancelVoiceCapture();
       setIsConnected(false);
       setIsPaired(false);
@@ -855,99 +1191,28 @@ export default function Home() {
     voiceTurnActive ||
     (voiceSessionActive && !microphoneCapturing);
 
-  const sendDocumentMessage = (
-    type: "document_prepare" | "document_confirm" | "document_follow_up" | "document_cancel",
-    fields: Record<string, unknown>,
-  ): boolean => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      setDocumentError("Connect to HIKARI before using the document reader.");
-      return false;
-    }
-    try {
-      ws.send(encodeClientMessage(type, fields));
-      setDocumentError("");
-      return true;
-    } catch {
-      setDocumentError("The document request could not be sent.");
-      return false;
-    }
-  };
-
   const prepareDocument = () => {
-    const path = documentPath.trim();
-    const provider = documentProvider.trim();
-    const fallbackProvider = documentFallbackProvider.trim();
-    if (!path || !provider) return;
-    const fields: Record<string, unknown> = { path, provider };
-    if (fallbackProvider) fields.fallback_provider = fallbackProvider;
-    // Set the request guard before send: a fast local server can reply in the
-    // same turn, before React state updates are committed.
-    documentPreparePendingRef.current = true;
-    documentPrepareRequestRef.current = { path, provider, fallbackProvider };
-    setDocumentPreparePending(true);
-    setDocumentAwaitingConfirmation(false);
-    setDocumentConfirmation(null);
-    setDocumentStatus("Checking document access");
-    setDocumentStatusCode("");
-    setDocumentProgress(0);
-    setDocumentCheckpoint("preparing");
-    setDocumentExplanation("");
-    if (!sendDocumentMessage("document_prepare", fields)) {
-      documentPreparePendingRef.current = false;
-      documentPrepareRequestRef.current = null;
-      setDocumentPreparePending(false);
-    }
+    documentTaskVoiceOriginRef.current = false;
+    documentTaskVoiceOriginRef.current = false;
+    prepareDocumentRequest(
+      documentPath,
+      documentProvider,
+      documentFallbackProvider,
+    );
   };
 
   const confirmDocument = () => {
-    if (!documentAwaitingConfirmation || !documentConfirmation) return;
-    const fields: Record<string, unknown> = {
-      task_id: documentConfirmation.taskId,
-      provider: documentConfirmation.provider,
-    };
-    if (documentConfirmation.fallbackProvider) {
-      fields.fallback_provider = documentConfirmation.fallbackProvider;
-    }
-    if (sendDocumentMessage("document_confirm", fields)) {
-      setDocumentAwaitingConfirmation(false);
-      setDocumentStatus("Reading and explaining document");
-      setDocumentStatusCode("running");
-      setDocumentCheckpoint("confirmed");
-    }
+    confirmDocumentRequest();
   };
 
   const cancelDocument = () => {
-    if (!documentTaskId) return;
-    if (sendDocumentMessage("document_cancel", { task_id: documentTaskId })) {
-      documentPreparePendingRef.current = false;
-      documentPrepareRequestRef.current = null;
-      setDocumentPreparePending(false);
-      setDocumentAwaitingConfirmation(false);
-      setDocumentStatus("Cancelling document request");
-    }
+    cancelDocumentRequest();
   };
 
   const sendDocumentFollowUp = () => {
-    const text = documentFollowUp.trim();
-    const provider = documentConfirmation?.provider ?? documentProvider.trim();
-    const fallbackProvider = documentConfirmation?.fallbackProvider ?? documentFallbackProvider.trim();
-    if (!documentTaskId || !text || !provider) return;
-    const fields: Record<string, unknown> = {
-      task_id: documentTaskId,
-      text,
-      provider,
-    };
-    if (fallbackProvider) {
-      fields.fallback_provider = fallbackProvider;
-    }
-    if (sendDocumentMessage("document_follow_up", fields)) {
-      setDocumentFollowUp("");
-      setDocumentStatus("Answering follow-up");
-      setDocumentStatusCode("running");
-      setDocumentProgress(0);
-      setDocumentCheckpoint("follow_up");
-    }
+    if (!documentTaskId) return;
+    documentTaskVoiceOriginRef.current = false;
+    followUpDocumentRequest(documentTaskId, documentFollowUp);
   };
 
   const documentRequestLocked = documentPreparePending || documentAwaitingConfirmation;
@@ -1387,10 +1652,15 @@ export default function Home() {
               <CompanionSettings
                 companionType={companionType}
                 presentation={presentation}
+                speakResponses={speakResponses}
+                speechRate={speechRate}
+                isSpeaking={isSpeakingAloud}
                 onChange={(type, pres) => {
                   setCompanionType(type);
                   setPresentation(pres);
                 }}
+                onSpeakResponsesChange={persistSpeakResponses}
+                onStopSpeaking={stopSpeaking}
                 onSyncServer={syncCompanionPrefs}
               />
             )}
@@ -1409,6 +1679,8 @@ export default function Home() {
               </div>
               <button
                 onClick={() => {
+                  speechOutputRef.current?.cancel();
+                  speechOutputRef.current?.clearLastVoiceResponse();
                   wsRef.current?.close();
                   setIsPaired(false);
                   setIsConnected(false);
@@ -1434,6 +1706,8 @@ export default function Home() {
         companionType={companionType}
         presentation={presentation}
         caption={companionCaption}
+        isSpeakingAloud={isSpeakingAloud}
+        onStopSpeaking={stopSpeaking}
       />
 
       {/* Bottom Navigation */}

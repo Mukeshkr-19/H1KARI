@@ -206,7 +206,11 @@ class TestServerPairingSafety(unittest.TestCase):
         )
         self.assertEqual(websocket.sent[-1]["text"], "safe reply")
         self.assertEqual(len(server.device_info[str(id(websocket))]["type"]), 64)
-        orchestrator.process_input.assert_called_once_with("hello", source="device")
+        orchestrator.process_input.assert_called_once()
+        args, kwargs = orchestrator.process_input.call_args
+        self.assertEqual(args, ("hello",))
+        self.assertEqual(kwargs["source"], "device")
+        self.assertEqual(kwargs["context"].actor.value, "guest")
 
     def test_welcome_does_not_disclose_secret_and_disconnect_cleans_state(self):
         server = WebSocketServer(MagicMock())
@@ -252,3 +256,102 @@ class TestServerPairingSafety(unittest.TestCase):
             [{"type": "error", "message": "Request failed"}],
         )
         self.assertNotIn(marker, json.dumps(websocket.sent))
+
+    def test_non_loopback_paired_message_is_guest(self):
+        orchestrator = MagicMock()
+        orchestrator.process_input.return_value = "safe reply"
+        server = WebSocketServer(orchestrator)
+        websocket = MockWebSocket()
+        server._paired_client_ids.add(str(id(websocket)))
+
+        asyncio.run(
+            server._handle_message(
+                websocket,
+                json.dumps({"type": "message", "text": "hello"}),
+            )
+        )
+
+        args, kwargs = orchestrator.process_input.call_args
+        self.assertEqual(kwargs["source"], "device")
+        self.assertEqual(kwargs["context"].actor.value, "guest")
+
+    def test_non_loopback_paired_voice_is_guest(self):
+        orchestrator = MagicMock()
+        orchestrator.process_input.return_value = "safe reply"
+        server = WebSocketServer(orchestrator)
+        websocket = MockWebSocket()
+        server._paired_client_ids.add(str(id(websocket)))
+
+        asyncio.run(
+            server._handle_message(
+                websocket,
+                json.dumps({"type": "voice", "text": "hello"}),
+            )
+        )
+
+        args, kwargs = orchestrator.process_input.call_args
+        self.assertEqual(kwargs["source"], "voice_remote")
+        self.assertEqual(kwargs["context"].actor.value, "guest")
+
+    def test_pairing_does_not_produce_owner_context(self):
+        orchestrator = MagicMock()
+        server = WebSocketServer(orchestrator)
+        websocket = MockWebSocket()
+        server.pairing_code = "ABC123"
+
+        asyncio.run(
+            server._handle_message(
+                websocket,
+                json.dumps({"type": "pair", "code": "ABC123"}),
+            )
+        )
+
+        orchestrator.process_input.assert_not_called()
+
+    def test_client_supplied_actor_fields_are_rejected(self):
+        orchestrator = MagicMock()
+        orchestrator.process_input.return_value = "safe reply"
+        server = WebSocketServer(orchestrator)
+        websocket = MockWebSocket()
+        server._paired_client_ids.add(str(id(websocket)))
+
+        asyncio.run(
+            server._handle_message(
+                websocket,
+                json.dumps(
+                    {
+                        "type": "message",
+                        "text": "hello",
+                        "actor": "owner",
+                        "actor_id": "attacker",
+                        "session_id": "evil-session",
+                    }
+                ),
+            )
+        )
+
+        # Unknown client-supplied actor fields are rejected by protocol validation.
+        self.assertEqual(websocket.sent[-1]["type"], "error")
+        orchestrator.process_input.assert_not_called()
+
+    def test_loopback_message_is_owner(self):
+        orchestrator = MagicMock()
+        orchestrator.process_input.return_value = "owner reply"
+        server = WebSocketServer(orchestrator)
+
+        class LoopbackWebSocket(MockWebSocket):
+            @property
+            def remote_address(self):
+                return ("127.0.0.1", 12345)
+
+        loopback = LoopbackWebSocket()
+        server._paired_client_ids.add(str(id(loopback)))
+        asyncio.run(
+            server._handle_message(
+                loopback,
+                json.dumps({"type": "message", "text": "hello"}),
+            )
+        )
+
+        args, kwargs = orchestrator.process_input.call_args
+        self.assertEqual(kwargs["context"].actor.value, "owner")

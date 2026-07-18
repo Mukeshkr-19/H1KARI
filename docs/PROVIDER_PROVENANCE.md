@@ -31,8 +31,9 @@ provider availability. Model/provider upgrades require a new provenance review.
 | DuckDuckGo Instant Answer API | user search query | none | network failure returns a bounded unavailable result; remove or disable research use |
 | BBC RSS | no conversation content; fixed public feed request | none | feed failure returns no stories |
 | OpenWeather | requested location and API key over HTTPS | `WEATHER_API_KEY` | unset the key; errors redact provider URL and credential data |
-| Google Speech Recognition fallback | captured audio when local recognition is unavailable or fails | library-managed service access | choose text mode or avoid voice services; initialization and voice status disclose the egress |
+| Google Speech Recognition | captured audio only when Google speech is explicitly selected or a Google-only service entrypoint is launched | library-managed service access | choose a local backend or text mode; initialization and voice status disclose the egress |
 | Browser Web Speech API | captured audio when the browser microphone button is activated | none (browser-controlled) | locality, provider, retention, and training behavior are browser/vendor-controlled and cannot be guaranteed by H1KARI; do not start voice capture or use text-only mode to avoid audio egress |
+| Browser SpeechSynthesis API | spoken reply text when the user enables Speak responses | none (browser-controlled) | locality, provider, retention, and training behavior are browser/vendor-controlled and cannot be guaranteed by H1KARI; leave Speak responses off (default) to avoid spoken-output egress; captions and text remain available |
 
 ## Phase 0 policy
 

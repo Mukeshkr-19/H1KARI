@@ -897,6 +897,116 @@ def test_guest_where_do_i_live_blocks_owner_location(episode_db):
     assert "city a" not in (reply or "").lower()
     assert "guest" in (reply or "").lower()
     brain.answer.assert_not_called()
+
+
+def test_remote_guest_request_does_not_read_owner_memory(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    _accept(episode_db, "Remember this: I live in City A.", "remote-guest-loc")
+    coord = _production_brain_v2(episode_db)
+    brain = HikariBrain(FakeNeural([]))
+    brain.answer = MagicMock(
+        return_value=BrainAnswer(text="You live in City A.", confidence=0.9)
+    )
+    orch = _minimal_orchestrator(coord, brain)
+    orch._get_ai_response = MagicMock(return_value="AI says City A.")
+    context = ActorContext(
+        actor_id="guest", actor=Actor.GUEST, session_id="test-session", source="device"
+    )
+
+    reply = orch.process_input("where do I live?", source="device", context=context)
+
+    assert "city a" not in (reply or "").lower()
+    assert "cannot" in (reply or "").lower()
+    brain.answer.assert_not_called()
+    orch._get_ai_response.assert_not_called()
+
+
+def test_remote_guest_request_does_not_record_brain_turn(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    coord = _production_brain_v2(episode_db)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = ActorContext(
+        actor_id="guest", actor=Actor.GUEST, session_id="test-session", source="device"
+    )
+
+    orch.process_input("I live in City B.", source="device", context=context)
+
+    orch._record_brain_v2_turn.assert_not_called()
+
+
+def test_remote_guest_request_does_not_mutate_speaker_context(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    coord = _production_brain_v2(episode_db)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    original_speaker = orch.speaker.current_speaker
+    context = ActorContext(
+        actor_id="guest", actor=Actor.GUEST, session_id="test-session", source="device"
+    )
+
+    orch.process_input("I am Guest B talking to you now", source="device", context=context)
+
+    assert orch.speaker.current_speaker == original_speaker
+
+
+def test_remote_guest_request_cannot_call_provider(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    coord = _production_brain_v2(episode_db)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    orch.router = MagicMock()
+    orch.router.generate = MagicMock(return_value="AI reply")
+    context = ActorContext(
+        actor_id="guest", actor=Actor.GUEST, session_id="test-session", source="device"
+    )
+
+    reply = orch.process_input("explain quantum physics", source="device", context=context)
+
+    orch.router.generate.assert_not_called()
+    assert "cannot" in (reply or "").lower()
+
+
+def test_invalid_actor_context_fails_closed(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    coord = _production_brain_v2(episode_db)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = ActorContext(
+        actor_id="invalid!!!", actor=Actor.UNKNOWN, session_id="test-session", source="device"
+    )
+
+    reply = orch.process_input("hello", source="device", context=context)
+
+    assert "cannot" in (reply or "").lower()
+
+
+def test_owner_and_guest_concurrent_requests_remain_isolated(episode_db):
+    from core.action_policy import Actor, ActorContext
+    from tests.test_brain_memory import FakeNeural
+
+    coord = _production_brain_v2(episode_db)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    owner_context = ActorContext(
+        actor_id="local-owner", actor=Actor.OWNER, session_id="owner-session", source="text"
+    )
+    guest_context = ActorContext(
+        actor_id="guest", actor=Actor.GUEST, session_id="guest-session", source="device"
+    )
+
+    orch.speaker.update_from_input("I am Owner A talking to you now")
+    owner_reply = orch.process_input("who am I?", source="text", context=owner_context)
+    guest_reply = orch.process_input("who am I?", source="device", context=guest_context)
+
+    assert "owner" in (owner_reply or "").lower() or "owner a" in (owner_reply or "").lower()
+    assert "owner" not in (guest_reply or "").lower()
+    assert "cannot" in (guest_reply or "").lower()
     orch._get_ai_response.assert_not_called()
 
 

@@ -304,8 +304,9 @@ def test_server_voice_plain_response_when_companion_disabled():
             sent.append(json.loads(data))
 
     class MockOrchestrator:
-        def process_input(self, user_input: str, source: str = "device") -> str:
+        def process_input(self, user_input: str, source: str = "device", *, context=None) -> str:
             assert source == "voice_remote"
+            assert context is not None
             return "plain voice reply"
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
@@ -333,8 +334,9 @@ def test_server_typed_message_no_companion_events(voice_companion_enabled):
     long_reply = "x" * (MAX_COMPANION_CAPTION_CHARS + 50)
 
     class MockOrchestrator:
-        def process_input(self, user_input: str, source: str = "device") -> str:
+        def process_input(self, user_input: str, source: str = "device", *, context=None) -> str:
             assert source == "device"
+            assert context is not None
             return long_reply
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
@@ -363,8 +365,9 @@ def test_server_voice_turn_wire_order_and_response_integrity(voice_companion_ena
     long_reply = "r" * (MAX_COMPANION_CAPTION_CHARS + 75)
 
     class MockOrchestrator:
-        def process_input(self, user_input: str, source: str = "device") -> str:
+        def process_input(self, user_input: str, source: str = "device", *, context=None) -> str:
             assert source == "voice_remote"
+            assert context is not None
             return long_reply
 
     server = WebSocketServer(MockOrchestrator(), port=9999)
@@ -495,7 +498,7 @@ def test_frontend_microphone_stop_remains_operable_during_capture():
     assert "(voiceSessionActive && !microphoneCapturing)" in text
     assert "isListening || recognitionCaptureActive" in text
     mic_disabled_start = text.index("const microphoneDisabled =")
-    mic_disabled_end = text.index("const sendDocumentMessage =", mic_disabled_start)
+    mic_disabled_end = text.index("const prepareDocument =", mic_disabled_start)
     mic_disabled_block = text[mic_disabled_start:mic_disabled_end]
     assert "recognitionCaptureActive ||" not in mic_disabled_block
     assert "|| isListening" not in mic_disabled_block
@@ -552,9 +555,11 @@ def test_frontend_submit_voice_request_only_after_open_send():
     assert "ws.readyState !== WebSocket.OPEN" in submit_block
     assert "cancelVoiceCapture()" in submit_block
     assert "voiceTurnActiveRef.current = true" in submit_block
-    send_idx = submit_block.index("ws.send(")
-    turn_idx = submit_block.index("voiceTurnActiveRef.current = true")
-    message_idx = submit_block.index('addMessage(trimmed, "user")')
+    chat_start = submit_block.rindex("const ws = wsRef.current;")
+    chat_block = submit_block[chat_start:]
+    send_idx = chat_block.index("ws.send(")
+    turn_idx = chat_block.index("voiceTurnActiveRef.current = true")
+    message_idx = chat_block.index('addMessage(trimmed, "user")')
     assert send_idx < message_idx < turn_idx
     voice_block = _companion_enabled_voice_block(text)
     onresult_start = voice_block.index("recognition.onresult")
@@ -592,11 +597,16 @@ def test_frontend_cancel_terminates_recognition_abort_else_stop():
     assert "function terminateSpeechRecognition" in text
     assert "typeof recognition.abort === \"function\"" in text
     assert "typeof recognition.stop === \"function\"" in text
+    end_start = text.index("const endVoiceCaptureSession = useCallback")
+    end_end = text.index("const cancelVoiceCapture = useCallback", end_start)
+    end_block = text[end_start:end_end]
+    assert "terminateSpeechRecognition(recognition)" in end_block
+    assert "voiceCaptureGenerationRef.current += 1" in end_block
     cancel_start = text.index("const cancelVoiceCapture = useCallback")
     cancel_end = text.index("const beginVoiceCapture = useCallback")
     cancel_block = text[cancel_start:cancel_end]
-    assert "terminateSpeechRecognition(recognition)" in cancel_block
-    assert "voiceCaptureGenerationRef.current += 1" in cancel_block
+    assert "endVoiceCaptureSession()" in cancel_block
+    assert "speechOutputRef.current?.cancel()" in cancel_block
 
 
 def test_frontend_cancelled_recognition_emits_no_voice_payload():
@@ -637,8 +647,10 @@ def test_frontend_failed_send_does_not_display_user_message():
     submit_start = text.index("const submitVoiceRequest = useCallback")
     submit_end = text.index("const syncCompanionPrefs = useCallback")
     submit_block = text[submit_start:submit_end]
-    send_idx = submit_block.index("ws.send(")
-    message_idx = submit_block.index('addMessage(trimmed, "user")')
+    chat_start = submit_block.rindex("const ws = wsRef.current;")
+    chat_block = submit_block[chat_start:]
+    send_idx = chat_block.index("ws.send(")
+    message_idx = chat_block.index('addMessage(trimmed, "user")')
     assert send_idx < message_idx
     voice_block = _companion_enabled_voice_block(text)
     onresult_start = voice_block.index("recognition.onresult")
@@ -668,12 +680,16 @@ def test_frontend_typed_send_cancels_active_recognition():
     send_end = text.index("const startListening = () => {")
     send_block = text[send_start:send_end]
     assert "cancelVoiceCapture()" in send_block
+    end_start = text.index("const endVoiceCaptureSession = useCallback")
+    end_end = text.index("const cancelVoiceCapture = useCallback", end_start)
+    end_block = text[end_start:end_end]
+    assert "voiceCaptureGenerationRef.current += 1" in end_block
+    assert "recognitionRef.current" in end_block
+    assert "terminateSpeechRecognition(recognition)" in end_block
     cancel_start = text.index("const cancelVoiceCapture = useCallback")
     cancel_end = text.index("const beginVoiceCapture = useCallback")
     cancel_block = text[cancel_start:cancel_end]
-    assert "voiceCaptureGenerationRef.current += 1" in cancel_block
-    assert "recognitionRef.current" in cancel_block
-    assert "terminateSpeechRecognition(recognition)" in cancel_block
+    assert "endVoiceCaptureSession()" in cancel_block
 
 
 def test_frontend_late_voice_result_ignored_after_cancel():
@@ -828,9 +844,12 @@ def test_frontend_interim_results_update_local_captions_without_server_send():
     begin_start = text.index("const beginVoiceCapture = useCallback")
     begin_end = text.index("const submitVoiceRequest = useCallback")
     assert "setCompanionCaption(null)" in text[begin_start:begin_end]
+    end_start = text.index("const endVoiceCaptureSession = useCallback")
+    end_end = text.index("const cancelVoiceCapture = useCallback", end_start)
+    assert "resetVoiceCompanion()" in text[end_start:end_end]
     cancel_start = text.index("const cancelVoiceCapture = useCallback")
     cancel_end = text.index("const canStartMicrophoneCapture = useCallback")
-    assert "resetVoiceCompanion()" in text[cancel_start:cancel_end]
+    assert "endVoiceCaptureSession()" in text[cancel_start:cancel_end]
     assert "setCompanionCaption(null)" in text[
         text.index("const resetVoiceCompanion = useCallback") : text.index(
             "const releaseRecognitionInstance = useCallback"
@@ -1084,6 +1103,319 @@ def test_frontend_companion_utils_in_privacy_scan_scope():
     rel_paths = {p.relative_to(repo).as_posix() for p in collect_public_source_files()}
     assert "hikari-frontend/src/utils/companion/constants.ts" in rel_paths
     assert "hikari-frontend/src/utils/companion/storage.ts" in rel_paths
+    assert "hikari-frontend/src/utils/companion/voiceDocumentIntent.ts" in rel_paths
+    assert "hikari-frontend/src/utils/companion/speechOutput.ts" in rel_paths
+
+
+def _voice_document_intent_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "voiceDocumentIntent.ts"
+    ).read_text(encoding="utf-8")
+
+
+def _voice_document_intent_unit_test_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "voiceDocumentIntent.test.ts"
+    ).read_text(encoding="utf-8")
+
+
+def _speech_output_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "speechOutput.ts"
+    ).read_text(encoding="utf-8")
+
+
+def _speech_output_unit_test_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "speechOutput.test.ts"
+    ).read_text(encoding="utf-8")
+
+
+def _companion_storage_source() -> str:
+    return (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "storage.ts"
+    ).read_text(encoding="utf-8")
+
+
+def test_voice_document_intent_has_node_unit_coverage():
+    intent_source = _voice_document_intent_source()
+    unit_source = _voice_document_intent_unit_test_source()
+    speech_unit = _speech_output_unit_test_source()
+    package = (
+        Path(__file__).resolve().parents[1] / "hikari-frontend" / "package.json"
+    ).read_text(encoding="utf-8")
+    ci = (
+        Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+    ).read_text(encoding="utf-8")
+    gitignore = (
+        Path(__file__).resolve().parents[1] / ".gitignore"
+    ).read_text(encoding="utf-8")
+
+    assert "export function parseVoiceDocumentIntent(" in intent_source
+    assert "BARE_AFFIRM_PATTERN" in intent_source
+    assert "awaitingConfirmation" in intent_source
+    assert "node:test" in unit_source
+    assert "parseVoiceDocumentIntent" in unit_source
+    assert "My Documents" in unit_source
+    assert "confirm document" in unit_source
+    assert "speechOutput.test.ts" in package
+    assert "voiceDocumentIntent.test.ts" in package
+    assert "speechOutput.test.js" in package
+    assert "node:test" in speech_unit
+    assert '"test:unit"' in package
+    assert "node --test" in package
+    assert "tsc " in package
+    assert "npm run test:unit" in ci
+    assert ci.index("npm run test:unit") < ci.index("npm run lint")
+    assert "hikari-frontend/.test-unit-build/" in gitignore
+
+
+def test_spoken_output_defaults_off_and_persists_prefs_only():
+    constants = (
+        Path(__file__).resolve().parents[1]
+        / "hikari-frontend"
+        / "src"
+        / "utils"
+        / "companion"
+        / "constants.ts"
+    ).read_text(encoding="utf-8")
+    storage = _companion_storage_source()
+    assert "DEFAULT_SPEAK_RESPONSES = false" in constants
+    assert "speakResponses: prefs.speakResponses === true" in storage
+    assert "speechRate: clampSpeechRate(prefs.speechRate)" in storage
+    assert "companionType: prefs.companionType" in storage
+    assert "presentation: prefs.presentation" in storage
+    for banned in ("caption", "transcript", "documentPath", "response", "spokenText"):
+        assert banned not in storage.split("JSON.stringify")[1].split(")")[0]
+
+
+def test_spoken_output_wiring_gates_voice_and_document_speech():
+    page = _frontend_page_source()
+    speech = _speech_output_source()
+    assert "SpeechOutputController" in page
+    assert "parseSpeechControlIntent" in page
+    assert "speakResponsesRef" in page
+    assert "DEFAULT_SPEAK_RESPONSES" in page
+    response_start = page.index('} else if (data.type === "response")')
+    response_end = page.index('} else if (data.type === "document_confirmation_required")', response_start)
+    response_block = page[response_start:response_end]
+    assert "fromVoice" in response_block
+    assert "speakResponsesRef.current" in response_block
+    assert "speechOutputRef.current?.rememberVoiceResponse(responseText)" in response_block
+    assert "speechOutputRef.current?.speak(responseText)" in response_block
+    typed_guard = response_block.index("fromVoice && responseText")
+    assert typed_guard > 0
+    explanation_start = page.index('} else if (data.type === "document_explanation")')
+    explanation_end = page.index('} else if (data.type === "document_error")', explanation_start)
+    explanation_block = page[explanation_start:explanation_end]
+    assert "documentTaskVoiceOriginRef.current" in explanation_block
+    assert "speechOutputRef.current?.speak(text)" in explanation_block
+    assert "SPEECH_FAILURE_MESSAGE" in speech
+    assert "SPEECH_RATE_MIN = 0.7" in speech
+    assert "SPEECH_RATE_MAX = 1.4" in speech
+
+
+def test_spoken_output_cancels_and_clears_on_lifecycle_events():
+    page = _frontend_page_source()
+    assert "speechOutputRef.current?.cancel()" in page
+    begin_start = page.index("const beginVoiceCapture = useCallback")
+    begin_end = page.index("const sendDocumentMessage = useCallback", begin_start)
+    assert "speechOutputRef.current?.cancel()" in page[begin_start:begin_end]
+    cancel_start = page.index("const cancelVoiceCapture = useCallback")
+    cancel_end = page.index("const canStartMicrophoneCapture = useCallback", cancel_start)
+    assert "speechOutputRef.current?.cancel()" in page[cancel_start:cancel_end]
+    assert "clearLastVoiceResponse()" in page
+    assert "speech.dispose()" in page
+    assert "onStopSpeaking={stopSpeaking}" in page
+
+
+def test_speech_control_commands_do_not_reach_websocket_chat():
+    page = _frontend_page_source()
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    control_start = submit_block.index("parseSpeechControlIntent(trimmed)")
+    control_end = submit_block.index("parseVoiceDocumentIntent(trimmed")
+    control_block = submit_block[control_start:control_end]
+    assert "ws.send(" not in control_block
+    assert 'encodeClientMessage("voice"' not in control_block
+    assert 'encodeClientMessage("message"' not in control_block
+    assert 'speechControl.type === "stop"' in control_block
+    assert 'speechControl.type === "repeat"' in control_block
+    assert 'speechControl.type === "slower"' in control_block
+    assert "endVoiceCaptureSession()" in control_block
+
+
+def test_speech_failure_preserves_document_state_and_hides_exception_details():
+    page = _frontend_page_source()
+    speech = _speech_output_source()
+    assert 'SPEECH_FAILURE_MESSAGE' in speech
+    assert "Spoken output is unavailable. Continuing with text." in speech
+    assert "String(error)" not in speech
+    assert "error.message" not in speech
+    assert "onFailure: (message) => {" in page
+    assert "setInterfaceError(message)" in page
+    fail_start = page.index("const failDocumentPrepare = useCallback")
+    # Speech failure must not call failDocumentPrepare
+    speech_cb = page[page.index("speech.setCallbacks"): page.index("return () => {", page.index("speech.setCallbacks"))]
+    assert "failDocumentPrepare" not in speech_cb
+
+
+def test_voice_document_prepare_routes_valid_command():
+    intent_source = _voice_document_intent_source()
+    page = _frontend_page_source()
+    assert "parseVoiceDocumentIntent" in intent_source
+    assert "prepareDocumentRequest" in page
+    assert 'intent.type === "prepare"' in page
+    assert "prepareDocumentRequest(" in page
+    assert "PREPARE_PATTERN" in intent_source
+    assert r"with\s+provider" in intent_source
+
+
+def test_voice_document_prepare_rejects_ambiguous_command():
+    intent_source = _voice_document_intent_source()
+    page = _frontend_page_source()
+    assert 'type: "reject"' in intent_source
+    assert "Say: prepare document <path> with provider <name>." in intent_source
+    assert 'intent.type === "reject"' in page
+    assert "setDocumentError(intent.message)" in page
+    assert "documentErrorHeadingRef" in page
+
+
+def test_voice_document_confirmation_requires_explicit_phrase():
+    intent_source = _voice_document_intent_source()
+    page = _frontend_page_source()
+    assert "confirm document|explain this document" in intent_source
+    assert "BARE_AFFIRM_PATTERN" in intent_source
+    assert "Say: confirm document." in intent_source
+    assert 'intent.type === "confirm"' in page
+    assert "confirmDocumentRequest()" in page
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    reject_branch = submit_block.split('intent.type === "reject"')[1].split(
+        'intent.type === "prepare"'
+    )[0]
+    assert "addMessage(" not in reject_branch
+    confirm_branch = submit_block.split('intent.type === "confirm"')[1].split(
+        'intent.type === "cancel"'
+    )[0]
+    assert "addMessage(" not in confirm_branch
+
+
+def test_voice_document_cancellation_requires_active_task():
+    intent_source = _voice_document_intent_source()
+    page = _frontend_page_source()
+    assert "canCancelDocument" in intent_source
+    assert "No active document task to cancel." in intent_source
+    assert 'intent.type === "cancel"' in page
+    assert "cancelDocumentRequest()" in page
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    cancel_branch = submit_block.split('intent.type === "cancel"')[1].split(
+        'intent.type === "follow_up"'
+    )[0]
+    assert "addMessage(" not in cancel_branch
+
+
+def test_voice_document_follow_up_requires_task_id_and_prefix():
+    intent_source = _voice_document_intent_source()
+    page = _frontend_page_source()
+    assert "document follow-up" in intent_source
+    assert "Follow-up task ID does not match the active document task." in intent_source
+    assert 'intent.type === "follow_up"' in page
+    assert "followUpDocumentRequest(intent.taskId, intent.text)" in page
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    follow_branch = submit_block.split('intent.type === "follow_up"')[1].split(
+        "const ws = wsRef.current;"
+    )[0]
+    assert "addMessage(" not in follow_branch
+
+
+def test_voice_unmatched_speech_continues_ordinary_chat_path():
+    page = _frontend_page_source()
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    chat_start = submit_block.rindex("const ws = wsRef.current;")
+    chat_block = submit_block[chat_start:]
+    assert 'encodeClientMessage("voice", { text: trimmed })' in chat_block
+    assert 'encodeClientMessage("message", { text: trimmed })' in chat_block
+    assert 'addMessage(trimmed, "user")' in chat_block
+    assert "parseVoiceDocumentIntent" in submit_block
+    assert submit_block.index("parseVoiceDocumentIntent") < chat_start
+
+
+def test_voice_document_does_not_auto_confirm_after_prepare():
+    page = _frontend_page_source()
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    prepare_branch = submit_block.split('intent.type === "prepare"')[1].split(
+        'intent.type === "confirm"'
+    )[0]
+    assert "prepareDocumentRequest(" in prepare_branch
+    assert "confirmDocumentRequest" not in prepare_branch
+    assert "document_confirm" not in prepare_branch
+    assert "addMessage(" not in prepare_branch
+
+
+def test_voice_document_wiring_preserves_capture_and_prepare_safeguards():
+    page = _frontend_page_source()
+    assert "aggregateSpeechRecognitionTranscript(event)" in page
+    assert "let captureSubmitted = false" in page
+    assert "captureSubmitted = true" in page
+    assert "boundVoiceTranscript(transcript)" in page
+    prepare_start = page.index("const prepareDocumentRequest = useCallback")
+    prepare_end = page.index("const confirmDocumentRequest = useCallback")
+    prepare_block = page[prepare_start:prepare_end]
+    fail_branch = prepare_block.split("if (!sendDocumentMessage")[1]
+    assert "failDocumentPrepare(" in fail_branch
+    error_start = page.index('} else if (data.type === "document_error")')
+    error_end = page.index('} else if (data.type === "companion_preferences_error")', error_start)
+    pending_branch = page[error_start:error_end].split("if (documentPreparePendingRef.current)")[1].split(
+        "if (rootTaskId === documentTaskIdRef.current)"
+    )[0]
+    assert "forgetDocumentTask()" not in pending_branch
+    assert "failDocumentPrepare(message)" in pending_branch
+    intent_source = _voice_document_intent_source()
+    assert "eval(" not in intent_source
+    assert "Function(" not in intent_source
+    assert "console.log" not in intent_source
+    submit_start = page.index("const submitVoiceRequest = useCallback")
+    submit_end = page.index("const syncCompanionPrefs = useCallback")
+    submit_block = page[submit_start:submit_end]
+    assert "console.log" not in submit_block
+    assert "inputRef.current?.focus()" not in submit_block
+    assert "setDocumentError(" in submit_block
 
 
 def test_bridge_rejects_invalid_preferences(tmp_path, monkeypatch):

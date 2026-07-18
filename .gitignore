@@ -69,6 +69,7 @@ docs/WORK_DONE.md
 hikari-frontend/.next/
 hikari-frontend/node_modules/
 hikari-frontend/out/
+hikari-frontend/.test-unit-build/
 
 # OS
 Thumbs.db

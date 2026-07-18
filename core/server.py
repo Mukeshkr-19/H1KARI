@@ -18,6 +18,7 @@ from datetime import datetime
 from http import HTTPStatus
 
 from core.protocol import PROTOCOL_VERSION, validate_client_message
+from core.request_context import ActorSource, RequestContext, derive_actor_from_transport
 from core.voice_companion.bridge import VoiceCompanionBridge, VOICE_PROCESSING_ERROR_MESSAGE
 from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
 from core.voice_companion.status import is_voice_companion_enabled
@@ -137,6 +138,20 @@ class WebSocketServer:
             HTTPStatus(status_code).phrase,
             Headers(headers),
             body,
+        )
+
+    def _derive_actor_context(self, websocket) -> RequestContext:
+        """Derive an immutable request context from server-observed transport state only."""
+        client_key = str(id(websocket))
+        connection_token = self._connection_tokens.get(client_key) or secrets.token_hex(16)
+        if client_key not in self._connection_tokens:
+            self._connection_tokens[client_key] = connection_token
+        is_paired = client_key in self._paired_client_ids
+        return derive_actor_from_transport(
+            source=ActorSource.WEBSOCKET,
+            connection_token=connection_token,
+            is_loopback=self._is_loopback(websocket),
+            is_paired=is_paired,
         )
 
     async def _handle_connection(self, websocket):
@@ -347,13 +362,17 @@ class WebSocketServer:
             self._companion_bridges[key] = bridge
         return self._companion_bridges[key]
 
-    async def _handle_voice_turn(self, websocket, user_input: str) -> str:
+    async def _handle_voice_turn(self, websocket, user_input: str, context: RequestContext) -> str:
         """Voice-only companion lifecycle with awaited, ordered companion_update events."""
         bridge = self._companion_for(websocket)
         try:
             full_text = await bridge.run_voice_turn_async(
                 user_input,
-                lambda: self.orchestrator.process_input(user_input, source="voice_remote"),
+                lambda: self.orchestrator.process_input(
+                    user_input,
+                    source="voice_remote",
+                    context=context.actor_context,
+                ),
             )
         except Exception:
             await bridge.emit_voice_processing_failure_async()
@@ -488,11 +507,14 @@ class WebSocketServer:
                 )
 
             elif msg_type == "message":
-                # Process user message through orchestrator
+                # Process user message through orchestrator with request-scoped actor context
                 user_input = data.get("text", "")
                 if user_input:
+                    context = self._derive_actor_context(websocket)
                     response = self.orchestrator.process_input(
-                        user_input, source="device"
+                        user_input,
+                        source="device",
+                        context=context.actor_context,
                     )
                     await websocket.send(
                         json.dumps(
@@ -506,11 +528,14 @@ class WebSocketServer:
             elif msg_type == "voice":
                 text = data.get("text", "")
                 if text:
+                    context = self._derive_actor_context(websocket)
                     if self._voice_companion_enabled():
-                        await self._handle_voice_turn(websocket, text)
+                        await self._handle_voice_turn(websocket, text, context)
                     else:
                         response = self.orchestrator.process_input(
-                            text, source="voice_remote"
+                            text,
+                            source="voice_remote",
+                            context=context.actor_context,
                         )
                         await websocket.send(
                             json.dumps(

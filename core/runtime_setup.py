@@ -17,14 +17,14 @@ VOICE_BACKENDS = {
     "openai-whisper": {
         "model": "base",
         "download": "May download the base model on first voice use.",
-        "audio_egress": True,
-        "egress": "Current core voice fallback may send captured audio to Google.",
+        "audio_egress": False,
+        "egress": "Local OpenAI Whisper only; no silent cloud fallback.",
     },
     "faster-whisper": {
         "model": "base",
         "download": "May download the base model on first daemon voice use.",
-        "audio_egress": True,
-        "egress": "Current daemon fallback may send captured audio to Google.",
+        "audio_egress": False,
+        "egress": "Local faster-whisper only; no silent cloud fallback.",
     },
     "google-speech": {
         "model": None,
@@ -125,7 +125,10 @@ def initialize_runtime_home(
         current = json.loads(config_path.read_text(encoding="utf-8"))
         if current.get("version") != 1 or not isinstance(current.get("created_paths"), list):
             raise RuntimeError("runtime config has an unsupported or invalid schema")
-        if current.get("startup_mode") != selection["startup_mode"] or current.get("voice") != selection["voice"]:
+        if current.get("startup_mode") != selection["startup_mode"]:
+            raise RuntimeError("runtime home is already initialized with different startup settings")
+        current_voice = current.get("voice") or {}
+        if current_voice.get("backend") != selection["voice"]["backend"]:
             raise RuntimeError("runtime home is already initialized with different startup settings")
         missing = [path for path in _layout(plan["root"]) if not path.is_dir()]
         if missing:
@@ -187,6 +190,54 @@ def _load_runtime_config(root: Path) -> dict:
     if config.get("version") != 1 or not isinstance(config.get("created_paths"), list):
         raise RuntimeError("runtime config has an unsupported or invalid schema")
     return config
+
+
+def get_voice_backend_name(root: Path | None = None) -> str | None:
+    """Return the configured STT backend name from runtime.json, if any.
+
+    This function does not create a runtime home; it only reads an existing
+    runtime.json.  Missing or incompatible configs return ``None`` so callers
+    can apply their own default.
+    """
+    root = hikari_home() if root is None else Path(root).expanduser().resolve()
+    config_path = root / CONFIG_NAME
+    if config_path.is_symlink() or not config_path.is_file():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if config.get("version") != 1 or not isinstance(config.get("created_paths"), list):
+        return None
+    voice = config.get("voice") or {}
+    backend = voice.get("backend")
+    if backend in VOICE_BACKENDS:
+        return backend
+    return None
+
+
+def get_tts_backend_name(root: Path | None = None) -> str | None:
+    """Return the configured TTS backend name from runtime.json, if any.
+
+    The legacy runtime.json schema does not store a TTS backend, so this
+    function returns ``None`` for existing files and lets callers default to
+    platform-appropriate behavior.
+    """
+    root = hikari_home() if root is None else Path(root).expanduser().resolve()
+    config_path = root / CONFIG_NAME
+    if config_path.is_symlink() or not config_path.is_file():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if config.get("version") != 1 or not isinstance(config.get("created_paths"), list):
+        return None
+    voice = config.get("voice") or {}
+    tts = voice.get("tts_backend")
+    if tts:
+        return tts
+    return None
 
 
 def backup_runtime_home(

@@ -17,6 +17,8 @@ type Props = {
   companionType: CompanionType;
   presentation: Presentation;
   caption: CompanionCaption | null;
+  isSpeakingAloud?: boolean;
+  onStopSpeaking?: () => void;
 };
 
 const COMPANION_LABEL: Record<CompanionType, string> = {
@@ -62,6 +64,8 @@ export function VoiceCompanionOverlay({
   companionType,
   presentation,
   caption,
+  isSpeakingAloud = false,
+  onStopSpeaking,
 }: Props) {
   if (!visible || state === "hidden") return null;
 
@@ -107,6 +111,15 @@ export function VoiceCompanionOverlay({
         ) : (
           <p className="text-xs text-gray-500">Live captions appear here during voice</p>
         )}
+        {isSpeakingAloud && onStopSpeaking ? (
+          <button
+            type="button"
+            onClick={onStopSpeaking}
+            className="pointer-events-auto mt-1 rounded-lg border border-gray-600 px-3 py-2 text-xs text-gray-200 hover:text-white"
+          >
+            Stop speaking
+          </button>
+        ) : null}
       </div>
       <style jsx global>{`
         @keyframes companion-pulse {

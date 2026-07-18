@@ -111,7 +111,7 @@ No model weights, datasets, ONNX files, GGUF files, or audio samples are tracked
 
 `hikari.py --voice-status` is a read-only inspection path. It checks package and
 expected cache-path metadata without importing model packages, downloading weights,
-or reading the speaker enrollment file. It also identifies the Google Speech fallback
+or reading the speaker enrollment file. It also identifies explicit Google Speech selection
 as a possible off-device audio-egress path.
 
 ## Prompt inventory

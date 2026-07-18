@@ -43,7 +43,7 @@ def test_microphone_stop_control_and_hit_target_are_accessible():
     assert "aria-disabled={microphoneDisabled}" in text
     assert "const microphoneCapturing = isListening || recognitionCaptureActive" in text
     disabled_start = text.index("const microphoneDisabled =")
-    disabled_end = text.index("const sendDocumentMessage =", disabled_start)
+    disabled_end = text.index("const prepareDocument =", disabled_start)
     disabled_block = text[disabled_start:disabled_end]
     assert "voiceTurnActive" in disabled_block
     assert "microphoneCapturing" in disabled_block
@@ -139,7 +139,8 @@ def test_document_flow_uses_protocol_and_only_persists_root_task_id():
     assert 'window.localStorage.setItem(ROOT_DOCUMENT_TASK_KEY, taskId)' in text
     assert text.count("window.localStorage.setItem(") == 1
     assert "documentFollowUpPendingRef" not in text
-    assert "task_id: documentTaskId" in text
+    assert "task_id: taskId" in text
+    assert "task_id: documentConfirmation.taskId" in text
     assert 'rootTaskId === documentTaskIdRef.current' in text
     assert 'code === "task_not_found" || code === "actor_not_authorized"' in text
     assert "alert(" not in text
@@ -256,3 +257,55 @@ def test_overlay_bounds_caption_display_for_interim_text():
     assert "function displayCaptionText(text: string)" in overlay
     assert "displayCaptionText(caption.text)" in overlay
     assert "!caption.is_final" in overlay or "caption && !caption.is_final" in overlay
+    assert "Live captions appear here during voice" in overlay
+    assert "Stop speaking" in overlay
+
+
+def test_companion_settings_speak_responses_is_opt_in_and_labelled():
+    settings = SETTINGS.read_text(encoding="utf-8")
+
+    assert 'id="speak-responses-label"' in settings
+    assert 'role="switch"' in settings
+    assert "aria-checked={speakResponses}" in settings
+    assert "Speak responses" in settings
+    assert "Off by default" in settings
+    assert "Stop speaking" in settings
+    assert "browser or vendor" in settings.lower() or "Browser or vendor" in settings
+
+
+def test_voice_document_commands_keep_keyboard_fallback_and_frozen_confirmation():
+    text = PAGE.read_text(encoding="utf-8")
+
+    assert 'from "@/utils/companion/voiceDocumentIntent"' in text
+    assert "parseVoiceDocumentIntent" in text
+    assert "boundVoiceTranscript" in text
+    assert 'intent.type === "reject"' in text
+    assert "setDocumentError(intent.message)" in text
+    assert "documentErrorHeadingRef" in text
+    assert 'id="document-confirmation-heading"' in text
+    assert "documentConfirmation.path" in text
+    assert "documentConfirmation.provider" in text
+    assert "prepareDocumentRequest(" in text
+    assert "confirmDocumentRequest()" in text
+    assert "failDocumentPrepare(" in text
+    assert "parseSpeechControlIntent" in text
+    assert "SpeechOutputController" in text
+    submit_start = text.index("const submitVoiceRequest = useCallback")
+    submit_end = text.index("const syncCompanionPrefs = useCallback")
+    submit_block = text[submit_start:submit_end]
+    assert "inputRef.current?.focus()" not in submit_block
+    assert 'addMessage(trimmed, "user")' in submit_block
+    assert submit_block.rindex('addMessage(trimmed, "user")') > submit_block.rindex(
+        "const ws = wsRef.current;"
+    )
+
+
+def test_typed_document_actions_clear_voice_speech_origin():
+    text = PAGE.read_text(encoding="utf-8")
+    prepare_start = text.index("const prepareDocument = () => {")
+    prepare_end = text.index("const confirmDocument = () => {", prepare_start)
+    follow_start = text.index("const sendDocumentFollowUp = () => {")
+    follow_end = text.index("const documentRequestLocked", follow_start)
+
+    assert "documentTaskVoiceOriginRef.current = false" in text[prepare_start:prepare_end]
+    assert "documentTaskVoiceOriginRef.current = false" in text[follow_start:follow_end]
