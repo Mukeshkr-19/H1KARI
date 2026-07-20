@@ -20,6 +20,108 @@ import {
   boundVoiceTranscript,
   parseVoiceDocumentIntent,
 } from "@/utils/companion/voiceDocumentIntent";
+import { ProductivityActionPreview } from "@/components/ProductivityActionPreview";
+import { ApprovalScopeSelector } from "@/components/ApprovalScopeSelector";
+import { EmailDraftProposal } from "@/components/EmailDraftProposal";
+import { CalendarProposalForm } from "@/components/CalendarProposalForm";
+import { ResearchProposalForm } from "@/components/ResearchProposalForm";
+import { ReminderProposalForm } from "@/components/ReminderProposalForm";
+import { ScheduledJobsPanel } from "@/components/ScheduledJobsPanel";
+import { ScheduledJobCreateForm } from "@/components/ScheduledJobCreateForm";
+import {
+  createInitialProposalLifecycleState,
+  reduceProposalLifecycle,
+  type ProposalLifecycleState,
+  type ProposalLifecycleStatus,
+} from "@/utils/productivity/actionLifecycle";
+import {
+  createApprovalScopeStateFromAllowed,
+  isApprovalScopeConfirmReady,
+  resetApprovalScopeState,
+  type ApprovalScopeState,
+} from "@/utils/productivity/approvalScopes";
+import {
+  createEmailDraftRequestId,
+  createEmptyEmailDraftFields,
+  emailDraftResponseMatchesRequest,
+  validateEmailDraftFields,
+  type EmailDraftFieldName,
+  type EmailDraftFields,
+  type EmailDraftValidationCode,
+} from "@/utils/productivity/emailDraftProposal";
+import {
+  createEmptyCalendarDraftFields,
+  createEmptyCalendarReadFields,
+  validateCalendarDraftFields,
+  validateCalendarReadFields,
+  type CalendarDraftFields,
+  type CalendarFieldName,
+  type CalendarFormMode,
+  type CalendarReadFields,
+  type CalendarValidationCode,
+} from "@/utils/productivity/calendarProposal";
+import {
+  createEmptyResearchFields,
+  createResearchRequestId,
+  researchResponseMatchesRequest,
+  validateResearchFields,
+  type ResearchFieldName,
+  type ResearchFields,
+  type ResearchValidationCode,
+} from "@/utils/productivity/researchProposal";
+import {
+  createEmptyReminderFields,
+  validateReminderFields,
+  type ReminderFieldName,
+  type ReminderFields,
+  type ReminderValidationCode,
+} from "@/utils/productivity/reminderProposal";
+import {
+  encodeProductivityCancel,
+  encodeProductivityConfirm,
+  encodeProductivityCalendarDraftPrepare,
+  encodeProductivityCalendarReadPrepare,
+  encodeProductivityEmailDraftPrepare,
+  encodeProductivityResearchPrepare,
+  encodeProductivityReminderPrepare,
+  parseProductivityServerMessage,
+  type ProductivityCalendarResult,
+  type ProductivityResearchResult,
+  type ProductivityServerMessage,
+  type ProductivityUpdateStatus,
+} from "@/utils/productivity/productivityProtocol";
+import {
+  mapPreviewErrorMessage,
+  type ProductivityPreviewErrorCode,
+} from "@/utils/productivity/actionPreview";
+import {
+  clearScheduledJobPendingControl,
+  replaceScheduledJobInList,
+  setScheduledJobPendingControl,
+  type ScheduledJobControl,
+  type ScheduledJobErrorCode,
+  type ScheduledJobView,
+} from "@/utils/productivity/scheduledJobs";
+import {
+  createEmptyScheduleProposalFields,
+  createScheduleRequestId,
+  validateScheduleProposalFields,
+  type ScheduleAction,
+  type ScheduleFieldName,
+  type ScheduleProposalFields,
+  type ScheduleValidationCode,
+} from "@/utils/productivity/scheduleProposal";
+import {
+  encodeScheduledJobCreate,
+  encodeScheduledJobCancel,
+  encodeScheduledJobPause,
+  encodeScheduledJobResume,
+  encodeScheduledJobsList,
+  parseScheduledJobsServerMessage,
+  type ScheduledJobsServerMessage,
+  type ScheduledJobResearchResultMessage,
+  type ScheduledJobCalendarResultMessage,
+} from "@/utils/productivity/scheduledJobsProtocol";
 import protocolSchema from "../../../protocol/hikari-v1.json";
 
 /** Off by default; set NEXT_PUBLIC_HIKARI_VOICE_COMPANION=1 at build time to enable overlay UI. */
@@ -43,6 +145,41 @@ type TabType = "chat" | "agents" | "files" | "settings";
 type ClientMessageType = keyof typeof protocolSchema.client_to_server;
 type ServerMessageType = keyof typeof protocolSchema.server_to_client;
 type ServerMessage = Record<string, unknown> & { type: ServerMessageType };
+
+/** Server message types handled by strict dedicated parsers before legacy fallback. */
+const STRICT_DEDICATED_SERVER_MESSAGE_TYPES = new Set<string>([
+  "productivity_confirmation_required",
+  "productivity_update",
+  "productivity_error",
+  "productivity_research_result",
+  "productivity_calendar_result",
+  "scheduled_jobs",
+  "scheduled_job_update",
+  "scheduled_job_error",
+  "scheduled_job_research_result",
+  "scheduled_job_calendar_result",
+]);
+
+function parseWebSocketFrameType(raw: string): string | null {
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      "type" in value &&
+      typeof (value as { type: unknown }).type === "string"
+    ) {
+      return (value as { type: string }).type;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function isStrictDedicatedServerMessageType(type: string): boolean {
+  return STRICT_DEDICATED_SERVER_MESSAGE_TYPES.has(type);
+}
 
 type DocumentConfirmation = {
   taskId: string;
@@ -71,6 +208,107 @@ const TERMINAL_DOCUMENT_STATUSES = new Set<DocumentStatus>([
 
 const PROTOCOL_VERSION = protocolSchema.version;
 
+const TERMINAL_PRODUCTIVITY_STATUSES = new Set<ProposalLifecycleStatus>([
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
+function productivityLiveStatus(status: ProposalLifecycleStatus): string {
+  switch (status) {
+    case "preview":
+      return "Review the proposed action.";
+    case "confirming":
+      return "Waiting for confirmation…";
+    case "approved":
+      return "Action approved.";
+    case "executing":
+      return "Action in progress.";
+    case "completed":
+      return "Action completed.";
+    case "failed":
+      return "Action failed.";
+    case "cancelling":
+      return "Cancelling action…";
+    case "cancelled":
+      return "Action cancelled.";
+    default:
+      return "";
+  }
+}
+
+function applyProductivityUpdateStatus(
+  state: ProposalLifecycleState,
+  proposalId: string,
+  status: ProductivityUpdateStatus,
+): ProposalLifecycleState {
+  if (state.status === "idle" || state.proposalId !== proposalId) {
+    return state;
+  }
+  if (state.status === status) {
+    return state;
+  }
+  switch (status) {
+    case "preview":
+      return state;
+    case "confirming":
+      return reduceProposalLifecycle(state, { type: "confirm", proposalId });
+    case "approved": {
+      const confirming = reduceProposalLifecycle(state, {
+        type: "confirm",
+        proposalId,
+      });
+      return reduceProposalLifecycle(confirming, { type: "approve", proposalId });
+    }
+    case "executing": {
+      const confirming = reduceProposalLifecycle(state, {
+        type: "confirm",
+        proposalId,
+      });
+      const approved = reduceProposalLifecycle(confirming, {
+        type: "approve",
+        proposalId,
+      });
+      return reduceProposalLifecycle(approved, { type: "execute", proposalId });
+    }
+    case "completed": {
+      const confirming = reduceProposalLifecycle(state, {
+        type: "confirm",
+        proposalId,
+      });
+      const approved = reduceProposalLifecycle(confirming, {
+        type: "approve",
+        proposalId,
+      });
+      const executing = reduceProposalLifecycle(approved, {
+        type: "execute",
+        proposalId,
+      });
+      return reduceProposalLifecycle(executing, { type: "complete", proposalId });
+    }
+    case "failed":
+      return reduceProposalLifecycle(state, {
+        type: "fail",
+        proposalId,
+        error: "unavailable",
+      });
+    case "cancelling":
+      return reduceProposalLifecycle(state, { type: "cancel", proposalId });
+    case "cancelled": {
+      const cancelling = reduceProposalLifecycle(state, {
+        type: "cancel",
+        proposalId,
+      });
+      return reduceProposalLifecycle(cancelling, {
+        type: "cancelled",
+        proposalId,
+      });
+    }
+    default:
+      return state;
+  }
+}
+
 function encodeClientMessage(
   type: ClientMessageType,
   fields: Record<string, unknown> = {},
@@ -95,7 +333,11 @@ function parseServerMessage(raw: string): ServerMessage | null {
       value.type in protocolSchema.server_to_client
     ) {
       const type = value.type as ServerMessageType;
-      const required = protocolSchema.server_to_client[type] as readonly string[];
+      const spec = protocolSchema.server_to_client[type];
+      if (!Array.isArray(spec)) {
+        return null;
+      }
+      const required = spec;
       if (required.every((field) => field in value)) {
         return value as ServerMessage;
       }
@@ -275,6 +517,97 @@ export default function Home() {
   const [documentExplanationProvider, setDocumentExplanationProvider] = useState("");
   const [documentError, setDocumentError] = useState("");
   const [documentFollowUp, setDocumentFollowUp] = useState("");
+  const [productivityLifecycle, setProductivityLifecycle] = useState<ProposalLifecycleState>(
+    createInitialProposalLifecycleState,
+  );
+  const [approvalScopeState, setApprovalScopeState] = useState<ApprovalScopeState>(
+    resetApprovalScopeState,
+  );
+  const [emailDraftFields, setEmailDraftFields] = useState<EmailDraftFields>(
+    createEmptyEmailDraftFields,
+  );
+  const [emailDraftPending, setEmailDraftPending] = useState(false);
+  const [emailDraftValidationCode, setEmailDraftValidationCode] = useState<
+    EmailDraftValidationCode | undefined
+  >(undefined);
+  const [emailDraftValidationField, setEmailDraftValidationField] = useState<
+    EmailDraftFieldName | undefined
+  >(undefined);
+  const [emailDraftPrepareError, setEmailDraftPrepareError] = useState<
+    ProductivityPreviewErrorCode | undefined
+  >(undefined);
+  const [calendarMode, setCalendarMode] = useState<CalendarFormMode>("read");
+  const [calendarReadFields, setCalendarReadFields] = useState<CalendarReadFields>(
+    createEmptyCalendarReadFields,
+  );
+  const [calendarDraftFields, setCalendarDraftFields] = useState<CalendarDraftFields>(
+    createEmptyCalendarDraftFields,
+  );
+  const [calendarPending, setCalendarPending] = useState(false);
+  const [calendarValidationCode, setCalendarValidationCode] = useState<
+    CalendarValidationCode | undefined
+  >(undefined);
+  const [calendarValidationField, setCalendarValidationField] = useState<
+    CalendarFieldName | undefined
+  >(undefined);
+  const [calendarPrepareError, setCalendarPrepareError] = useState<
+    ProductivityPreviewErrorCode | undefined
+  >(undefined);
+  const [researchFields, setResearchFields] = useState<ResearchFields>(
+    createEmptyResearchFields,
+  );
+  const [researchPending, setResearchPending] = useState(false);
+  const [researchValidationCode, setResearchValidationCode] = useState<
+    ResearchValidationCode | undefined
+  >(undefined);
+  const [researchValidationField, setResearchValidationField] = useState<
+    ResearchFieldName | undefined
+  >(undefined);
+  const [researchPrepareError, setResearchPrepareError] = useState<
+    ProductivityPreviewErrorCode | undefined
+  >(undefined);
+  const [reminderFields, setReminderFields] = useState<ReminderFields>(
+    createEmptyReminderFields,
+  );
+  const [reminderPending, setReminderPending] = useState(false);
+  const [reminderValidationCode, setReminderValidationCode] = useState<
+    ReminderValidationCode | undefined
+  >(undefined);
+  const [reminderValidationField, setReminderValidationField] = useState<
+    ReminderFieldName | undefined
+  >(undefined);
+  const [reminderPrepareError, setReminderPrepareError] = useState<
+    ProductivityPreviewErrorCode | undefined
+  >(undefined);
+  const [productivityResearchResult, setProductivityResearchResult] = useState<
+    ProductivityResearchResult | null
+  >(null);
+  const [productivityCalendarResult, setProductivityCalendarResult] = useState<
+    ProductivityCalendarResult | null
+  >(null);
+  const [scheduledJobs, setScheduledJobs] = useState<ReadonlyArray<ScheduledJobView>>([]);
+  const [scheduledJobsError, setScheduledJobsError] = useState<
+    ScheduledJobErrorCode | undefined
+  >(undefined);
+  const [scheduledJobsStatus, setScheduledJobsStatus] = useState<string | undefined>(
+    undefined,
+  );
+  const [scheduleFields, setScheduleFields] = useState<ScheduleProposalFields>(
+    createEmptyScheduleProposalFields,
+  );
+  const [schedulePending, setSchedulePending] = useState(false);
+  const [scheduleValidationCode, setScheduleValidationCode] = useState<
+    ScheduleValidationCode | undefined
+  >(undefined);
+  const [scheduleValidationField, setScheduleValidationField] = useState<
+    ScheduleFieldName | undefined
+  >(undefined);
+  const [scheduledResearchResult, setScheduledResearchResult] = useState<
+    ScheduledJobResearchResultMessage | null
+  >(null);
+  const [scheduledCalendarResult, setScheduledCalendarResult] = useState<
+    ScheduledJobCalendarResultMessage | null
+  >(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const voiceTurnActiveRef = useRef(false);
@@ -299,6 +632,40 @@ export default function Home() {
   const dashboardHeadingRef = useRef<HTMLHeadingElement>(null);
   const confirmationHeadingRef = useRef<HTMLHeadingElement>(null);
   const documentErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const productivityHeadingRef = useRef<HTMLHeadingElement>(null);
+  const emailDraftHeadingRef = useRef<HTMLHeadingElement>(null);
+  const calendarHeadingRef = useRef<HTMLHeadingElement>(null);
+  const calendarPrepareErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const researchHeadingRef = useRef<HTMLHeadingElement>(null);
+  const researchPrepareErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const reminderHeadingRef = useRef<HTMLHeadingElement>(null);
+  const reminderPrepareErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const researchResultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const calendarResultHeadingRef = useRef<HTMLHeadingElement>(null);
+  const productivityLifecycleRef = useRef<ProposalLifecycleState>(
+    createInitialProposalLifecycleState(),
+  );
+  const approvalScopeStateRef = useRef<ApprovalScopeState>(resetApprovalScopeState());
+  const emailDraftPendingRef = useRef(false);
+  const emailDraftRequestIdRef = useRef<string | null>(null);
+  const calendarPendingRef = useRef(false);
+  const calendarRequestIdRef = useRef<string | null>(null);
+  const researchPendingRef = useRef(false);
+  const researchRequestIdRef = useRef<string | null>(null);
+  const reminderPendingRef = useRef(false);
+  const reminderRequestIdRef = useRef<string | null>(null);
+  const scheduledJobsRef = useRef<ReadonlyArray<ScheduledJobView>>([]);
+  const schedulePendingRef = useRef(false);
+  const scheduleRequestIdRef = useRef<string | null>(null);
+
+  const isProductivityPreparePending = useCallback(
+    () =>
+      emailDraftPendingRef.current ||
+      calendarPendingRef.current ||
+      researchPendingRef.current ||
+      reminderPendingRef.current,
+    [],
+  );
 
   const rememberDocumentTask = useCallback((taskId: string) => {
     documentTaskIdRef.current = taskId;
@@ -372,6 +739,27 @@ export default function Home() {
   useEffect(() => {
     documentAwaitingConfirmationRef.current = documentAwaitingConfirmation;
   }, [documentAwaitingConfirmation]);
+
+  useEffect(() => {
+    productivityLifecycleRef.current = productivityLifecycle;
+  }, [productivityLifecycle]);
+
+  useEffect(() => {
+    approvalScopeStateRef.current = approvalScopeState;
+  }, [approvalScopeState]);
+
+  useEffect(() => {
+    scheduledJobsRef.current = scheduledJobs;
+  }, [scheduledJobs]);
+
+  useEffect(() => {
+    if (
+      productivityLifecycle.status === "preview" ||
+      productivityLifecycle.status === "failed"
+    ) {
+      productivityHeadingRef.current?.focus();
+    }
+  }, [productivityLifecycle.status, productivityLifecycle.proposalId, productivityLifecycle.error]);
 
   useEffect(() => {
     documentStatusCodeRef.current = documentStatusCode;
@@ -805,6 +1193,867 @@ export default function Home() {
     }
   }, [resetVoiceCompanion]);
 
+  const clearEmailDraftForm = useCallback(() => {
+    emailDraftPendingRef.current = false;
+    emailDraftRequestIdRef.current = null;
+    setEmailDraftPending(false);
+    setEmailDraftFields(createEmptyEmailDraftFields());
+    setEmailDraftValidationCode(undefined);
+    setEmailDraftValidationField(undefined);
+    setEmailDraftPrepareError(undefined);
+  }, []);
+
+  const clearCalendarForm = useCallback(() => {
+    calendarPendingRef.current = false;
+    calendarRequestIdRef.current = null;
+    setCalendarPending(false);
+    setCalendarReadFields(createEmptyCalendarReadFields());
+    setCalendarDraftFields(createEmptyCalendarDraftFields());
+    setCalendarValidationCode(undefined);
+    setCalendarValidationField(undefined);
+    setCalendarPrepareError(undefined);
+  }, []);
+
+  const clearResearchForm = useCallback(() => {
+    researchPendingRef.current = false;
+    researchRequestIdRef.current = null;
+    setResearchPending(false);
+    setResearchFields(createEmptyResearchFields());
+    setResearchValidationCode(undefined);
+    setResearchValidationField(undefined);
+    setResearchPrepareError(undefined);
+  }, []);
+
+  const clearReminderForm = useCallback(() => {
+    reminderPendingRef.current = false;
+    reminderRequestIdRef.current = null;
+    setReminderPending(false);
+    setReminderFields(createEmptyReminderFields());
+    setReminderValidationCode(undefined);
+    setReminderValidationField(undefined);
+    setReminderPrepareError(undefined);
+  }, []);
+
+  const clearProductivityLifecycle = useCallback(() => {
+    const idle = createInitialProposalLifecycleState();
+    productivityLifecycleRef.current = idle;
+    setProductivityLifecycle(idle);
+    const resetScope = resetApprovalScopeState();
+    approvalScopeStateRef.current = resetScope;
+    setApprovalScopeState(resetScope);
+    setProductivityResearchResult(null);
+    setProductivityCalendarResult(null);
+    clearEmailDraftForm();
+    clearCalendarForm();
+    clearResearchForm();
+    clearReminderForm();
+  }, [clearEmailDraftForm, clearCalendarForm, clearResearchForm, clearReminderForm]);
+
+  const clearScheduledJobsState = useCallback(() => {
+    scheduledJobsRef.current = Object.freeze([]);
+    setScheduledJobs(Object.freeze([]));
+    setScheduledJobsError(undefined);
+    setScheduledJobsStatus(undefined);
+    schedulePendingRef.current = false;
+    scheduleRequestIdRef.current = null;
+    setSchedulePending(false);
+    setScheduleFields(createEmptyScheduleProposalFields());
+    setScheduleValidationCode(undefined);
+    setScheduleValidationField(undefined);
+    setScheduledResearchResult(null);
+    setScheduledCalendarResult(null);
+  }, []);
+
+  const reportScheduledJobCreateError = useCallback((code: ScheduledJobErrorCode) => {
+    setScheduledJobsError(code);
+    setScheduledJobsStatus("Scheduled job was not created.");
+  }, []);
+
+  const applyScheduledJobsMessage = useCallback((message: ScheduledJobsServerMessage) => {
+    if (message.type === "scheduled_job_research_result") {
+      if (!scheduledJobsRef.current.some((job) => job.jobId === message.job_id)) {
+        return;
+      }
+      setScheduledResearchResult(message);
+      setScheduledCalendarResult(null);
+      setScheduledJobsStatus("Scheduled research completed.");
+      setActiveTab("files");
+      return;
+    }
+    if (message.type === "scheduled_job_calendar_result") {
+      if (!scheduledJobsRef.current.some((job) => job.jobId === message.job_id)) {
+        return;
+      }
+      setScheduledCalendarResult(message);
+      setScheduledResearchResult(null);
+      setScheduledJobsStatus("Scheduled calendar read completed.");
+      setActiveTab("files");
+      return;
+    }
+    if (message.type === "scheduled_jobs") {
+      scheduledJobsRef.current = message.jobs;
+      setScheduledJobs(message.jobs);
+      setScheduledJobsError(undefined);
+      setScheduledJobsStatus("List loaded.");
+      return;
+    }
+    if (message.type === "scheduled_job_update") {
+      if (
+        schedulePendingRef.current &&
+        message.request_id === scheduleRequestIdRef.current
+      ) {
+        schedulePendingRef.current = false;
+        scheduleRequestIdRef.current = null;
+        setSchedulePending(false);
+        setScheduleFields(createEmptyScheduleProposalFields());
+        setScheduleValidationCode(undefined);
+        setScheduleValidationField(undefined);
+        clearProductivityLifecycle();
+      }
+      const next = replaceScheduledJobInList(scheduledJobsRef.current, message.job);
+      if (!next) {
+        return;
+      }
+      scheduledJobsRef.current = next;
+      setScheduledJobs(next);
+      setScheduledJobsError(undefined);
+      setScheduledJobsStatus("Correlated update received.");
+      return;
+    }
+    if (
+      schedulePendingRef.current &&
+      message.request_id === scheduleRequestIdRef.current
+    ) {
+      schedulePendingRef.current = false;
+      scheduleRequestIdRef.current = null;
+      setSchedulePending(false);
+      reportScheduledJobCreateError(message.code);
+      return;
+    }
+    const current = scheduledJobsRef.current.find((job) => job.jobId === message.job_id);
+    if (!current) {
+      return;
+    }
+    const cleared = clearScheduledJobPendingControl(current, message.job_id);
+    if (cleared && cleared !== current) {
+      const next = replaceScheduledJobInList(scheduledJobsRef.current, cleared);
+      if (next) {
+        scheduledJobsRef.current = next;
+        setScheduledJobs(next);
+      }
+    }
+    setScheduledJobsError(message.code);
+  }, [clearProductivityLifecycle, reportScheduledJobCreateError]);
+
+  const submitScheduledJobCreate = useCallback(() => {
+    if (schedulePendingRef.current || isProductivityPreparePending()) {
+      return;
+    }
+    const state = productivityLifecycleRef.current;
+    const action = state.proposal?.actionLabel;
+    if (
+      state.status !== "preview" ||
+      !state.proposalId ||
+      (action !== "browser.research" && action !== "calendar.read")
+    ) {
+      return;
+    }
+    const boundFields = Object.freeze({
+      ...scheduleFields,
+      action: action as ScheduleAction,
+    });
+    const validation = validateScheduleProposalFields(
+      boundFields,
+      () => BigInt(Date.now()) * BigInt(1_000),
+    );
+    if (!validation.ok) {
+      setScheduleValidationCode(validation.code);
+      setScheduleValidationField(validation.field);
+      return;
+    }
+    const requestId = createScheduleRequestId();
+    const encoded = requestId
+      ? encodeScheduledJobCreate(
+          requestId,
+          state.proposalId,
+          boundFields,
+          () => BigInt(Date.now()) * BigInt(1_000),
+        )
+      : null;
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      setScheduleValidationCode("clock_unavailable");
+      setScheduleValidationField("nextRunAt");
+      return;
+    }
+    schedulePendingRef.current = true;
+    scheduleRequestIdRef.current = requestId;
+    setSchedulePending(true);
+    setScheduleValidationCode(undefined);
+    setScheduleValidationField(undefined);
+    ws.send(JSON.stringify(encoded));
+  }, [isProductivityPreparePending, scheduleFields]);
+
+  const resetScheduledJobCreate = useCallback(() => {
+    if (schedulePendingRef.current) {
+      return;
+    }
+    const action = productivityLifecycleRef.current.proposal?.actionLabel;
+    setScheduleFields(Object.freeze({
+      ...createEmptyScheduleProposalFields(),
+      action: action === "calendar.read" ? "calendar.read" : "browser.research",
+    }));
+    setScheduleValidationCode(undefined);
+    setScheduleValidationField(undefined);
+  }, []);
+
+  const sendScheduledJobControl = useCallback((
+    jobId: string,
+    control: ScheduledJobControl,
+  ) => {
+    const current = scheduledJobsRef.current.find((job) => job.jobId === jobId);
+    if (!current) {
+      return;
+    }
+    const pending = setScheduledJobPendingControl(current, jobId, control);
+    if (!pending) {
+      return;
+    }
+    const encoded =
+      control === "pause"
+        ? encodeScheduledJobPause(jobId)
+        : control === "resume"
+          ? encodeScheduledJobResume(jobId)
+          : encodeScheduledJobCancel(jobId);
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    const next = replaceScheduledJobInList(scheduledJobsRef.current, pending);
+    if (!next) {
+      return;
+    }
+    scheduledJobsRef.current = next;
+    setScheduledJobs(next);
+    setScheduledJobsError(undefined);
+    setScheduledJobsStatus(
+      control === "pause"
+        ? "Pause requested."
+        : control === "resume"
+          ? "Resume requested."
+          : "Cancel requested.",
+    );
+    ws.send(JSON.stringify(encoded));
+  }, []);
+
+  const pauseScheduledJob = useCallback((jobId: string) => {
+    sendScheduledJobControl(jobId, "pause");
+  }, [sendScheduledJobControl]);
+
+  const resumeScheduledJob = useCallback((jobId: string) => {
+    sendScheduledJobControl(jobId, "resume");
+  }, [sendScheduledJobControl]);
+
+  const cancelScheduledJob = useCallback((jobId: string) => {
+    sendScheduledJobControl(jobId, "cancel");
+  }, [sendScheduledJobControl]);
+
+  const applyProductivityMessage = useCallback((message: ProductivityServerMessage) => {
+    const state = productivityLifecycleRef.current;
+    if (message.type === "productivity_confirmation_required") {
+      const emailPrepareMatch =
+        emailDraftPendingRef.current &&
+        emailDraftResponseMatchesRequest(
+          emailDraftRequestIdRef.current,
+          message.request_id,
+        );
+      const calendarPrepareMatch =
+        calendarPendingRef.current &&
+        emailDraftResponseMatchesRequest(
+          calendarRequestIdRef.current,
+          message.request_id,
+        );
+      const researchPrepareMatch =
+        researchPendingRef.current &&
+        researchResponseMatchesRequest(
+          researchRequestIdRef.current,
+          message.request_id,
+        );
+      const reminderPrepareMatch =
+        reminderPendingRef.current &&
+        emailDraftResponseMatchesRequest(
+          reminderRequestIdRef.current,
+          message.request_id,
+        );
+      if (message.request_id !== undefined) {
+        if (
+          !emailPrepareMatch &&
+          !calendarPrepareMatch &&
+          !researchPrepareMatch &&
+          !reminderPrepareMatch
+        ) {
+          return;
+        }
+      } else if (isProductivityPreparePending()) {
+        return;
+      }
+      const next = reduceProposalLifecycle(state, {
+        type: "preview",
+        proposal: {
+          proposalId: message.proposal_id,
+          heading: message.heading,
+          actionLabel: message.action,
+          riskLabel: message.risk_label,
+          targets: message.targets.map((entry) => ({ ...entry })),
+          payload: message.payload.map((entry) => ({ ...entry })),
+          expirationLabel: `Expires at ${message.expires_at}`,
+        },
+      });
+      if (next === state) {
+        return;
+      }
+      const scopeState = createApprovalScopeStateFromAllowed(message.allowed_scopes);
+      if (!scopeState) {
+        return;
+      }
+      if (emailPrepareMatch) {
+        emailDraftPendingRef.current = false;
+        emailDraftRequestIdRef.current = null;
+        setEmailDraftPending(false);
+        setEmailDraftPrepareError(undefined);
+        setEmailDraftValidationCode(undefined);
+        setEmailDraftValidationField(undefined);
+      } else if (calendarPrepareMatch) {
+        calendarPendingRef.current = false;
+        calendarRequestIdRef.current = null;
+        setCalendarPending(false);
+        setCalendarPrepareError(undefined);
+        setCalendarValidationCode(undefined);
+        setCalendarValidationField(undefined);
+      } else if (researchPrepareMatch) {
+        researchPendingRef.current = false;
+        researchRequestIdRef.current = null;
+        setResearchPending(false);
+        setResearchPrepareError(undefined);
+        setResearchValidationCode(undefined);
+        setResearchValidationField(undefined);
+      } else if (reminderPrepareMatch) {
+        reminderPendingRef.current = false;
+        reminderRequestIdRef.current = null;
+        setReminderPending(false);
+        setReminderPrepareError(undefined);
+        setReminderValidationCode(undefined);
+        setReminderValidationField(undefined);
+      }
+      setProductivityResearchResult(null);
+      setProductivityCalendarResult(null);
+      setScheduledResearchResult(null);
+      setScheduledCalendarResult(null);
+      if (message.action === "browser.research" || message.action === "calendar.read") {
+        setScheduleFields(Object.freeze({
+          ...createEmptyScheduleProposalFields(),
+          action: message.action,
+        }));
+      }
+      productivityLifecycleRef.current = next;
+      setProductivityLifecycle(next);
+      approvalScopeStateRef.current = scopeState;
+      setApprovalScopeState(scopeState);
+      setActiveTab("files");
+      return;
+    }
+    if (message.type === "productivity_update") {
+      const next = applyProductivityUpdateStatus(
+        state,
+        message.proposal_id,
+        message.status,
+      );
+      if (next === state) {
+        return;
+      }
+      productivityLifecycleRef.current = next;
+      setProductivityLifecycle(next);
+      if (TERMINAL_PRODUCTIVITY_STATUSES.has(next.status)) {
+        const resetScope = resetApprovalScopeState();
+        approvalScopeStateRef.current = resetScope;
+        setApprovalScopeState(resetScope);
+        clearEmailDraftForm();
+        clearCalendarForm();
+        clearResearchForm();
+        clearReminderForm();
+      }
+      return;
+    }
+    if (message.type === "productivity_research_result") {
+      if (state.proposalId !== message.proposal_id) {
+        return;
+      }
+      const next = applyProductivityUpdateStatus(
+        state,
+        message.proposal_id,
+        "completed",
+      );
+      if (next === state && state.status !== "completed") {
+        return;
+      }
+      productivityLifecycleRef.current = next;
+      setProductivityLifecycle(next);
+      setProductivityResearchResult(message);
+      setProductivityCalendarResult(null);
+      const resetScope = resetApprovalScopeState();
+      approvalScopeStateRef.current = resetScope;
+      setApprovalScopeState(resetScope);
+      clearEmailDraftForm();
+      clearCalendarForm();
+      clearResearchForm();
+      clearReminderForm();
+      setActiveTab("files");
+      return;
+    }
+    if (message.type === "productivity_calendar_result") {
+      if (state.proposalId !== message.proposal_id) {
+        return;
+      }
+      const next = applyProductivityUpdateStatus(
+        state,
+        message.proposal_id,
+        "completed",
+      );
+      if (next === state && state.status !== "completed") {
+        return;
+      }
+      productivityLifecycleRef.current = next;
+      setProductivityLifecycle(next);
+      setProductivityCalendarResult(message);
+      setProductivityResearchResult(null);
+      const resetScope = resetApprovalScopeState();
+      approvalScopeStateRef.current = resetScope;
+      setApprovalScopeState(resetScope);
+      clearEmailDraftForm();
+      clearCalendarForm();
+      clearResearchForm();
+      clearReminderForm();
+      setActiveTab("files");
+      return;
+    }
+    if (
+      emailDraftPendingRef.current &&
+      emailDraftResponseMatchesRequest(
+        emailDraftRequestIdRef.current,
+        message.request_id,
+      )
+    ) {
+      emailDraftPendingRef.current = false;
+      emailDraftRequestIdRef.current = null;
+      setEmailDraftPending(false);
+      setEmailDraftPrepareError(message.code);
+      setEmailDraftValidationCode(undefined);
+      setEmailDraftValidationField(undefined);
+      setActiveTab("files");
+      return;
+    }
+    if (
+      calendarPendingRef.current &&
+      emailDraftResponseMatchesRequest(
+        calendarRequestIdRef.current,
+        message.request_id,
+      )
+    ) {
+      calendarPendingRef.current = false;
+      calendarRequestIdRef.current = null;
+      setCalendarPending(false);
+      setCalendarPrepareError(message.code);
+      setCalendarValidationCode(undefined);
+      setCalendarValidationField(undefined);
+      setActiveTab("files");
+      return;
+    }
+    if (
+      researchPendingRef.current &&
+      researchResponseMatchesRequest(
+        researchRequestIdRef.current,
+        message.request_id,
+      )
+    ) {
+      researchPendingRef.current = false;
+      researchRequestIdRef.current = null;
+      setResearchPending(false);
+      setResearchPrepareError(message.code);
+      setResearchValidationCode(undefined);
+      setResearchValidationField(undefined);
+      setActiveTab("files");
+      return;
+    }
+    if (
+      reminderPendingRef.current &&
+      emailDraftResponseMatchesRequest(
+        reminderRequestIdRef.current,
+        message.request_id,
+      )
+    ) {
+      reminderPendingRef.current = false;
+      reminderRequestIdRef.current = null;
+      setReminderPending(false);
+      setReminderPrepareError(message.code);
+      setReminderValidationCode(undefined);
+      setReminderValidationField(undefined);
+      setActiveTab("files");
+      return;
+    }
+    if (message.request_id !== undefined) {
+      return;
+    }
+    const next = reduceProposalLifecycle(state, {
+      type: "fail",
+      proposalId: message.proposal_id,
+      error: message.code,
+    });
+    if (next === state) {
+      return;
+    }
+    productivityLifecycleRef.current = next;
+    setProductivityLifecycle(next);
+    const resetScope = resetApprovalScopeState();
+    approvalScopeStateRef.current = resetScope;
+    setApprovalScopeState(resetScope);
+    clearEmailDraftForm();
+    clearCalendarForm();
+    clearResearchForm();
+    clearReminderForm();
+  }, [
+    clearEmailDraftForm,
+    clearCalendarForm,
+    clearResearchForm,
+    clearReminderForm,
+    isProductivityPreparePending,
+  ]);
+
+  const confirmProductivityAction = useCallback(() => {
+    const state = productivityLifecycleRef.current;
+    if (state.status !== "preview" || !state.proposalId) {
+      return;
+    }
+    const scopeState = approvalScopeStateRef.current;
+    if (!isApprovalScopeConfirmReady(scopeState)) {
+      return;
+    }
+    const next = reduceProposalLifecycle(state, {
+      type: "confirm",
+      proposalId: state.proposalId,
+    });
+    if (next === state) {
+      return;
+    }
+    const encoded = encodeProductivityConfirm(state.proposalId, scopeState);
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    productivityLifecycleRef.current = next;
+    setProductivityLifecycle(next);
+    ws.send(JSON.stringify(encoded));
+  }, []);
+
+  const cancelProductivityAction = useCallback(() => {
+    const state = productivityLifecycleRef.current;
+    if (!state.proposalId) {
+      return;
+    }
+    const next = reduceProposalLifecycle(state, {
+      type: "cancel",
+      proposalId: state.proposalId,
+    });
+    if (next === state) {
+      return;
+    }
+    const encoded = encodeProductivityCancel(state.proposalId);
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    productivityLifecycleRef.current = next;
+    setProductivityLifecycle(next);
+    const resetScope = resetApprovalScopeState();
+    approvalScopeStateRef.current = resetScope;
+    setApprovalScopeState(resetScope);
+    clearEmailDraftForm();
+    clearCalendarForm();
+    clearResearchForm();
+    clearReminderForm();
+    ws.send(JSON.stringify(encoded));
+  }, [clearEmailDraftForm, clearCalendarForm, clearResearchForm, clearReminderForm]);
+
+  const submitEmailDraftPrepare = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    const validated = validateEmailDraftFields(emailDraftFields);
+    if (!validated.ok) {
+      setEmailDraftValidationCode(validated.code);
+      setEmailDraftValidationField(validated.field);
+      setEmailDraftPrepareError(undefined);
+      return;
+    }
+    const requestId = createEmailDraftRequestId();
+    const encoded = encodeProductivityEmailDraftPrepare({
+      type: "productivity_email_draft_prepare",
+      request_id: requestId,
+      recipient: validated.fields.recipient,
+      subject: validated.fields.subject,
+      body: validated.fields.body,
+    });
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      setEmailDraftPrepareError("unavailable");
+      return;
+    }
+    setEmailDraftFields(validated.fields);
+    setEmailDraftValidationCode(undefined);
+    setEmailDraftValidationField(undefined);
+    setEmailDraftPrepareError(undefined);
+    emailDraftRequestIdRef.current = requestId;
+    emailDraftPendingRef.current = true;
+    setEmailDraftPending(true);
+    setActiveTab("files");
+    ws.send(JSON.stringify(encoded));
+  }, [emailDraftFields, isProductivityPreparePending]);
+
+  const resetEmailDraftForm = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    clearEmailDraftForm();
+  }, [clearEmailDraftForm, isProductivityPreparePending]);
+
+  const submitCalendarPrepare = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      setCalendarPrepareError("unavailable");
+      return;
+    }
+    if (calendarMode === "read") {
+      const validated = validateCalendarReadFields(calendarReadFields);
+      if (!validated.ok) {
+        setCalendarValidationCode(validated.code);
+        setCalendarValidationField(validated.field);
+        setCalendarPrepareError(undefined);
+        return;
+      }
+      const requestId = createEmailDraftRequestId();
+      const encoded = encodeProductivityCalendarReadPrepare({
+        type: "productivity_calendar_read_prepare",
+        request_id: requestId,
+        start: validated.fields.start,
+        end: validated.fields.end,
+        ...(validated.fields.calendarName !== undefined
+          ? { calendar_name: validated.fields.calendarName }
+          : {}),
+      });
+      if (!encoded) {
+        setCalendarPrepareError("unavailable");
+        return;
+      }
+      setCalendarReadFields({
+        start: validated.fields.start,
+        end: validated.fields.end,
+        calendarName: validated.fields.calendarName ?? "",
+      });
+      setCalendarValidationCode(undefined);
+      setCalendarValidationField(undefined);
+      setCalendarPrepareError(undefined);
+      calendarRequestIdRef.current = requestId;
+      calendarPendingRef.current = true;
+      setCalendarPending(true);
+      setActiveTab("files");
+      ws.send(JSON.stringify(encoded));
+      return;
+    }
+    const validated = validateCalendarDraftFields(calendarDraftFields);
+    if (!validated.ok) {
+      setCalendarValidationCode(validated.code);
+      setCalendarValidationField(validated.field);
+      setCalendarPrepareError(undefined);
+      return;
+    }
+    const requestId = createEmailDraftRequestId();
+    const encoded = encodeProductivityCalendarDraftPrepare({
+      type: "productivity_calendar_draft_prepare",
+      request_id: requestId,
+      title: validated.fields.title,
+      start: validated.fields.start,
+      end: validated.fields.end,
+      calendar_name: validated.fields.calendarName,
+      ...(validated.fields.location !== undefined
+        ? { location: validated.fields.location }
+        : {}),
+      ...(validated.fields.notes !== undefined
+        ? { notes: validated.fields.notes }
+        : {}),
+    });
+    if (!encoded) {
+      setCalendarPrepareError("unavailable");
+      return;
+    }
+    setCalendarDraftFields({
+      title: validated.fields.title,
+      start: validated.fields.start,
+      end: validated.fields.end,
+      calendarName: validated.fields.calendarName,
+      location: validated.fields.location ?? "",
+      notes: validated.fields.notes ?? "",
+    });
+    setCalendarValidationCode(undefined);
+    setCalendarValidationField(undefined);
+    setCalendarPrepareError(undefined);
+    calendarRequestIdRef.current = requestId;
+    calendarPendingRef.current = true;
+    setCalendarPending(true);
+    setActiveTab("files");
+    ws.send(JSON.stringify(encoded));
+  }, [calendarMode, calendarReadFields, calendarDraftFields, isProductivityPreparePending]);
+
+  const resetCalendarForm = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    clearCalendarForm();
+  }, [clearCalendarForm, isProductivityPreparePending]);
+
+  const submitResearchPrepare = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    const validated = validateResearchFields(researchFields);
+    if (!validated.ok) {
+      setResearchValidationCode(validated.code);
+      setResearchValidationField(validated.field);
+      setResearchPrepareError(undefined);
+      return;
+    }
+    const requestId = createResearchRequestId();
+    const encoded = encodeProductivityResearchPrepare({
+      type: "productivity_research_prepare",
+      request_id: requestId,
+      query: validated.fields.query,
+      ...(validated.fields.domains !== undefined
+        ? { domains: [...validated.fields.domains] }
+        : {}),
+      ...(validated.fields.maxResults !== undefined
+        ? { max_results: validated.fields.maxResults }
+        : {}),
+    });
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      setResearchPrepareError("unavailable");
+      return;
+    }
+    setResearchFields({
+      query: validated.fields.query,
+      domainsText: validated.fields.domains?.join("\n") ?? "",
+      maxResults: String(validated.fields.maxResults),
+    });
+    setResearchValidationCode(undefined);
+    setResearchValidationField(undefined);
+    setResearchPrepareError(undefined);
+    researchRequestIdRef.current = requestId;
+    researchPendingRef.current = true;
+    setResearchPending(true);
+    setActiveTab("files");
+    ws.send(JSON.stringify(encoded));
+  }, [researchFields, isProductivityPreparePending]);
+
+  const resetResearchForm = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    clearResearchForm();
+  }, [clearResearchForm, isProductivityPreparePending]);
+
+  const submitReminderPrepare = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    const validated = validateReminderFields(reminderFields);
+    if (!validated.ok) {
+      setReminderValidationCode(validated.code);
+      setReminderValidationField(validated.field);
+      setReminderPrepareError(undefined);
+      return;
+    }
+    const requestId = createEmailDraftRequestId();
+    const encoded = encodeProductivityReminderPrepare({
+      type: "productivity_reminder_prepare",
+      request_id: requestId,
+      title: validated.fields.title,
+      remind_at: validated.fields.remindAt,
+      ...(validated.fields.notes !== undefined
+        ? { notes: validated.fields.notes }
+        : {}),
+      ...(validated.fields.listName !== undefined
+        ? { list_name: validated.fields.listName }
+        : {}),
+    });
+    const ws = wsRef.current;
+    if (!encoded || !ws || ws.readyState !== WebSocket.OPEN) {
+      setReminderPrepareError("unavailable");
+      return;
+    }
+    setReminderFields({
+      title: validated.fields.title,
+      remindAt: validated.fields.remindAt,
+      notes: validated.fields.notes ?? "",
+      listName: validated.fields.listName ?? "",
+    });
+    setReminderValidationCode(undefined);
+    setReminderValidationField(undefined);
+    setReminderPrepareError(undefined);
+    reminderRequestIdRef.current = requestId;
+    reminderPendingRef.current = true;
+    setReminderPending(true);
+    setActiveTab("files");
+    ws.send(JSON.stringify(encoded));
+  }, [reminderFields, isProductivityPreparePending]);
+
+  const resetReminderForm = useCallback(() => {
+    if (isProductivityPreparePending()) {
+      return;
+    }
+    clearReminderForm();
+  }, [clearReminderForm, isProductivityPreparePending]);
+
+  useEffect(() => {
+    if (calendarPrepareError) {
+      calendarPrepareErrorHeadingRef.current?.focus();
+    }
+  }, [calendarPrepareError]);
+
+  useEffect(() => {
+    if (researchPrepareError) {
+      researchPrepareErrorHeadingRef.current?.focus();
+    }
+  }, [researchPrepareError]);
+
+  useEffect(() => {
+    if (reminderPrepareError) {
+      reminderPrepareErrorHeadingRef.current?.focus();
+    }
+  }, [reminderPrepareError]);
+
+  useEffect(() => {
+    if (productivityResearchResult) {
+      researchResultHeadingRef.current?.focus();
+    }
+  }, [productivityResearchResult]);
+
+  useEffect(() => {
+    if (productivityCalendarResult) {
+      calendarResultHeadingRef.current?.focus();
+    }
+  }, [productivityCalendarResult]);
+
   const connect = useCallback(() => {
     if (!serverUrl) return;
 
@@ -823,6 +2072,23 @@ export default function Home() {
     };
 
     ws.onmessage = (event) => {
+      const productivityMessage = parseProductivityServerMessage(event.data);
+      if (productivityMessage) {
+        applyProductivityMessage(productivityMessage);
+        return;
+      }
+      const scheduledJobsMessage = parseScheduledJobsServerMessage(event.data);
+      if (scheduledJobsMessage) {
+        applyScheduledJobsMessage(scheduledJobsMessage);
+        return;
+      }
+      const frameType = parseWebSocketFrameType(event.data);
+      if (
+        frameType !== null &&
+        isStrictDedicatedServerMessageType(frameType)
+      ) {
+        return;
+      }
       const data = parseServerMessage(event.data);
       if (!data) return;
       if (data.type === "paired") {
@@ -843,6 +2109,7 @@ export default function Home() {
           const prefs = loadCompanionPrefs();
           syncCompanionPrefs(prefs.companionType, prefs.presentation);
         }
+        ws.send(JSON.stringify(encodeScheduledJobsList()));
         addMessage("Connected to HIKARI! Ask me anything.", "ai");
       } else if (data.type === "companion_update" && data.companion) {
         applyCompanionUpdate(data.companion as Record<string, unknown>);
@@ -980,9 +2247,9 @@ export default function Home() {
       } else if (data.type === "pair_error" || data.type === "pair_locked") {
         setInterfaceError(stringField(data, "message") || "Pairing failed");
       } else if (data.type === "protocol_error") {
-        setInterfaceError(stringField(data, "message") || "Unsupported server protocol");
+        setInterfaceError("Unsupported server protocol");
       } else if (data.type === "error") {
-        setInterfaceError(boundedString(data, "message", 1000) ?? "Server request failed");
+        setInterfaceError("Server request failed");
         setIsTyping(false);
         setOrbState("idle");
         if (
@@ -1004,6 +2271,8 @@ export default function Home() {
           "Connection lost while preparing the document. Reconnect and try again.",
         );
       }
+      clearProductivityLifecycle();
+      clearScheduledJobsState();
       speechOutputRef.current?.cancel();
       speechOutputRef.current?.clearLastVoiceResponse();
       cancelVoiceCapture();
@@ -1011,7 +2280,7 @@ export default function Home() {
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -1218,6 +2487,23 @@ export default function Home() {
   const documentRequestLocked = documentPreparePending || documentAwaitingConfirmation;
   const canCancelDocument = Boolean(documentTaskId) &&
     (!documentStatusCode || !TERMINAL_DOCUMENT_STATUSES.has(documentStatusCode));
+  const productivityProposal = productivityLifecycle.proposal;
+  const productivityPreparePending =
+    emailDraftPending || calendarPending || researchPending || reminderPending;
+  const productivityPending =
+    productivityLifecycle.status === "confirming" ||
+    productivityLifecycle.status === "cancelling" ||
+    productivityLifecycle.status === "completed" ||
+    productivityLifecycle.status === "failed" ||
+    productivityLifecycle.status === "cancelled";
+  const productivityConfirmDisabled =
+    productivityLifecycle.status !== "preview" ||
+    !isApprovalScopeConfirmReady(approvalScopeState);
+  const productivityCancelDisabled = !(
+    productivityLifecycle.status === "preview" ||
+    productivityLifecycle.status === "approved" ||
+    productivityLifecycle.status === "executing"
+  );
 
   if (!isPaired) {
     return (
@@ -1468,6 +2754,413 @@ export default function Home() {
 
         {activeTab === "files" && (
           <div className="p-4 overflow-y-auto h-full space-y-5">
+            {productivityProposal && (
+              <>
+                <ProductivityActionPreview
+                  proposal={{
+                    proposalId: productivityProposal.proposalId,
+                    heading: productivityProposal.heading,
+                    actionLabel: productivityProposal.actionLabel,
+                    riskLabel: productivityProposal.riskLabel,
+                    targets: productivityProposal.targets,
+                    payload: productivityProposal.payload,
+                    expirationLabel: productivityProposal.expirationLabel,
+                  }}
+                  pending={productivityPending}
+                  confirmDisabled={productivityConfirmDisabled}
+                  cancelDisabled={productivityCancelDisabled}
+                  liveStatus={productivityLiveStatus(productivityLifecycle.status)}
+                  error={
+                    productivityLifecycle.status === "failed"
+                      ? productivityLifecycle.error
+                      : undefined
+                  }
+                  onConfirm={confirmProductivityAction}
+                  onCancel={cancelProductivityAction}
+                  headingRef={productivityHeadingRef}
+                />
+                {productivityLifecycle.status === "preview" ||
+                productivityLifecycle.status === "confirming" ||
+                productivityLifecycle.status === "approved" ||
+                productivityLifecycle.status === "executing" ||
+                productivityLifecycle.status === "cancelling" ? (
+                  <ApprovalScopeSelector
+                    state={approvalScopeState}
+                    onChange={(next) => {
+                      approvalScopeStateRef.current = next;
+                      setApprovalScopeState(next);
+                    }}
+                    disabled={productivityPending}
+                  />
+                ) : null}
+              </>
+            )}
+
+            {productivityLifecycle.status === "preview" &&
+            productivityProposal &&
+            (productivityProposal.actionLabel === "browser.research" ||
+              productivityProposal.actionLabel === "calendar.read") ? (
+              <ScheduledJobCreateForm
+                fields={Object.freeze({
+                  ...scheduleFields,
+                  action: productivityProposal.actionLabel as ScheduleAction,
+                })}
+                pending={schedulePending}
+                disabled={productivityPreparePending}
+                actionLocked
+                validationCode={scheduleValidationCode}
+                validationField={scheduleValidationField}
+                onChange={(next) => {
+                  setScheduleFields(Object.freeze({
+                    ...next,
+                    action: productivityProposal.actionLabel as ScheduleAction,
+                  }));
+                  setScheduleValidationCode(undefined);
+                  setScheduleValidationField(undefined);
+                  setScheduledJobsError(undefined);
+                }}
+                onSubmit={submitScheduledJobCreate}
+                onReset={resetScheduledJobCreate}
+              />
+            ) : null}
+
+            {productivityResearchResult ? (
+              <section
+                className="rounded-lg border border-gray-700 bg-gray-950/40 p-4"
+                aria-labelledby="productivity-research-result-heading"
+              >
+                <h2
+                  id="productivity-research-result-heading"
+                  ref={researchResultHeadingRef}
+                  tabIndex={-1}
+                  className="text-sm font-semibold text-gray-100"
+                >
+                  Research results
+                </h2>
+                <p
+                  className="mt-2 text-sm text-gray-300"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Research completed.
+                </p>
+                {productivityResearchResult.items.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-400">No results.</p>
+                ) : (
+                  <ul className="mt-3 list-disc space-y-3 pl-5">
+                    {productivityResearchResult.items.map((item) => (
+                      <li key={`${item.domain}:${item.url}`} className="text-sm text-gray-200">
+                        <a
+                          href={item.url}
+                          className="font-medium text-sky-300 underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          {item.title}
+                        </a>
+                        <span className="ml-2 text-gray-400">({item.domain})</span>
+                        {item.snippet ? (
+                          <p className="mt-1 whitespace-pre-wrap text-gray-300">{item.snippet}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ) : null}
+
+            {productivityCalendarResult ? (
+              <section
+                className="rounded-lg border border-gray-700 bg-gray-950/40 p-4"
+                aria-labelledby="productivity-calendar-result-heading"
+              >
+                <h2
+                  id="productivity-calendar-result-heading"
+                  ref={calendarResultHeadingRef}
+                  tabIndex={-1}
+                  className="text-sm font-semibold text-gray-100"
+                >
+                  Calendar results
+                </h2>
+                <p
+                  className="mt-2 text-sm text-gray-300"
+                  role="status"
+                  aria-live="polite"
+                >
+                  Calendar read completed.
+                </p>
+                {productivityCalendarResult.events.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-400">No events.</p>
+                ) : (
+                  <ul className="mt-3 list-disc space-y-3 pl-5">
+                    {productivityCalendarResult.events.map((event) => (
+                      <li
+                        key={`${event.calendar}:${event.start}:${event.end}:${event.title}`}
+                        className="text-sm text-gray-200"
+                      >
+                        <p className="font-medium text-gray-100">{event.title}</p>
+                        <p className="mt-1 text-gray-400">
+                          {event.start} – {event.end}
+                        </p>
+                        <p className="mt-1 text-gray-400">Calendar: {event.calendar}</p>
+                        {event.location ? (
+                          <p className="mt-1 whitespace-pre-wrap text-gray-300">
+                            Location: {event.location}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ) : null}
+
+            <EmailDraftProposal
+              fields={emailDraftFields}
+              pending={productivityPreparePending}
+              disabled={
+                productivityPreparePending ||
+                productivityLifecycle.status === "preview" ||
+                productivityLifecycle.status === "confirming" ||
+                productivityLifecycle.status === "approved" ||
+                productivityLifecycle.status === "executing" ||
+                productivityLifecycle.status === "cancelling"
+              }
+              validationCode={emailDraftValidationCode}
+              validationField={emailDraftValidationField}
+              prepareError={emailDraftPrepareError}
+              onChange={(next) => {
+                setEmailDraftFields(next);
+                setEmailDraftValidationCode(undefined);
+                setEmailDraftValidationField(undefined);
+                setEmailDraftPrepareError(undefined);
+              }}
+              onSubmit={submitEmailDraftPrepare}
+              onReset={resetEmailDraftForm}
+              headingRef={emailDraftHeadingRef}
+            />
+
+            <div>
+              <CalendarProposalForm
+                mode={calendarMode}
+                readFields={calendarReadFields}
+                draftFields={calendarDraftFields}
+                pending={productivityPreparePending}
+                disabled={
+                  productivityPreparePending ||
+                  productivityLifecycle.status === "preview" ||
+                  productivityLifecycle.status === "confirming" ||
+                  productivityLifecycle.status === "approved" ||
+                  productivityLifecycle.status === "executing" ||
+                  productivityLifecycle.status === "cancelling"
+                }
+                validationCode={calendarValidationCode}
+                validationField={calendarValidationField}
+                onModeChange={(nextMode) => {
+                  if (isProductivityPreparePending()) {
+                    return;
+                  }
+                  setCalendarMode(nextMode);
+                  setCalendarValidationCode(undefined);
+                  setCalendarValidationField(undefined);
+                  setCalendarPrepareError(undefined);
+                }}
+                onReadChange={(next) => {
+                  setCalendarReadFields(next);
+                  setCalendarValidationCode(undefined);
+                  setCalendarValidationField(undefined);
+                  setCalendarPrepareError(undefined);
+                }}
+                onDraftChange={(next) => {
+                  setCalendarDraftFields(next);
+                  setCalendarValidationCode(undefined);
+                  setCalendarValidationField(undefined);
+                  setCalendarPrepareError(undefined);
+                }}
+                onSubmit={submitCalendarPrepare}
+                onReset={resetCalendarForm}
+                headingRef={calendarHeadingRef}
+              />
+              {calendarPrepareError ? (
+                <div
+                  className="mt-4 rounded-lg border border-red-800 bg-red-950/40 p-3"
+                  role="alert"
+                >
+                  <h3
+                    ref={calendarPrepareErrorHeadingRef}
+                    tabIndex={-1}
+                    className="text-sm font-semibold text-red-200"
+                  >
+                    Calendar prepare failed
+                  </h3>
+                  <p className="mt-1 text-sm text-red-100">
+                    {mapPreviewErrorMessage(calendarPrepareError)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <ResearchProposalForm
+                fields={researchFields}
+                pending={productivityPreparePending}
+                disabled={
+                  productivityPreparePending ||
+                  productivityLifecycle.status === "preview" ||
+                  productivityLifecycle.status === "confirming" ||
+                  productivityLifecycle.status === "approved" ||
+                  productivityLifecycle.status === "executing" ||
+                  productivityLifecycle.status === "cancelling"
+                }
+                validationCode={researchValidationCode}
+                validationField={researchValidationField}
+                onChange={(next) => {
+                  setResearchFields(next);
+                  setResearchValidationCode(undefined);
+                  setResearchValidationField(undefined);
+                  setResearchPrepareError(undefined);
+                }}
+                onSubmit={submitResearchPrepare}
+                onReset={resetResearchForm}
+                headingRef={researchHeadingRef}
+              />
+              {researchPrepareError ? (
+                <div
+                  className="mt-4 rounded-lg border border-red-800 bg-red-950/40 p-3"
+                  role="alert"
+                >
+                  <h3
+                    ref={researchPrepareErrorHeadingRef}
+                    tabIndex={-1}
+                    className="text-sm font-semibold text-red-200"
+                  >
+                    Research prepare failed
+                  </h3>
+                  <p className="mt-1 text-sm text-red-100">
+                    {mapPreviewErrorMessage(researchPrepareError)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div>
+              <ReminderProposalForm
+                fields={reminderFields}
+                pending={productivityPreparePending}
+                disabled={
+                  productivityPreparePending ||
+                  productivityLifecycle.status === "preview" ||
+                  productivityLifecycle.status === "confirming" ||
+                  productivityLifecycle.status === "approved" ||
+                  productivityLifecycle.status === "executing" ||
+                  productivityLifecycle.status === "cancelling"
+                }
+                validationCode={reminderValidationCode}
+                validationField={reminderValidationField}
+                onChange={(next) => {
+                  setReminderFields(next);
+                  setReminderValidationCode(undefined);
+                  setReminderValidationField(undefined);
+                  setReminderPrepareError(undefined);
+                }}
+                onSubmit={submitReminderPrepare}
+                onReset={resetReminderForm}
+                headingRef={reminderHeadingRef}
+              />
+              {reminderPrepareError ? (
+                <div
+                  className="mt-4 rounded-lg border border-red-800 bg-red-950/40 p-3"
+                  role="alert"
+                >
+                  <h3
+                    ref={reminderPrepareErrorHeadingRef}
+                    tabIndex={-1}
+                    className="text-sm font-semibold text-red-200"
+                  >
+                    Reminder prepare failed
+                  </h3>
+                  <p className="mt-1 text-sm text-red-100">
+                    {mapPreviewErrorMessage(reminderPrepareError)}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            {scheduledResearchResult ? (
+              <section
+                className="rounded-lg border border-gray-700 bg-gray-950/40 p-4"
+                aria-labelledby="scheduled-research-result-heading"
+              >
+                <h2 id="scheduled-research-result-heading" className="text-sm font-semibold text-gray-100">
+                  Scheduled research results
+                </h2>
+                <p className="mt-2 text-sm text-gray-300" role="status" aria-live="polite">
+                  Scheduled research completed.
+                </p>
+                {scheduledResearchResult.items.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-400">No results.</p>
+                ) : (
+                  <ul className="mt-3 list-disc space-y-3 pl-5">
+                    {scheduledResearchResult.items.map((item) => (
+                      <li key={`${item.domain}:${item.url}`} className="text-sm text-gray-200">
+                        <a
+                          href={item.url}
+                          className="font-medium text-sky-300 underline underline-offset-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
+                          rel="noopener noreferrer"
+                          target="_blank"
+                        >
+                          {item.title}
+                        </a>
+                        <span className="ml-2 text-gray-400">({item.domain})</span>
+                        {item.snippet ? (
+                          <p className="mt-1 whitespace-pre-wrap text-gray-300">{item.snippet}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ) : null}
+
+            {scheduledCalendarResult ? (
+              <section
+                className="rounded-lg border border-gray-700 bg-gray-950/40 p-4"
+                aria-labelledby="scheduled-calendar-result-heading"
+              >
+                <h2 id="scheduled-calendar-result-heading" className="text-sm font-semibold text-gray-100">
+                  Scheduled calendar results
+                </h2>
+                <p className="mt-2 text-sm text-gray-300" role="status" aria-live="polite">
+                  Scheduled calendar read completed.
+                </p>
+                {scheduledCalendarResult.events.length === 0 ? (
+                  <p className="mt-3 text-sm text-gray-400">No events.</p>
+                ) : (
+                  <ul className="mt-3 list-disc space-y-3 pl-5">
+                    {scheduledCalendarResult.events.map((event) => (
+                      <li key={`${event.calendar}:${event.start}:${event.end}:${event.title}`} className="text-sm text-gray-200">
+                        <p className="font-medium text-gray-100">{event.title}</p>
+                        <p className="mt-1 text-gray-400">{event.start} – {event.end}</p>
+                        <p className="mt-1 text-gray-400">Calendar: {event.calendar}</p>
+                        {event.location ? (
+                          <p className="mt-1 whitespace-pre-wrap text-gray-300">Location: {event.location}</p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ) : null}
+
+            <ScheduledJobsPanel
+              jobs={scheduledJobs}
+              statusMessage={scheduledJobsStatus}
+              error={scheduledJobsError}
+              onPause={pauseScheduledJob}
+              onResume={resumeScheduledJob}
+              onCancel={cancelScheduledJob}
+            />
+
             <div>
               <h2 className="text-xl font-bold">Explain a document</h2>
               <p className="mt-1 text-gray-400 text-sm">

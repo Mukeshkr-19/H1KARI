@@ -79,10 +79,149 @@ def run_server(host: str, port: int):
     print(f"[*] Starting HIKARI server on {host}:{port}...")
 
     from core.orchestrator import get_orchestrator
+    try:
+        from core.jobs.bootstrap import create_scheduled_job_subsystem
+    except ImportError:
+        create_scheduled_job_subsystem = None
+    try:
+        from core.jobs.bootstrap import create_scheduled_job_runtime
+    except ImportError:
+        create_scheduled_job_runtime = None
+    from core.productivity.bootstrap import (
+        create_email_draft_preparation,
+        create_productivity_runtime,
+    )
+    try:
+        from core.productivity.bootstrap import create_productivity_execution_coordinator
+    except ImportError:
+        create_productivity_execution_coordinator = None
+    try:
+        from core.productivity.bootstrap import create_calendar_preparation
+    except ImportError:
+        create_calendar_preparation = None
+    try:
+        from core.productivity.bootstrap import create_research_preparation
+    except ImportError:
+        create_research_preparation = None
+    try:
+        from core.productivity.bootstrap import create_reminder_preparation
+    except ImportError:
+        create_reminder_preparation = None
     from core.server import WebSocketServer
 
     orchestrator = get_orchestrator()
-    WebSocketServer(orchestrator, host=host, port=port).start()
+    productivity_runtime = None
+    productivity_execution_coordinator = None
+    email_draft_factory = None
+    email_draft_registry = None
+    calendar_read_factory = None
+    calendar_draft_factory = None
+    calendar_registry = None
+    research_factory = None
+    research_registry = None
+    reminder_factory = None
+    reminder_registry = None
+    try:
+        productivity_runtime = create_productivity_runtime()
+        if create_productivity_execution_coordinator is not None:
+            productivity_execution_coordinator = (
+                create_productivity_execution_coordinator(productivity_runtime)
+            )
+        email_draft_factory, email_draft_registry = create_email_draft_preparation()
+    except Exception:
+        productivity_runtime = None
+        productivity_execution_coordinator = None
+        email_draft_factory = None
+        email_draft_registry = None
+        print(
+            "[!] Productivity actions are temporarily unavailable.",
+            file=sys.stderr,
+        )
+    try:
+        if create_calendar_preparation is None:
+            raise RuntimeError("calendar bootstrap unavailable")
+        (
+            calendar_read_factory,
+            calendar_draft_factory,
+            calendar_registry,
+        ) = create_calendar_preparation()
+    except Exception:
+        calendar_read_factory = None
+        calendar_draft_factory = None
+        calendar_registry = None
+        print(
+            "[!] Calendar preparation is temporarily unavailable.",
+            file=sys.stderr,
+        )
+    try:
+        if create_research_preparation is None:
+            raise RuntimeError("research bootstrap unavailable")
+        research_factory, research_registry = create_research_preparation()
+    except Exception:
+        research_factory = None
+        research_registry = None
+        print(
+            "[!] Research preparation is temporarily unavailable.",
+            file=sys.stderr,
+        )
+    try:
+        if create_reminder_preparation is None:
+            raise RuntimeError("reminder bootstrap unavailable")
+        reminder_factory, reminder_registry = create_reminder_preparation()
+    except Exception:
+        reminder_factory = None
+        reminder_registry = None
+        print(
+            "[!] Reminder preparation is temporarily unavailable.",
+            file=sys.stderr,
+        )
+    scheduled_job_subsystem = None
+    try:
+        if create_scheduled_job_subsystem is not None:
+            scheduled_job_subsystem = create_scheduled_job_subsystem()
+            scheduled_job_runtime = scheduled_job_subsystem.runtime
+        else:
+            if create_scheduled_job_runtime is None:
+                raise RuntimeError("scheduled-job bootstrap unavailable")
+            scheduled_job_runtime = create_scheduled_job_runtime()
+    except Exception:
+        scheduled_job_runtime = None
+        print(
+            "[!] Scheduled jobs are temporarily unavailable.",
+            file=sys.stderr,
+        )
+    server_kwargs = dict(
+        host=host,
+        port=port,
+        productivity_runtime=productivity_runtime,
+        scheduled_job_runtime=scheduled_job_runtime,
+        email_draft_factory=email_draft_factory,
+        email_draft_registry=email_draft_registry,
+    )
+    if scheduled_job_subsystem is not None:
+        server_kwargs["scheduled_job_subsystem"] = scheduled_job_subsystem
+    if productivity_execution_coordinator is not None:
+        server_kwargs["productivity_execution_coordinator"] = (
+            productivity_execution_coordinator
+        )
+    if calendar_read_factory is not None:
+        server_kwargs["calendar_read_factory"] = calendar_read_factory
+    if calendar_draft_factory is not None:
+        server_kwargs["calendar_draft_factory"] = calendar_draft_factory
+    if calendar_registry is not None:
+        server_kwargs["calendar_registry"] = calendar_registry
+    if research_factory is not None:
+        server_kwargs["research_factory"] = research_factory
+    if research_registry is not None:
+        server_kwargs["research_registry"] = research_registry
+    if reminder_factory is not None:
+        server_kwargs["reminder_factory"] = reminder_factory
+    if reminder_registry is not None:
+        server_kwargs["reminder_registry"] = reminder_registry
+    WebSocketServer(
+        orchestrator,
+        **server_kwargs,
+    ).start()
 
 def run_interactive():
     """Run in interactive text mode"""

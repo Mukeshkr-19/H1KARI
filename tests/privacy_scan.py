@@ -12,6 +12,7 @@ from typing import Iterable, List, Pattern, Sequence, Set, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 SCAN_PREFIXES = (
+    ".github/",
     "core/",
     "tests/",
     "docs/",
@@ -140,7 +141,11 @@ def _regex_rules() -> Tuple[Tuple[str, str, str], ...]:
         ("secret_ghp", "api_secret", r"\bghp_[a-zA-Z0-9]{20,}"),
         ("secret_xoxb", "api_secret", r"\bxoxb-[a-zA-Z0-9-]{10,}"),
         ("secret_akia", "api_secret", r"\bAKIA[0-9A-Z]{16}"),
-        ("path_macos_users", "private_path", r"/Users/[a-zA-Z0-9._-]+/"),
+        (
+            "path_macos_users",
+            "private_path",
+            r"/Users/[a-zA-Z0-9._-]+(?:/|$)",
+        ),
     )
 
 

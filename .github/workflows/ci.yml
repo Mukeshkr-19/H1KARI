@@ -42,6 +42,18 @@ jobs:
       - name: Install locked Python dependencies
         run: python -m pip install --requirement requirements-dev-macos-arm64-py312.lock
 
+      - name: Verify pip dependencies
+        run: python -m pip check
+
+      - name: Verify bytecode compilation
+        run: python -m compileall -q core hikari.py tests
+
+      - name: Run git formatting and whitespace check
+        run: git diff --check
+
+      - name: Run noninteractive system doctor
+        run: python hikari.py --doctor
+
       - name: Run Python suite
         run: python -m pytest tests -q
 
@@ -51,8 +63,16 @@ jobs:
       - name: Run public-source privacy scan
         run: python tests/privacy_scan.py
 
+      - name: Run public artifact residue scan
+        run: python scripts/public_artifact_scan.py
+
       - name: Verify shared protocol schema
         run: python -m pytest tests/test_protocol_v1.py -q
+
+      - name: Verify clean checkout after Python checks
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
 
   frontend:
     name: Frontend dependencies, lint, and build
@@ -87,3 +107,8 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Verify clean checkout after frontend build
+        run: |
+          git diff --exit-code
+          test -z "$(git status --porcelain)"

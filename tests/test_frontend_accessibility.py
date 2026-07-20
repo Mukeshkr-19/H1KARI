@@ -309,3 +309,285 @@ def test_typed_document_actions_clear_voice_speech_origin():
 
     assert "documentTaskVoiceOriginRef.current = false" in text[prepare_start:prepare_end]
     assert "documentTaskVoiceOriginRef.current = false" in text[follow_start:follow_end]
+
+
+def test_phase3_productivity_preview_focus_and_live_regions():
+    page = PAGE.read_text(encoding="utf-8")
+    preview = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "ProductivityActionPreview.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "productivityHeadingRef" in page
+    assert "headingRef={productivityHeadingRef}" in page
+    assert "productivityLiveStatus(" in page
+    assert "liveStatus={productivityLiveStatus" in page
+    assert 'role="status"' in preview
+    assert 'aria-live="polite"' in preview
+    assert 'role="alert"' in preview
+    assert "disabled={confirmDisabled}" in preview
+    assert "disabled={cancelDisabled}" in preview
+    assert 'tabIndex={-1}' in preview
+    assert "mapPreviewErrorMessage" in preview
+
+
+def test_phase3_approval_scope_selector_labelled_and_non_focus_stealing():
+    page = PAGE.read_text(encoding="utf-8")
+    selector = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "ApprovalScopeSelector.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<ApprovalScopeSelector" in page
+    assert "disabled={productivityPending}" in page
+    assert "isApprovalScopeConfirmReady(approvalScopeState)" in page
+    assert "createApprovalScopeStateFromAllowed(message.allowed_scopes)" in page
+    assert "resetApprovalScopeState()" in page
+    assert 'type="radio"' in selector
+    assert 'type="checkbox"' in selector
+    assert 'role="radiogroup"' in selector
+    assert "aria-describedby={descriptionId}" in selector
+    assert "aria-describedby={ackWarningId}" in selector
+    assert "htmlFor={ackId}" in selector
+    assert "APPROVAL_SCOPE_BINDING_DESCRIPTION" in selector
+    assert "autoFocus" not in selector
+    assert ".focus(" not in selector
+    assert 'role="status"' in selector
+    assert 'aria-live="polite"' in selector
+
+
+def test_phase3_calendar_form_labels_errors_and_privacy():
+    page = PAGE.read_text(encoding="utf-8")
+    form = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "CalendarProposalForm.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<CalendarProposalForm" in page
+    assert "submitCalendarPrepare" in page
+    assert "clearCalendarForm" in page
+    assert "calendarPending" in page
+    assert "productivityPreparePending" in page
+    assert "pending={productivityPreparePending}" in page
+    assert 'htmlFor={readStartId}' in form
+    assert 'htmlFor={draftTitleId}' in form
+    assert 'htmlFor={draftCalendarNameId}' in form
+    assert 'activeField === "calendarName" ? validationMessageId' in form
+    assert "<textarea" in form
+    assert 'role="alert"' in form
+    assert "aria-invalid=" in form
+    assert "validationMessageId" in form
+    assert "tabIndex={-1}" in form
+    assert "autoFocus" not in form
+    assert "localStorage" not in form
+    assert "sessionStorage" not in form
+    assert "aria-live" not in form
+    assert "calendarRequestIdRef" in page
+    assert "mapPreviewErrorMessage(calendarPrepareError)" in page
+    onmessage_start = page.index("ws.onmessage = (event) => {")
+    onmessage_end = page.index("ws.onclose = () => {", onmessage_start)
+    onmessage_block = page[onmessage_start:onmessage_end]
+    protocol_start = onmessage_block.index('data.type === "protocol_error"')
+    error_start = onmessage_block.index('data.type === "error"', protocol_start)
+    protocol_block = onmessage_block[protocol_start:error_start]
+    error_block = onmessage_block[error_start:]
+    assert "calendarPendingRef" not in protocol_block
+    assert "calendarPendingRef" not in error_block
+
+
+def test_phase3_research_form_labels_errors_and_privacy():
+    page = PAGE.read_text(encoding="utf-8")
+    form = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "ResearchProposalForm.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<ResearchProposalForm" in page
+    assert "submitResearchPrepare" in page
+    assert "clearResearchForm" in page
+    assert "researchPending" in page
+    assert "productivityPreparePending" in page
+    assert 'htmlFor={queryId}' in form
+    assert 'htmlFor={domainsId}' in form
+    assert 'htmlFor={maxResultsId}' in form
+    assert "<textarea" in form
+    assert 'role="alert"' in form
+    assert "aria-invalid=" in form
+    assert "validationMessageId" in form
+    assert "tabIndex={-1}" in form
+    assert "autoFocus" not in form
+    assert "localStorage" not in form
+    assert "sessionStorage" not in form
+    assert "aria-live" not in form
+    assert "researchRequestIdRef" in page
+    assert "mapPreviewErrorMessage(researchPrepareError)" in page
+    onmessage_start = page.index("ws.onmessage = (event) => {")
+    onmessage_end = page.index("ws.onclose = () => {", onmessage_start)
+    onmessage_block = page[onmessage_start:onmessage_end]
+    protocol_start = onmessage_block.index('data.type === "protocol_error"')
+    error_start = onmessage_block.index('data.type === "error"', protocol_start)
+    protocol_block = onmessage_block[protocol_start:error_start]
+    error_block = onmessage_block[error_start:]
+    assert "researchPendingRef" not in protocol_block
+    assert "researchPendingRef" not in error_block
+
+
+def test_phase3_research_and_calendar_results_are_accessible_and_private():
+    page = PAGE.read_text(encoding="utf-8")
+    assert 'id="productivity-research-result-heading"' in page
+    assert 'id="productivity-calendar-result-heading"' in page
+    assert 'aria-labelledby="productivity-research-result-heading"' in page
+    assert 'aria-labelledby="productivity-calendar-result-heading"' in page
+    assert 'role="status"' in page
+    assert 'aria-live="polite"' in page
+    assert "tabIndex={-1}" in page
+    assert "rel=\"noopener noreferrer\"" in page
+    assert "target=\"_blank\"" in page
+    apply_start = page.index("const applyProductivityMessage")
+    apply_end = page.index("const confirmProductivityAction")
+    apply_block = page[apply_start:apply_end]
+    assert "addMessage(" not in apply_block
+    assert "localStorage" not in apply_block
+    assert "sessionStorage" not in apply_block
+    assert "setProductivityResearchResult(null)" in page
+    assert "setProductivityCalendarResult(null)" in page
+    clear_start = page.index("const clearProductivityLifecycle")
+    clear_end = page.index("const clearScheduledJobsState")
+    clear_block = page[clear_start:clear_end]
+    assert "setProductivityResearchResult(null)" in clear_block
+    assert "setProductivityCalendarResult(null)" in clear_block
+
+
+def test_phase3_reminder_form_labels_errors_and_privacy():
+    page = PAGE.read_text(encoding="utf-8")
+    form = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "ReminderProposalForm.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<ReminderProposalForm" in page
+    assert "submitReminderPrepare" in page
+    assert "clearReminderForm" in page
+    assert "reminderPending" in page
+    assert "productivityPreparePending" in page
+    assert 'htmlFor={titleId}' in form
+    assert 'htmlFor={remindAtId}' in form
+    assert 'htmlFor={notesId}' in form
+    assert 'htmlFor={listNameId}' in form
+    assert "<textarea" in form
+    assert 'role="alert"' in form
+    assert "aria-invalid=" in form
+    assert "validationMessageId" in form
+    assert 'activeField === "title" ? validationMessageId' in form
+    assert 'activeField === "remindAt" ? validationMessageId' in form
+    assert "tabIndex={-1}" in form
+    assert "autoFocus" not in form
+    assert "localStorage" not in form
+    assert "sessionStorage" not in form
+    assert "aria-live" not in form
+    assert "reminderRequestIdRef" in page
+    assert "mapPreviewErrorMessage(reminderPrepareError)" in page
+    onmessage_start = page.index("ws.onmessage = (event) => {")
+    onmessage_end = page.index("ws.onclose = () => {", onmessage_start)
+    onmessage_block = page[onmessage_start:onmessage_end]
+    protocol_start = onmessage_block.index('data.type === "protocol_error"')
+    error_start = onmessage_block.index('data.type === "error"', protocol_start)
+    protocol_block = onmessage_block[protocol_start:error_start]
+    error_block = onmessage_block[error_start:]
+    assert "reminderPendingRef" not in protocol_block
+    assert "reminderPendingRef" not in error_block
+
+
+def test_phase3_email_draft_form_labels_errors_and_privacy():
+    page = PAGE.read_text(encoding="utf-8")
+    form = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "EmailDraftProposal.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<EmailDraftProposal" in page
+    assert "submitEmailDraftPrepare" in page
+    assert "clearEmailDraftForm" in page
+    assert "emailDraftPending" in page
+    assert "productivityPreparePending" in page
+    assert 'htmlFor={recipientId}' in form
+    assert 'htmlFor={subjectId}' in form
+    assert 'htmlFor={bodyId}' in form
+    assert "<textarea" in form
+    assert 'role="alert"' in form
+    assert "aria-invalid=" in form
+    assert "validationMessageId" in form
+    assert 'validationField === "recipient" ? validationMessageId' in form
+    assert 'validationField === "subject" ? validationMessageId' in form
+    assert 'validationField === "body" ? validationMessageId' in form
+    assert "id={validationMessageId}" in form
+    assert "tabIndex={-1}" in form
+    assert "autoFocus" not in form
+    assert "localStorage" not in form
+    assert "sessionStorage" not in form
+    assert "aria-live" not in form
+    assert "emailDraftRequestIdRef" in page
+    assert "clearEmailDraftPendingWithLocalError" not in page
+    onmessage_start = page.index("ws.onmessage = (event) => {")
+    onmessage_end = page.index("ws.onclose = () => {", onmessage_start)
+    onmessage_block = page[onmessage_start:onmessage_end]
+    protocol_start = onmessage_block.index('data.type === "protocol_error"')
+    error_start = onmessage_block.index('data.type === "error"', protocol_start)
+    protocol_block = onmessage_block[protocol_start:error_start]
+    error_block = onmessage_block[error_start:]
+    assert "emailDraftPendingRef" not in protocol_block
+    assert 'setInterfaceError("Unsupported server protocol")' in protocol_block
+    assert "emailDraftPendingRef" not in error_block
+    assert 'setInterfaceError("Server request failed")' in error_block
+
+
+def test_phase3_scheduled_jobs_panel_live_regions_and_labelled_controls():
+    page = PAGE.read_text(encoding="utf-8")
+    panel = (
+        Path(__file__).resolve().parent.parent
+        / "hikari-frontend"
+        / "src"
+        / "components"
+        / "ScheduledJobsPanel.tsx"
+    ).read_text(encoding="utf-8")
+
+    assert "<ScheduledJobsPanel" in page
+    assert "onPause={pauseScheduledJob}" in page
+    assert "onResume={resumeScheduledJob}" in page
+    assert "onCancel={cancelScheduledJob}" in page
+    assert "error={scheduledJobsError}" in page
+    assert "statusMessage={scheduledJobsStatus}" in page
+    assert 'setScheduledJobsStatus("List loaded.")' in page
+    assert 'setScheduledJobsStatus("Correlated update received.")' in page
+    assert '"Pause requested."' in page
+    assert '"Resume requested."' in page
+    assert '"Cancel requested."' in page
+    assert 'aria-labelledby={headingId}' in panel
+    assert 'aria-label="Scheduled job list"' in panel
+    assert 'role="status"' in panel
+    assert 'aria-live="polite"' in panel
+    assert 'role="alert"' in panel
+    assert 'type="button"' in panel
+    assert "disabled={pending}" in panel
+    assert "aria-label={`Pause ${job.actionLabel" in panel
+    assert "aria-label={`Resume ${job.actionLabel" in panel
+    assert "aria-label={`Cancel ${job.actionLabel" in panel
+    assert "mapScheduledJobErrorMessage" in panel

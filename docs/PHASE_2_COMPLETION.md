@@ -65,7 +65,7 @@ as source-integration failures or as having been manually verified here.
   visible and documented.
 - Captions, transcripts, raw audio, and spoken responses are not persisted by the
   companion preference layer.
-- Phase 3 has not started.
+- At the Phase 2 closure baseline, Phase 3 had not started.
 
 ## Known boundaries and recovery
 

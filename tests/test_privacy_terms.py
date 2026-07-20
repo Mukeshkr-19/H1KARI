@@ -56,6 +56,24 @@ def test_privacy_scan_includes_protocol_contract():
     assert "protocol/hikari-v1.json" in rels
 
 
+def test_privacy_scan_includes_ci_workflows():
+    paths = collect_public_source_files()
+    rels = {p.relative_to(REPO_ROOT).as_posix() for p in paths}
+    assert ".github/workflows/ci.yml" in rels
+
+
+def test_macos_user_path_rule_matches_path_without_trailing_slash(tmp_path):
+    rule = next(r for r in privacy_rules() if r.rule_id == "path_macos_users")
+    sample = tmp_path / "leak.md"
+    sample.write_text("/" + "Users" + "/private-account", encoding="utf-8")
+
+    hits = scan_file(sample, rules=[rule])
+
+    assert len(hits) == 1
+    assert hits[0][1] == "path_macos_users"
+    assert "private-account" not in hits[0][3]
+
+
 def test_privacy_scanner_source_is_generic():
     """Scanner definition files must not embed legacy name lists or tuple encodings."""
     assert scanner_source_is_generic()

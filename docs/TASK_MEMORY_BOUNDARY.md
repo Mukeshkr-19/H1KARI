@@ -23,13 +23,16 @@ Use for actions and requests that should **not** become personal facts:
 - `open …` / `run …` panel or app actions
 - `write code for …`
 
-These are routed to the task intent service (`core/tasks/`) and receive honest UX:
-scheduling is **not wired up yet**, and the utterance is **not** stored as Brain v2 memory.
+Natural-language task utterances are routed to the legacy task-intent service
+(`core/tasks/`) and are not stored as Brain v2 memory. That chat path remains
+separate from the Phase 3 Files-tab productivity flow, where an explicitly
+prepared reminder or read-only scheduled job can be previewed and confirmed.
 
 ## Design rules
 
 1. Never store reminder/scheduling phrasing as accepted Brain v2 facts.
-2. Never claim a reminder was created until a real scheduler exists.
+2. Never claim a reminder was created until the confirmed productivity adapter
+   returns success.
 3. Task records are intents only (`TaskStatus.NOT_SCHEDULED`).
 4. Plans with explicit future intent (`Remember this: I will meet Person C tomorrow`) remain Brain v2 plan memories.
 
@@ -53,12 +56,15 @@ scheduling is **not wired up yet**, and the utterance is **not** stored as Brain
 
 ## Scheduling (opt-in)
 
-- macOS Reminders scheduling is **disabled by default**.
+- The legacy chat-task macOS Reminders scheduler is **disabled by default**.
 - Set `HIKARI_ENABLE_TASK_SCHEDULER=1`, record a reminder task, then say `schedule that reminder`.
 - Status becomes `SCHEDULED` only after osascript succeeds; failures become `SCHEDULE_FAILED`.
 - Tasks remain outside Brain v2 memory even when scheduled.
+- The Phase 3 Files-tab flow is separate: reminder creation requires a frozen
+  preview and explicit approval, while one-shot scheduling accepts only browser
+  research and calendar reads.
 
 ## Future work
 
-- Scheduler integration (macOS reminders/calendar) with explicit user confirmation
+- Unifying natural-language task intents with the Phase 3 confirmation flow
 - Command center UI for open tasks

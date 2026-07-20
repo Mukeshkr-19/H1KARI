@@ -69,7 +69,139 @@
       "required": {"task_id": {"type": "string", "max_length": 64}},
       "optional": {}
     },
-    "status": {"required": {}, "optional": {}}
+    "status": {"required": {}, "optional": {}},
+    "productivity_email_draft_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "recipient": {"type": "string", "min_length": 1, "max_length": 320, "forbid_controls": true, "forbid_unicode_format": true},
+        "subject": {"type": "string", "max_length": 998, "forbid_controls": true, "forbid_unicode_format": true},
+        "body": {"type": "string", "max_length": 20000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true}
+      },
+      "optional": {}
+    },
+    "productivity_calendar_read_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "start": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+        "end": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true}
+      },
+      "optional": {
+        "calendar_name": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true}
+      }
+    },
+    "productivity_calendar_draft_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true},
+        "start": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+        "end": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+        "calendar_name": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true}
+      },
+      "optional": {
+        "location": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true},
+        "notes": {"type": "string", "min_length": 1, "max_length": 4000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true}
+      }
+    },
+    "productivity_research_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "query": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "forbid_unicode_format": true}
+      },
+      "optional": {
+        "domains": {
+          "type": "array",
+          "min_items": 1,
+          "max_items": 16,
+          "unique": true,
+          "items": {"type": "string", "min_length": 1, "max_length": 253, "forbid_controls": true, "forbid_unicode_format": true}
+        },
+        "max_results": {"type": "integer", "minimum": 1, "maximum": 20}
+      }
+    },
+    "productivity_reminder_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+        "remind_at": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true}
+      },
+      "optional": {
+        "notes": {"type": "string", "max_length": 4000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true},
+        "list_name": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true}
+      }
+    },
+    "productivity_confirm": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "scope": {"type": "string", "enum": ["once", "session", "duration", "precise_persistent"]}
+      },
+      "optional": {
+        "duration_seconds": {"type": "integer", "enum": [900, 3600, 28800]},
+        "acknowledged": {"type": "boolean"}
+      },
+      "variants": {
+        "field": "scope",
+        "cases": {
+          "once": {"forbidden": ["duration_seconds", "acknowledged"]},
+          "session": {"forbidden": ["duration_seconds", "acknowledged"]},
+          "duration": {"required": ["duration_seconds"], "forbidden": ["acknowledged"]},
+          "precise_persistent": {"required": ["acknowledged"], "forbidden": ["duration_seconds"], "equals": {"acknowledged": true}}
+        }
+      }
+    },
+    "productivity_cancel": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "productivity_status": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "scheduled_jobs_list": {
+      "required": {},
+      "optional": {}
+    },
+    "scheduled_job_create": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "next_run_at": {"type": "string", "max_length": 64, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 5}
+      },
+      "optional": {
+        "quiet_hours": {
+          "type": "object",
+          "required": {
+            "start_minute": {"type": "integer", "minimum": 0, "maximum": 1439},
+            "end_minute": {"type": "integer", "minimum": 0, "maximum": 1439},
+            "timezone": {"type": "string", "max_length": 128, "pattern": "^(?:UTC|[A-Za-z0-9_+.-]+(?:/[A-Za-z0-9_+.-]+)+)$"}
+          },
+          "optional": {},
+          "exact_keys": true
+        }
+      }
+    },
+    "scheduled_job_pause": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "scheduled_job_resume": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "scheduled_job_cancel": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    }
   },
   "server_to_client": {
     "welcome": ["message", "protocol_version"],
@@ -89,6 +221,238 @@
     "document_confirmation_required": ["task_id", "path", "provider", "fallback_provider"],
     "task_update": ["task_id", "root_task_id", "status", "progress", "checkpoint"],
     "document_explanation": ["task_id", "root_task_id", "text", "provider"],
-    "document_error": ["task_id", "root_task_id", "code", "message"]
+    "document_error": ["task_id", "root_task_id", "code", "message"],
+    "productivity_confirmation_required": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "action": {"type": "string", "enum": [
+          "browser.research",
+          "email.draft",
+          "calendar.read",
+          "calendar.draft",
+          "reminder.create",
+          "scheduled_job.manage",
+          "skill.execute",
+          "mcp.execute"
+        ]},
+        "heading": {"type": "string", "max_length": 120},
+        "risk_label": {"type": "string", "max_length": 120},
+        "targets": {
+          "type": "array",
+          "max_items": 32,
+          "items": {
+            "type": "object",
+            "required": {"label": {"type": "string", "max_length": 120}, "value": {"type": "string", "max_length": 2000}},
+            "optional": {"truncated": {"type": "boolean"}},
+            "exact_keys": true
+          }
+        },
+        "payload": {
+          "type": "array",
+          "max_items": 32,
+          "items": {
+            "type": "object",
+            "required": {"label": {"type": "string", "max_length": 120}, "value": {"type": "string", "max_length": 2000}},
+            "optional": {"truncated": {"type": "boolean"}},
+            "exact_keys": true
+          }
+        },
+        "expires_at": {"type": "number", "finite": true},
+        "allowed_scopes": {
+          "type": "array",
+          "min_items": 1,
+          "max_items": 4,
+          "unique": true,
+          "items": {"type": "string", "enum": ["once", "session", "duration", "precise_persistent"]}
+        }
+      },
+      "optional": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "exact_keys": true
+    },
+    "productivity_update": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "status": {"type": "string", "enum": [
+          "preview",
+          "confirming",
+          "approved",
+          "executing",
+          "completed",
+          "failed",
+          "cancelling",
+          "cancelled"
+        ]}
+      },
+      "optional": {}
+    },
+    "productivity_error": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": [
+          "confirm_failed",
+          "cancel_failed",
+          "proposal_expired",
+          "proposal_invalid",
+          "unavailable"
+        ]}
+      },
+      "optional": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "exact_keys": true
+    },
+    "productivity_research_result": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "items": {
+          "type": "array",
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "required": {
+              "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+              "url": {"type": "string", "min_length": 1, "max_length": 2048, "pattern": "^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\\:443)?(?:/[\\x21-\\x7E]*)?$", "forbid_controls": true, "forbid_unicode_format": true},
+              "domain": {"type": "string", "min_length": 1, "max_length": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$", "forbid_controls": true, "forbid_unicode_format": true}
+            },
+            "optional": {
+              "snippet": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+            },
+            "exact_keys": true
+          }
+        }
+      },
+      "optional": {},
+      "exact_keys": true
+    },
+    "productivity_calendar_result": {
+      "required": {
+        "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "events": {
+          "type": "array",
+          "max_items": 100,
+          "items": {
+            "type": "object",
+            "required": {
+              "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+              "start": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+              "end": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+              "calendar": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+            },
+            "optional": {
+              "location": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true}
+            },
+            "exact_keys": true
+          }
+        }
+      },
+      "optional": {},
+      "exact_keys": true
+    },
+    "scheduled_job_research_result": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "items": {
+          "type": "array",
+          "max_items": 20,
+          "items": {
+            "type": "object",
+            "required": {
+              "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+              "url": {"type": "string", "min_length": 1, "max_length": 2048, "pattern": "^https://[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+(?:\\:443)?(?:/[\\x21-\\x7E]*)?$", "forbid_controls": true, "forbid_unicode_format": true},
+              "domain": {"type": "string", "min_length": 1, "max_length": 253, "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$", "forbid_controls": true, "forbid_unicode_format": true}
+            },
+            "optional": {
+              "snippet": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+            },
+            "exact_keys": true
+          }
+        }
+      },
+      "optional": {},
+      "exact_keys": true
+    },
+    "scheduled_job_calendar_result": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "events": {
+          "type": "array",
+          "max_items": 100,
+          "items": {
+            "type": "object",
+            "required": {
+              "title": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+              "start": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+              "end": {"type": "string", "min_length": 1, "max_length": 40, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,6})?)?(Z|[+-]\\d{2}:\\d{2})$", "forbid_controls": true, "forbid_unicode_format": true},
+              "calendar": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+            },
+            "optional": {
+              "location": {"type": "string", "min_length": 1, "max_length": 500, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true}
+            },
+            "exact_keys": true
+          }
+        }
+      },
+      "optional": {},
+      "exact_keys": true
+    },
+    "scheduled_jobs": {
+      "required": {
+        "jobs": {
+          "type": "array",
+          "max_items": 64,
+          "items": {
+            "type": "object",
+            "required": {
+              "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+              "action": {"type": "string", "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+              "state": {"type": "string", "enum": ["scheduled", "paused", "running", "interrupted", "completed", "failed", "cancelled"]},
+              "next_run_at": {"type": "string", "max_length": 64, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"},
+              "attempt_count": {"type": "integer", "minimum": 0, "maximum": 100},
+              "max_attempts": {"type": "integer", "minimum": 1, "maximum": 100}
+            },
+            "optional": {
+              "quiet_hours_label": {"type": "string", "max_length": 160, "pattern": "^[ -~]+$"}
+            },
+            "exact_keys": true,
+            "field_lte": [["attempt_count", "max_attempts"]]
+          }
+        }
+      },
+      "optional": {}
+    },
+    "scheduled_job_update": {
+      "required": {
+        "job": {
+          "type": "object",
+          "required": {
+            "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+            "action": {"type": "string", "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+            "state": {"type": "string", "enum": ["scheduled", "paused", "running", "interrupted", "completed", "failed", "cancelled"]},
+            "next_run_at": {"type": "string", "max_length": 64, "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,6})?(?:Z|[+-]\\d{2}:\\d{2})$"},
+            "attempt_count": {"type": "integer", "minimum": 0, "maximum": 100},
+            "max_attempts": {"type": "integer", "minimum": 1, "maximum": 100}
+          },
+          "optional": {
+            "quiet_hours_label": {"type": "string", "max_length": 160, "pattern": "^[ -~]+$"}
+          },
+          "exact_keys": true,
+          "field_lte": [["attempt_count", "max_attempts"]]
+        }
+      },
+      "optional": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      }
+    },
+    "scheduled_job_error": {
+      "required": {
+        "job_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": ["control_failed", "job_not_found", "unavailable"]}
+      },
+      "optional": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      }
+    }
   }
 }

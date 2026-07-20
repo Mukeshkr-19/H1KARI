@@ -12,16 +12,72 @@ import threading
 import html
 import hmac
 import ipaddress
+import re
 import secrets
 from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
 
-from core.protocol import PROTOCOL_VERSION, validate_client_message
+from core.protocol import (
+    PROTOCOL_VERSION,
+    validate_client_message,
+    validate_server_message,
+)
 from core.request_context import ActorSource, RequestContext, derive_actor_from_transport
 from core.voice_companion.bridge import VoiceCompanionBridge, VOICE_PROCESSING_ERROR_MESSAGE
 from core.voice_companion.contract import WS_EVENT_COMPANION_PREFERENCES
 from core.voice_companion.status import is_voice_companion_enabled
+
+from core.productivity import (
+    ApprovalScope,
+    CalendarDraftProposalFactory,
+    CalendarPreparationRegistry,
+    CalendarReadProposalFactory,
+    ConfirmationResult,
+    EmailDraftPreparationRegistry,
+    EmailDraftProposalFactory,
+    ProductivityRuntime,
+    ReminderPreparationRegistry,
+    ReminderProposalFactory,
+    ResearchPreparationRegistry,
+    ResearchProposalFactory,
+    error_message,
+    update_message,
+)
+from core.productivity.dispatch import (
+    build_execution_request,
+    build_scheduled_adapter_input,
+)
+from core.productivity.execution import (
+    ExecutionTicket,
+    ProductivityExecutionCoordinator,
+)
+from core.productivity.action_results import BrowserSearchResult, CalendarReadResult
+from core.productivity.transport import (
+    calendar_result_message,
+    research_result_message,
+)
+from core.productivity.service import ProductivityCode
+from core.jobs.runtime import ScheduledJobRuntime
+from core.jobs.bootstrap import ScheduledJobSubsystem
+from core.jobs.coordinator import (
+    ScheduledReadScheduleCode,
+    StableOwnerScope,
+)
+from core.jobs.quiet_hours import QuietHours
+from core.jobs.delivery import DeliveryAttemptResult, DeliveryAttemptStatus
+from core.jobs.delivery_runtime import (
+    DeliveryRuntimeCode,
+    MeaningfulChangeDeliveryRuntime,
+)
+from core.jobs.runner import ExecutionResult, ExecutionStatus
+
+
+class _EmptyPreparationRegistry:
+    """No-op registry stand-in when a prepare registry was not injected."""
+
+    def get(self, actor, proposal_id):
+        return None
 
 try:
     from websockets.asyncio.server import serve
@@ -43,6 +99,7 @@ except ImportError:
 
 
 MAX_PAIRING_ATTEMPTS = 5
+_PREPARE_REQUEST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 
 
 class WebSocketServer:
@@ -55,6 +112,21 @@ class WebSocketServer:
         port: int = 8765,
         *,
         phase1_runtime=None,
+        productivity_runtime: Optional[ProductivityRuntime] = None,
+        scheduled_job_runtime: Optional[ScheduledJobRuntime] = None,
+        scheduled_job_subsystem: Optional[ScheduledJobSubsystem] = None,
+        email_draft_factory: Optional[EmailDraftProposalFactory] = None,
+        email_draft_registry: Optional[EmailDraftPreparationRegistry] = None,
+        calendar_read_factory: Optional[CalendarReadProposalFactory] = None,
+        calendar_draft_factory: Optional[CalendarDraftProposalFactory] = None,
+        calendar_registry: Optional[CalendarPreparationRegistry] = None,
+        research_factory: Optional[ResearchProposalFactory] = None,
+        research_registry: Optional[ResearchPreparationRegistry] = None,
+        reminder_factory: Optional[ReminderProposalFactory] = None,
+        reminder_registry: Optional[ReminderPreparationRegistry] = None,
+        productivity_execution_coordinator: Optional[
+            ProductivityExecutionCoordinator
+        ] = None,
     ):
         self.orchestrator = orchestrator
         self.host = host
@@ -75,6 +147,21 @@ class WebSocketServer:
         self._document_jobs: Dict[tuple[str, str], asyncio.Task] = {}
         self._document_selections: Dict[str, tuple[str, tuple[str, ...]]] = {}
         self._document_task_roots: Dict[str, str] = {}
+        self._productivity_runtime = productivity_runtime
+        self._scheduled_job_runtime = scheduled_job_runtime
+        self._scheduled_job_subsystem = scheduled_job_subsystem
+        self._email_draft_factory = email_draft_factory
+        self._email_draft_registry = email_draft_registry
+        self._calendar_read_factory = calendar_read_factory
+        self._calendar_draft_factory = calendar_draft_factory
+        self._calendar_registry = calendar_registry
+        self._research_factory = research_factory
+        self._research_registry = research_registry
+        self._reminder_factory = reminder_factory
+        self._reminder_registry = reminder_registry
+        self._productivity_execution_coordinator = productivity_execution_coordinator
+        self._scheduled_runner_task: asyncio.Task | None = None
+        self._scheduled_runner = None
 
     def _voice_companion_enabled(self) -> bool:
         return is_voice_companion_enabled()
@@ -103,6 +190,15 @@ class WebSocketServer:
         except KeyboardInterrupt:
             self.stop()
         finally:
+            if self._scheduled_runner_task is not None:
+                self._scheduled_runner_task.cancel()
+                self._loop.run_until_complete(
+                    asyncio.gather(
+                        self._scheduled_runner_task,
+                        return_exceptions=True,
+                    )
+                )
+                self._scheduled_runner_task = None
             if self._server is not None:
                 self._server.close()
                 self._loop.run_until_complete(self._server.wait_closed())
@@ -115,7 +211,58 @@ class WebSocketServer:
             self.port,
             process_request=self._process_request,
         )
+        if self._scheduled_job_subsystem is not None:
+            try:
+                self._scheduled_runner = self._scheduled_job_subsystem.create_runner(
+                    self._execute_scheduled_read
+                )
+                await asyncio.to_thread(self._scheduled_runner.recover_startup)
+                self._scheduled_runner_task = asyncio.create_task(
+                    self._scheduled_runner_loop()
+                )
+            except Exception:
+                self._scheduled_runner = None
+                self._scheduled_runner_task = None
         return self._server
+
+    async def _scheduled_runner_loop(self) -> None:
+        """Run bounded scheduled reads while the server event loop is active."""
+        while self._running and self._scheduled_runner is not None:
+            try:
+                outcomes = await asyncio.to_thread(
+                    self._scheduled_runner.run_once, limit=8
+                )
+                if outcomes:
+                    await self._broadcast_scheduled_jobs()
+                if self._scheduled_job_subsystem is not None:
+                    await asyncio.to_thread(
+                        self._scheduled_job_subsystem.action_store.purge_expired,
+                        self._scheduled_job_subsystem.clock(),
+                        limit=8,
+                    )
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                pass
+            await asyncio.sleep(1)
+
+    async def _broadcast_scheduled_jobs(self) -> None:
+        """Refresh scheduled-job state for connected local owner clients."""
+        runtime = self._scheduled_job_runtime
+        if runtime is None:
+            return
+        for websocket in tuple(self.connected_clients):
+            client_key = str(id(websocket))
+            if client_key not in self._paired_client_ids or not self._is_loopback(websocket):
+                continue
+            try:
+                actor = self._derive_actor_context(websocket).actor_context
+                message = await asyncio.to_thread(runtime.list_jobs, actor)
+                await self._send_scheduled_job_message(
+                    websocket, message, "scheduled-jobs"
+                )
+            except Exception:
+                continue
 
     async def _process_request(self, _connection, request):
         """Translate HIKARI's HTTP helpers to the asyncio server response."""
@@ -152,6 +299,7 @@ class WebSocketServer:
             connection_token=connection_token,
             is_loopback=self._is_loopback(websocket),
             is_paired=is_paired,
+            session_id=connection_token,
         )
 
     async def _handle_connection(self, websocket):
@@ -187,6 +335,38 @@ class WebSocketServer:
         except Exception as e:
             print(f"[WS] Client error: {e}")
         finally:
+            if self._email_draft_registry is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._email_draft_registry.clear_session(
+                        actor.actor_id, actor.session_id
+                    )
+                except Exception:
+                    pass
+            if self._calendar_registry is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._calendar_registry.clear_session(
+                        actor.actor_id, actor.session_id
+                    )
+                except Exception:
+                    pass
+            if self._research_registry is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._research_registry.clear_session(
+                        actor.actor_id, actor.session_id
+                    )
+                except Exception:
+                    pass
+            if self._reminder_registry is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._reminder_registry.clear_session(
+                        actor.actor_id, actor.session_id
+                    )
+                except Exception:
+                    pass
             self.connected_clients.discard(websocket)
             client_key = str(id(websocket))
             for key, job in list(self._document_jobs.items()):
@@ -486,6 +666,20 @@ class WebSocketServer:
 
             validation_error = validate_client_message(data)
             if validation_error:
+                if msg_type in {
+                    "productivity_email_draft_prepare",
+                    "productivity_calendar_read_prepare",
+                    "productivity_calendar_draft_prepare",
+                    "productivity_research_prepare",
+                    "productivity_reminder_prepare",
+                }:
+                    request_id = data.get("request_id")
+                    result = self._safe_productivity_error("invalid-proposal")
+                    result = self._with_prepare_request_id(result, request_id)
+                    await self._send_productivity_message(
+                        websocket, result, "invalid-proposal"
+                    )
+                    return
                 await websocket.send(
                     json.dumps({"type": "error", "message": validation_error})
                 )
@@ -582,6 +776,75 @@ class WebSocketServer:
                                 }
                             )
                         )
+
+            elif msg_type == "productivity_email_draft_prepare":
+                request_id = data.get("request_id")
+                if (
+                    self._productivity_runtime is None
+                    or self._email_draft_factory is None
+                    or self._email_draft_registry is None
+                ):
+                    result = self._with_prepare_request_id(
+                        self._safe_productivity_error("invalid-proposal"),
+                        request_id,
+                    )
+                    await self._send_productivity_message(
+                        websocket,
+                        result,
+                        "invalid-proposal",
+                    )
+                    return
+                actor = self._derive_actor_context(websocket).actor_context
+                proposal_id = "invalid-proposal"
+                try:
+                    prepared = self._email_draft_factory.prepare(
+                        actor,
+                        data["recipient"],
+                        data["subject"],
+                        data["body"],
+                    )
+                    proposal_id = prepared.proposal.proposal_id
+                    self._email_draft_registry.put(
+                        actor, proposal_id, prepared.draft
+                    )
+                    result = await asyncio.to_thread(
+                        self._productivity_runtime.prepare,
+                        actor,
+                        prepared.proposal,
+                    )
+                    if result.get("type") != "productivity_confirmation_required":
+                        self._email_draft_registry.remove(actor, proposal_id)
+                except Exception:
+                    try:
+                        self._email_draft_registry.remove(actor, proposal_id)
+                    except Exception:
+                        pass
+                    result = self._safe_productivity_error(proposal_id)
+                result = self._with_prepare_request_id(result, request_id)
+                await self._send_productivity_message(
+                    websocket, result, proposal_id
+                )
+                return
+
+            elif msg_type == "productivity_calendar_read_prepare":
+                await self._handle_calendar_read_prepare(websocket, data)
+                return
+
+            elif msg_type == "productivity_calendar_draft_prepare":
+                await self._handle_calendar_draft_prepare(websocket, data)
+                return
+
+            elif msg_type == "productivity_research_prepare":
+                await self._handle_research_prepare(websocket, data)
+                return
+
+            elif msg_type == "productivity_reminder_prepare":
+                await self._handle_reminder_prepare(websocket, data)
+                return
+
+            elif msg_type == "scheduled_job_create":
+                await self._handle_scheduled_job_create(websocket, data)
+                return
 
             elif msg_type in {
                 "document_prepare",
@@ -745,6 +1008,103 @@ class WebSocketServer:
                             )
                         )
 
+            elif msg_type in {
+                "scheduled_jobs_list",
+                "scheduled_job_pause",
+                "scheduled_job_resume",
+                "scheduled_job_cancel",
+            }:
+                if self._scheduled_job_runtime is None:
+                    await websocket.send(
+                        json.dumps(
+                            self._safe_scheduled_job_error(
+                                data.get("job_id"), "unavailable"
+                            )
+                        )
+                    )
+                    return
+                context = self._derive_actor_context(websocket)
+                actor = context.actor_context
+                job_id = str(data.get("job_id", "")) if msg_type != "scheduled_jobs_list" else ""
+                try:
+                    if msg_type == "scheduled_jobs_list":
+                        result = await asyncio.to_thread(
+                            self._scheduled_job_runtime.list_jobs, actor
+                        )
+                    elif msg_type == "scheduled_job_pause":
+                        result = await asyncio.to_thread(
+                            self._scheduled_job_runtime.pause, actor, job_id
+                        )
+                    elif msg_type == "scheduled_job_resume":
+                        result = await asyncio.to_thread(
+                            self._scheduled_job_runtime.resume, actor, job_id
+                        )
+                    else:
+                        result = await asyncio.to_thread(
+                            self._scheduled_job_runtime.cancel, actor, job_id
+                        )
+                except Exception:
+                    result = self._safe_scheduled_job_error(job_id, "unavailable")
+                await self._send_scheduled_job_message(websocket, result, job_id)
+                if (
+                    msg_type == "scheduled_job_cancel"
+                    and isinstance(result, dict)
+                    and result.get("type") == "scheduled_job_update"
+                    and isinstance(result.get("job"), dict)
+                    and result["job"].get("state") == "cancelled"
+                ):
+                    await asyncio.to_thread(self._remove_scheduled_action, actor, job_id)
+                return
+
+            elif msg_type in {
+                "productivity_confirm",
+                "productivity_cancel",
+                "productivity_status",
+            }:
+                proposal_id = str(data.get("proposal_id", ""))
+                if self._productivity_runtime is None:
+                    await websocket.send(
+                        json.dumps(
+                            error_message(
+                                proposal_id or "invalid-proposal",
+                                ProductivityCode.CONSUMPTION_FAILED,
+                            )
+                        )
+                    )
+                    return
+                context = self._derive_actor_context(websocket)
+                actor = context.actor_context
+                runtime = self._productivity_runtime
+                try:
+                    if msg_type == "productivity_confirm":
+                        scope = ApprovalScope(str(data.get("scope", "")))
+                        await self._handle_productivity_confirm(
+                            websocket,
+                            actor,
+                            proposal_id,
+                            scope,
+                            duration_seconds=data.get("duration_seconds"),
+                            acknowledge=data.get("acknowledged", False),
+                        )
+                        return
+                    elif msg_type == "productivity_cancel":
+                        result = await asyncio.to_thread(
+                            runtime.cancel, actor, proposal_id
+                        )
+                    else:
+                        result = await asyncio.to_thread(
+                            runtime.status, actor, proposal_id
+                        )
+                except Exception:
+                    result = self._safe_productivity_error(proposal_id)
+                self._clear_prepared_inputs_if_terminal(actor, proposal_id, result)
+                await self._send_productivity_message(
+                    websocket,
+                    result,
+                    proposal_id,
+                )
+                return
+
             elif msg_type == "status":
                 status = self.orchestrator._get_status_report()
                 await websocket.send(
@@ -794,6 +1154,786 @@ class WebSocketServer:
                 )
             except Exception:
                 pass
+
+    def _clear_prepared_inputs_if_terminal(
+        self,
+        actor,
+        proposal_id: str,
+        result: object,
+    ) -> None:
+        """Drop retained prepare inputs only after terminal or expiry outcomes."""
+        if not isinstance(result, dict):
+            return
+        msg_type = result.get("type")
+        if msg_type == "productivity_update":
+            if result.get("status") in {"completed", "failed", "cancelled"}:
+                self._remove_prepared_inputs(actor, proposal_id)
+        elif msg_type in {
+            "productivity_research_result",
+            "productivity_calendar_result",
+        }:
+            self._remove_prepared_inputs(actor, proposal_id)
+        elif msg_type == "productivity_error" and result.get("code") == "proposal_expired":
+            self._remove_prepared_inputs(actor, proposal_id)
+
+    def _preparation_registry_or_empty(self, registry: object) -> object:
+        if registry is None:
+            return _EmptyPreparationRegistry()
+        return registry
+
+    def _public_confirmation_message(self, confirmation: object) -> dict | None:
+        """Return a validated public confirmation message, never exposing approval_id."""
+        if not isinstance(confirmation, ConfirmationResult):
+            return None
+        public = confirmation.public_message
+        if not isinstance(public, dict):
+            return None
+        if "approval_id" in public:
+            public = {key: value for key, value in public.items() if key != "approval_id"}
+        if validate_server_message(public) is not None:
+            return None
+        return public
+
+    async def _revoke_unconsumed_approval(self, actor, proposal_id: str) -> None:
+        """Revoke a just-issued approval without touching other sessions' inputs."""
+        runtime = self._productivity_runtime
+        if runtime is None:
+            return
+        try:
+            await asyncio.to_thread(runtime.cancel, actor, proposal_id)
+        except Exception:
+            pass
+
+    async def _handle_productivity_confirm(
+        self,
+        websocket,
+        actor,
+        proposal_id: str,
+        scope: ApprovalScope,
+        *,
+        duration_seconds: object = None,
+        acknowledge: object = False,
+    ) -> None:
+        """Confirm once, publish the approved message, then optionally execute."""
+        runtime = self._productivity_runtime
+        if runtime is None:
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        try:
+            confirmation = await asyncio.to_thread(
+                runtime.confirm_and_ticket,
+                actor,
+                proposal_id,
+                scope,
+                duration_seconds=duration_seconds,
+                acknowledge=acknowledge,
+            )
+        except Exception:
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        public = self._public_confirmation_message(confirmation)
+        if public is None:
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        await self._send_productivity_message(websocket, public, proposal_id)
+        self._clear_prepared_inputs_if_terminal(actor, proposal_id, public)
+
+        coordinator = self._productivity_execution_coordinator
+        if coordinator is None:
+            return
+        if (
+            public.get("type") != "productivity_update"
+            or public.get("status") != "approved"
+        ):
+            return
+        if not isinstance(confirmation, ConfirmationResult):
+            return
+
+        approval_id = confirmation.approval_id
+        if not isinstance(approval_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(
+            approval_id
+        ):
+            await self._revoke_unconsumed_approval(actor, proposal_id)
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        try:
+            request = build_execution_request(
+                actor,
+                proposal_id,
+                confirmation,
+                email_registry=self._preparation_registry_or_empty(
+                    self._email_draft_registry
+                ),
+                calendar_registry=self._preparation_registry_or_empty(
+                    self._calendar_registry
+                ),
+                research_registry=self._preparation_registry_or_empty(
+                    self._research_registry
+                ),
+                reminder_registry=self._preparation_registry_or_empty(
+                    self._reminder_registry
+                ),
+            )
+        except Exception:
+            await self._revoke_unconsumed_approval(actor, proposal_id)
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        try:
+            authorized = await asyncio.to_thread(coordinator.authorize, request)
+        except Exception:
+            await self._revoke_unconsumed_approval(actor, proposal_id)
+            await self._send_productivity_message(
+                websocket,
+                self._safe_productivity_error(proposal_id),
+                proposal_id,
+            )
+            return
+
+        if not isinstance(authorized, ExecutionTicket):
+            await self._revoke_unconsumed_approval(actor, proposal_id)
+            if (
+                isinstance(authorized, dict)
+                and validate_server_message(authorized) is None
+            ):
+                terminal = authorized
+            else:
+                terminal = self._safe_productivity_error(proposal_id)
+            await self._send_productivity_message(websocket, terminal, proposal_id)
+            self._clear_prepared_inputs_if_terminal(actor, proposal_id, terminal)
+            return
+
+        try:
+            executing = update_message(proposal_id, "executing")
+        except Exception:
+            executing = self._safe_productivity_error(proposal_id)
+            await self._send_productivity_message(websocket, executing, proposal_id)
+            return
+
+        await self._send_productivity_message(websocket, executing, proposal_id)
+
+        try:
+            terminal = await asyncio.to_thread(
+                coordinator.execute_authorized, authorized
+            )
+        except Exception:
+            terminal = self._safe_productivity_error(proposal_id)
+
+        if not isinstance(terminal, dict) or validate_server_message(terminal) is not None:
+            terminal = self._safe_productivity_error(proposal_id)
+
+        await self._send_productivity_message(websocket, terminal, proposal_id)
+        self._clear_prepared_inputs_if_terminal(actor, proposal_id, terminal)
+
+    def _remove_prepared_inputs(self, actor, proposal_id: str) -> None:
+        if self._email_draft_registry is not None:
+            try:
+                self._email_draft_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+        if self._calendar_registry is not None:
+            try:
+                self._calendar_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+        if self._research_registry is not None:
+            try:
+                self._research_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+        if self._reminder_registry is not None:
+            try:
+                self._reminder_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _with_prepare_request_id(message: object, request_id: object) -> object:
+        """Echo a validated client request_id onto prepare success/error payloads."""
+        if not isinstance(message, dict):
+            return message
+        if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(
+            request_id
+        ):
+            return message
+        attached = {**message, "request_id": request_id}
+        if validate_server_message(attached) is not None:
+            return message
+        return attached
+
+    def _is_valid_reminder_confirmation(
+        self,
+        result: object,
+        proposal_id: object,
+        request_id: object,
+    ) -> bool:
+        """Validate a reminder prepare response before retaining or exposing it.
+
+        Requires the runtime result to be a valid ``productivity_confirmation_required``
+        message whose ``proposal_id``, ``action``, and ``request_id`` exactly match
+        the server-generated values and whose field set is documented by the protocol.
+        The validated client ``request_id`` is attached before validation so the
+        response is checked against the canonical protocol shape.
+        """
+        if not isinstance(result, dict) or not isinstance(proposal_id, str):
+            return False
+        if "request_id" in result and result.get("request_id") != request_id:
+            return False
+        attached = self._with_prepare_request_id(result, request_id)
+        if validate_server_message(attached) is not None:
+            return False
+        if attached.get("type") != "productivity_confirmation_required":
+            return False
+        if attached.get("proposal_id") != proposal_id:
+            return False
+        if attached.get("action") != "reminder.create":
+            return False
+        if attached.get("request_id") != request_id:
+            return False
+        return True
+
+    @staticmethod
+    def _parse_calendar_instant(value: object):
+        """Parse a protocol-validated ISO instant without surfacing parse details."""
+        if not isinstance(value, str):
+            return None
+        try:
+            normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+            dt = datetime.fromisoformat(normalized)
+        except Exception:
+            return None
+        if dt.tzinfo is None:
+            return None
+        try:
+            if dt.utcoffset() is None:
+                return None
+        except Exception:
+            return None
+        return dt
+
+    async def _handle_calendar_read_prepare(self, websocket, data: Dict[str, Any]) -> None:
+        request_id = data.get("request_id")
+        if (
+            self._productivity_runtime is None
+            or self._calendar_read_factory is None
+            or self._calendar_registry is None
+        ):
+            result = self._with_prepare_request_id(
+                self._safe_productivity_error("invalid-proposal"),
+                request_id,
+            )
+            await self._send_productivity_message(
+                websocket,
+                result,
+                "invalid-proposal",
+            )
+            return
+        actor = self._derive_actor_context(websocket).actor_context
+        proposal_id = "invalid-proposal"
+        try:
+            start = self._parse_calendar_instant(data.get("start"))
+            end = self._parse_calendar_instant(data.get("end"))
+            if start is None or end is None:
+                raise ValueError("invalid calendar instant")
+            prepared = self._calendar_read_factory.prepare(
+                actor,
+                start,
+                end,
+                data.get("calendar_name"),
+            )
+            proposal_id = prepared.proposal.proposal_id
+            self._calendar_registry.put(actor, proposal_id, prepared.read)
+            result = await asyncio.to_thread(
+                self._productivity_runtime.prepare,
+                actor,
+                prepared.proposal,
+            )
+            if result.get("type") != "productivity_confirmation_required":
+                self._calendar_registry.remove(actor, proposal_id)
+        except Exception:
+            try:
+                self._calendar_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+            result = self._safe_productivity_error(proposal_id)
+        result = self._with_prepare_request_id(result, request_id)
+        await self._send_productivity_message(websocket, result, proposal_id)
+
+    async def _handle_calendar_draft_prepare(self, websocket, data: Dict[str, Any]) -> None:
+        request_id = data.get("request_id")
+        if (
+            self._productivity_runtime is None
+            or self._calendar_draft_factory is None
+            or self._calendar_registry is None
+        ):
+            result = self._with_prepare_request_id(
+                self._safe_productivity_error("invalid-proposal"),
+                request_id,
+            )
+            await self._send_productivity_message(
+                websocket,
+                result,
+                "invalid-proposal",
+            )
+            return
+        actor = self._derive_actor_context(websocket).actor_context
+        proposal_id = "invalid-proposal"
+        try:
+            start = self._parse_calendar_instant(data.get("start"))
+            end = self._parse_calendar_instant(data.get("end"))
+            if start is None or end is None:
+                raise ValueError("invalid calendar instant")
+            prepared = self._calendar_draft_factory.prepare(
+                actor,
+                data["title"],
+                start,
+                end,
+                data["calendar_name"],
+                data.get("location"),
+                data.get("notes"),
+            )
+            proposal_id = prepared.proposal.proposal_id
+            self._calendar_registry.put(actor, proposal_id, prepared.draft)
+            result = await asyncio.to_thread(
+                self._productivity_runtime.prepare,
+                actor,
+                prepared.proposal,
+            )
+            if result.get("type") != "productivity_confirmation_required":
+                self._calendar_registry.remove(actor, proposal_id)
+        except Exception:
+            try:
+                self._calendar_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+            result = self._safe_productivity_error(proposal_id)
+        result = self._with_prepare_request_id(result, request_id)
+        await self._send_productivity_message(websocket, result, proposal_id)
+
+    async def _handle_research_prepare(self, websocket, data: Dict[str, Any]) -> None:
+        request_id = data.get("request_id")
+        if (
+            self._productivity_runtime is None
+            or self._research_factory is None
+            or self._research_registry is None
+        ):
+            result = self._with_prepare_request_id(
+                self._safe_productivity_error("invalid-proposal"),
+                request_id,
+            )
+            await self._send_productivity_message(
+                websocket,
+                result,
+                "invalid-proposal",
+            )
+            return
+        actor = self._derive_actor_context(websocket).actor_context
+        proposal_id = "invalid-proposal"
+        try:
+            prepare_kwargs: Dict[str, Any] = {}
+            if "max_results" in data:
+                prepare_kwargs["max_results"] = data["max_results"]
+            prepared = self._research_factory.prepare(
+                actor,
+                data["query"],
+                data.get("domains"),
+                **prepare_kwargs,
+            )
+            proposal_id = prepared.proposal.proposal_id
+            self._research_registry.put(actor, proposal_id, prepared.input)
+            result = await asyncio.to_thread(
+                self._productivity_runtime.prepare,
+                actor,
+                prepared.proposal,
+            )
+            if result.get("type") != "productivity_confirmation_required":
+                self._research_registry.remove(actor, proposal_id)
+        except Exception:
+            try:
+                self._research_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+            result = self._safe_productivity_error(proposal_id)
+        result = self._with_prepare_request_id(result, request_id)
+        await self._send_productivity_message(websocket, result, proposal_id)
+
+    async def _handle_reminder_prepare(self, websocket, data: Dict[str, Any]) -> None:
+        request_id = data.get("request_id")
+        if (
+            self._productivity_runtime is None
+            or self._reminder_factory is None
+            or self._reminder_registry is None
+        ):
+            result = self._with_prepare_request_id(
+                self._safe_productivity_error("invalid-proposal"),
+                request_id,
+            )
+            await self._send_productivity_message(
+                websocket,
+                result,
+                "invalid-proposal",
+            )
+            return
+        actor = self._derive_actor_context(websocket).actor_context
+        proposal_id = "invalid-proposal"
+        try:
+            remind_at = self._parse_calendar_instant(data.get("remind_at"))
+            if remind_at is None:
+                raise ValueError("invalid reminder instant")
+            prepared = self._reminder_factory.prepare(
+                actor,
+                data["title"],
+                remind_at,
+                data.get("notes"),
+                data.get("list_name"),
+            )
+            proposal_id = prepared.proposal.proposal_id
+            self._reminder_registry.put(actor, proposal_id, prepared.reminder)
+            result = await asyncio.to_thread(
+                self._productivity_runtime.prepare,
+                actor,
+                prepared.proposal,
+            )
+            if not self._is_valid_reminder_confirmation(result, proposal_id, request_id):
+                self._reminder_registry.remove(actor, proposal_id)
+                result = self._with_prepare_request_id(
+                    self._safe_productivity_error("invalid-proposal"),
+                    request_id,
+                )
+                proposal_id = "invalid-proposal"
+        except Exception:
+            try:
+                self._reminder_registry.remove(actor, proposal_id)
+            except Exception:
+                pass
+            result = self._safe_productivity_error("invalid-proposal")
+            proposal_id = "invalid-proposal"
+        result = self._with_prepare_request_id(result, request_id)
+        await self._send_productivity_message(websocket, result, proposal_id)
+
+    @staticmethod
+    def _safe_productivity_error(proposal_id: object) -> dict:
+        """Return a canonical error without reflecting malformed identifiers."""
+        try:
+            return error_message(
+                proposal_id,
+                ProductivityCode.CONSUMPTION_FAILED,
+            )
+        except Exception:
+            return error_message(
+                "invalid-proposal",
+                ProductivityCode.CONSUMPTION_FAILED,
+            )
+
+    async def _send_productivity_message(
+        self,
+        websocket,
+        message: object,
+        proposal_id: object,
+    ) -> None:
+        """Validate the injected runtime boundary before sending a message."""
+        if not isinstance(message, dict) or validate_server_message(message) is not None:
+            message = self._safe_productivity_error("invalid-proposal")
+        await websocket.send(json.dumps(message))
+
+    @staticmethod
+    def _safe_scheduled_job_error(job_id: object, code: str = "unavailable") -> dict:
+        """Return a canonical scheduled_job_error without reflecting malformed identifiers."""
+        candidate = {
+            "type": "scheduled_job_error",
+            "job_id": job_id if isinstance(job_id, str) else "invalid-job-id",
+            "code": code,
+        }
+        if validate_server_message(candidate) is None:
+            return candidate
+        return {
+            "type": "scheduled_job_error",
+            "job_id": "invalid-job-id",
+            "code": "unavailable",
+        }
+
+    async def _send_scheduled_job_message(
+        self,
+        websocket,
+        message: object,
+        job_id: object,
+    ) -> None:
+        """Validate the injected scheduled-job runtime boundary before sending."""
+        if not isinstance(message, dict) or validate_server_message(message) is not None:
+            message = self._safe_scheduled_job_error(job_id)
+        await websocket.send(json.dumps(message))
+
+    @staticmethod
+    def _with_scheduled_request_id(message: object, request_id: object) -> object:
+        if (
+            not isinstance(message, dict)
+            or not isinstance(request_id, str)
+            or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id)
+        ):
+            return message
+        candidate = {**message, "request_id": request_id}
+        return candidate if validate_server_message(candidate) is None else message
+
+    def _remove_scheduled_action(self, actor, job_id: str) -> None:
+        subsystem = self._scheduled_job_subsystem
+        runtime = self._scheduled_job_runtime
+        if subsystem is None or runtime is None:
+            return
+        try:
+            scheduled_actor = runtime.scheduled_actor(actor)
+            envelope = subsystem.action_store.get(
+                job_id,
+                actor_id=scheduled_actor.actor_id,
+                session_id=scheduled_actor.session_id,
+            )
+            if envelope is not None:
+                subsystem.action_store.delete(
+                    job_id,
+                    actor_id=scheduled_actor.actor_id,
+                    session_id=scheduled_actor.session_id,
+                    expected_revision=envelope.revision,
+                )
+        except Exception:
+            return
+
+    async def _handle_scheduled_job_create(
+        self, websocket, data: Dict[str, Any]
+    ) -> None:
+        request_id = data.get("request_id")
+        proposal_id = data.get("proposal_id")
+        fallback = self._with_scheduled_request_id(
+            self._safe_scheduled_job_error("scheduled-jobs", "unavailable"),
+            request_id,
+        )
+        subsystem = self._scheduled_job_subsystem
+        runtime = self._scheduled_job_runtime
+        if (
+            subsystem is None
+            or runtime is None
+            or self._productivity_runtime is None
+            or self._calendar_registry is None
+            or self._research_registry is None
+        ):
+            await self._send_scheduled_job_message(
+                websocket, fallback, "scheduled-jobs"
+            )
+            return
+
+        actor = self._derive_actor_context(websocket).actor_context
+        try:
+            current = await asyncio.to_thread(
+                self._productivity_runtime.status, actor, proposal_id
+            )
+            if (
+                not isinstance(current, dict)
+                or current.get("type") != "productivity_update"
+                or current.get("proposal_id") != proposal_id
+                or current.get("status") != "preview"
+            ):
+                raise ValueError
+            action, adapter_input = build_scheduled_adapter_input(
+                actor,
+                proposal_id,
+                calendar_registry=self._calendar_registry,
+                research_registry=self._research_registry,
+            )
+            next_run_at = self._parse_calendar_instant(data.get("next_run_at"))
+            if next_run_at is None:
+                raise ValueError
+            quiet_data = data.get("quiet_hours")
+            quiet_hours = None
+            if quiet_data is not None:
+                if not isinstance(quiet_data, dict):
+                    raise ValueError
+                quiet_hours = QuietHours(
+                    timezone_name=quiet_data.get("timezone"),
+                    start_minute=quiet_data.get("start_minute"),
+                    end_minute=quiet_data.get("end_minute"),
+                )
+            scheduled_actor = runtime.scheduled_actor(actor)
+            owner = StableOwnerScope(
+                scheduled_actor.actor_id,
+                scheduled_actor.session_id,
+            )
+            created = await asyncio.to_thread(
+                subsystem.coordinator.schedule,
+                owner=owner,
+                proposal_id=proposal_id,
+                action=action,
+                adapter_input=adapter_input,
+                next_run_at=next_run_at,
+                max_attempts=data.get("max_attempts"),
+                quiet_hours=quiet_hours,
+            )
+            if (
+                created.code is not ScheduledReadScheduleCode.SCHEDULED
+                or created.job is None
+            ):
+                raise ValueError
+            listing = await asyncio.to_thread(runtime.list_jobs, actor)
+            if not isinstance(listing, dict) or listing.get("type") != "scheduled_jobs":
+                raise ValueError
+            job_view = next(
+                item
+                for item in listing.get("jobs", ())
+                if isinstance(item, dict) and item.get("job_id") == created.job.job_id
+            )
+            result = self._with_scheduled_request_id(
+                {"type": "scheduled_job_update", "job": job_view}, request_id
+            )
+            if not isinstance(result, dict) or validate_server_message(result) is not None:
+                raise ValueError
+        except Exception:
+            result = fallback
+        else:
+            try:
+                await asyncio.to_thread(
+                    self._productivity_runtime.cancel, actor, proposal_id
+                )
+            except Exception:
+                pass
+            self._remove_prepared_inputs(actor, proposal_id)
+        await self._send_scheduled_job_message(
+            websocket, result, "scheduled-jobs"
+        )
+
+    def _execute_scheduled_read(self, job) -> ExecutionResult:
+        """Execute one claimed read and require an acknowledged result delivery."""
+        subsystem = self._scheduled_job_subsystem
+        loop = self._loop
+        if subsystem is None or loop is None or not loop.is_running():
+            return ExecutionResult(ExecutionStatus.FAILED)
+        outcome = subsystem.coordinator.execute_claimed(job)
+        if outcome.result is None or outcome.fingerprint is None:
+            return ExecutionResult(ExecutionStatus.FAILED)
+
+        delivered = False
+
+        def deliver(_snapshot) -> DeliveryAttemptResult:
+            nonlocal delivered
+            if delivered:
+                return DeliveryAttemptResult(DeliveryAttemptStatus.REJECTED)
+            delivered = True
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    self._deliver_scheduled_result(job, outcome.result), loop
+                )
+                accepted = future.result(timeout=15)
+            except Exception:
+                accepted = False
+            return DeliveryAttemptResult(
+                DeliveryAttemptStatus.ACKNOWLEDGED
+                if accepted
+                else DeliveryAttemptStatus.FAILED
+            )
+
+        delivery_runtime = MeaningfulChangeDeliveryRuntime(
+            subsystem.store,
+            subsystem.lifecycle,
+            subsystem.clock,
+            deliver,
+        )
+        delivered_result = delivery_runtime.deliver_change(
+            job.job_id,
+            actor_id=job.actor_id,
+            session_id=job.session_id,
+            candidate_fingerprint=outcome.fingerprint,
+        )
+        if delivered_result.code in {
+            DeliveryRuntimeCode.ACKNOWLEDGED,
+            DeliveryRuntimeCode.UNCHANGED,
+        }:
+            return ExecutionResult(ExecutionStatus.SUCCESS)
+        return ExecutionResult(ExecutionStatus.FAILED)
+
+    async def _deliver_scheduled_result(self, job, result: object) -> bool:
+        """Deliver one bounded read result to one connected local owner client."""
+        if isinstance(result, BrowserSearchResult):
+            base = research_result_message(job.proposal_id, result)
+            message = {
+                "type": "scheduled_job_research_result",
+                "job_id": job.job_id,
+                "items": base["items"],
+            }
+        elif isinstance(result, CalendarReadResult):
+            base = calendar_result_message(job.proposal_id, result)
+            message = {
+                "type": "scheduled_job_calendar_result",
+                "job_id": job.job_id,
+                "events": base["events"],
+            }
+        else:
+            return False
+        if validate_server_message(message) is not None:
+            return False
+        runtime = self._scheduled_job_runtime
+        if runtime is None:
+            return False
+        for websocket in tuple(self.connected_clients):
+            client_key = str(id(websocket))
+            if client_key not in self._paired_client_ids or not self._is_loopback(websocket):
+                continue
+            try:
+                actor = self._derive_actor_context(websocket).actor_context
+                scheduled_actor = runtime.scheduled_actor(actor)
+                if (
+                    scheduled_actor.actor_id != job.actor_id
+                    or scheduled_actor.session_id != job.session_id
+                ):
+                    continue
+                await websocket.send(json.dumps(message))
+                return True
+            except Exception:
+                continue
+        return False
+
+    async def publish_productivity_proposal(self, websocket, proposal) -> None:
+        """Publish a productivity proposal to a single paired connection.
+
+        The actor context is derived from server-observed transport state.
+        No proposal content is logged or broadcast.
+        """
+        client_key = str(id(websocket))
+        if client_key not in self._paired_client_ids:
+            return
+        if self._productivity_runtime is None:
+            return
+        context = self._derive_actor_context(websocket)
+        actor = context.actor_context
+        proposal_id = getattr(proposal, "proposal_id", "invalid-proposal")
+        try:
+            message = await asyncio.to_thread(
+                self._productivity_runtime.prepare,
+                actor,
+                proposal,
+            )
+        except Exception:
+            message = self._safe_productivity_error(proposal_id)
+        await self._send_productivity_message(websocket, message, proposal_id)
 
     def _html_response(self, body: str):
         """Serve HTML with basic hardening headers."""
@@ -1024,6 +2164,11 @@ class WebSocketServer:
     def stop(self):
         """Stop the server"""
         self._running = False
+        if self._scheduled_runner_task is not None:
+            if self._loop and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._scheduled_runner_task.cancel)
+            else:
+                self._scheduled_runner_task.cancel()
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
         print("[WS] Server stopped")

@@ -48,3 +48,146 @@ ignore stale or malformed messages, and never replace the displayed confirmation
 snapshot with editable form state. One paired transport is not proof of owner identity;
 the loopback-only server derives the local-owner actor context rather than accepting an
 actor supplied by the client.
+
+## Phase 3 productivity vertical slice
+
+The productivity flow is a bounded, scoped approval contract. Its confirmation is
+preview-only and exact-snapshot bound: the client never sends executable proposal
+content, approval IDs, actor IDs, or session IDs. Implemented adapters execute only
+after server-side authorization consumption.
+
+Proposal IDs use the canonical pattern `^[a-z0-9][a-z0-9_.-]{0,79}$`: lowercase
+alphanumeric first character, then lowercase alphanumeric, underscore, dot, or hyphen,
+up to 80 characters. Uppercase letters and colons are rejected.
+
+Client messages:
+
+- `productivity_email_draft_prepare` carries exactly `request_id`, `recipient`
+  (1–320 characters), `subject` (0–998), and `body` (0–20,000). Control and
+  Unicode format characters are rejected; body alone may contain newline and tab.
+  The server creates the proposal ID and retains the full draft only in a
+  bounded, actor/session-scoped in-memory registry.
+- `productivity_calendar_read_prepare` carries exactly `request_id`, `start`,
+  and `end` (explicit ISO 8601 date-times with required offset or `Z`). Optional
+  `calendar_name` (1–200 characters) may be supplied. Control and Unicode format
+  characters are rejected. The server creates the proposal ID and retains the
+  read input only in a bounded, actor/session-scoped in-memory registry.
+- `productivity_calendar_draft_prepare` carries exactly `request_id`, `title`
+  (1–500), `start`, `end` (same date-time contract as read prepare), and
+  required `calendar_name` (1–200 characters). Optional `location` (1–500) and
+  `notes` (1–4000) may be supplied; notes and location alone may contain newline
+  and tab. Control and Unicode format characters are rejected. The confirmed
+  destination is the exact `calendar_name` target shown in the proposal preview.
+  Aware ISO date-times keep microsecond precision through validation; macOS
+  Calendar/Reminders AppleScript execution uses second-level date precision when
+  the platform cannot represent fractional seconds.
+  The server creates the proposal ID and retains the draft only in a bounded,
+  actor/session-scoped in-memory registry.
+- `productivity_research_prepare` carries exactly `request_id` and `query`
+  (1–2000 Unicode code points; whitespace-only queries are rejected). Optional
+  `domains` is an array of at most 16 domain strings (each 1–253 code points,
+  duplicate-free on the wire). Optional `max_results` is an integer from 1
+  through 20; when omitted the server applies its default. Control and Unicode
+  format characters are rejected. The server canonicalizes domains with IDNA and
+  rejects IP literals, single-label hosts, and malformed hosts. The server
+  creates the proposal ID and retains the research input only in a bounded,
+  actor/session-scoped in-memory registry.
+- `productivity_reminder_prepare` carries exactly `request_id`, `title`
+  (1–500 Unicode code points; whitespace-only titles, including Unicode
+  whitespace, are rejected), and `remind_at` (an explicit ISO 8601 date-time
+  with a required `Z` or numeric timezone offset; naive date-times are rejected
+  without inventing a timezone). Optional `notes` (0–4000 Unicode code points;
+  newline and tab allowed) and `list_name` (1–200 Unicode code points; explicitly
+  empty list names are rejected) may be supplied. Control and Unicode format
+  characters are rejected. The server
+  creates the proposal ID and retains the reminder input only in a bounded,
+  actor/session-scoped in-memory registry. The server-generated proposal ID is
+  not exposed until preparation succeeds.
+- `productivity_confirm` requires `proposal_id` (canonical ID, max 80) and `scope`.
+  `once` and `session` allow no additional fields. `duration` requires
+  `duration_seconds` equal to `900`, `3600`, or `28800`. `precise_persistent` requires
+  `acknowledged: true`. Fields belonging to another scope are rejected.
+- `productivity_cancel` requires `proposal_id` (canonical ID, max 80).
+- `productivity_status` requires `proposal_id` (canonical ID, max 80).
+
+Server messages:
+
+- `productivity_confirmation_required` carries the preview-only snapshot the client must
+  show before confirmation: `proposal_id` (canonical ID), `action` (enum:
+  `browser.research`, `email.draft`, `calendar.read`, `calendar.draft`,
+  `reminder.create`, `scheduled_job.manage`, `skill.execute`, `mcp.execute`),
+  `heading` (string, max 120), `risk_label` (string, max 120), `targets` and
+  `payload` (arrays, each with max 32 entries; each entry has exact keys `label`
+  (max 120) and `value` (max 2000), plus optional boolean `truncated`), `expires_at` (finite
+  number; booleans and non-finite values rejected), and `allowed_scopes` (a non-empty,
+  duplicate-free subset of `once`, `session`, `duration`, and `precise_persistent`).
+  The `payload` is a preview only; it is not the authorized work.
+- `productivity_update` carries `proposal_id` (canonical ID) and `status` (enum:
+  `preview`, `confirming`, `approved`, `executing`, `completed`, `failed`, `cancelling`,
+  `cancelled`).
+- `productivity_error` carries `proposal_id` (canonical ID) and `code` (enum:
+  `confirm_failed`, `cancel_failed`, `proposal_expired`, `proposal_invalid`,
+  `unavailable`) only. It has no `message`, `detail`, `provider`, `stack`, or unknown
+  fields; clients map `code` to local wording.
+- `productivity_research_result` is a terminal research delivery: `proposal_id`
+  (canonical ID) and `items` (array, max 20). Each item has exact keys `title`
+  (1–500), HTTPS `url` (1–2048), canonical lowercase `domain` (1–253), and optional
+  `snippet` (1–2000; newline/tab allowed). Unsafe URLs, credentials, fragments,
+  actor/session/approval fields, provider payloads, and unknown keys are rejected.
+- `productivity_calendar_result` is a terminal calendar-read delivery: `proposal_id`
+  (canonical ID) and `events` (array, max 100). Each event has exact keys `title`
+  (1–500), aware ISO `start`/`end`, `calendar` label (1–200), and optional
+  `location` (1–500; newline/tab allowed). Naive datetimes, non-finite values,
+  actor/session/approval fields, and unknown keys are rejected.
+
+Confirmation is exact-ID and frozen-snapshot bound: the server matches the confirmation
+to the same proposal it presented and generates the approval ID internally. Session,
+duration, and precise-persistent approvals remain bound to the exact action,
+destinations, and snapshot; they do not authorize broader content. Proposal content
+shown to the user is a preview, not an executable instruction, and the server validates
+every client and server payload before it is sent or acted on.
+
+## Phase 3 scheduled jobs
+
+Scheduled-job control is an actor-scoped status and control surface. The client
+may create a one-shot read job with `scheduled_job_create`, request
+`scheduled_jobs_list` with no additional fields, or send
+`scheduled_job_pause`, `scheduled_job_resume`, or `scheduled_job_cancel` with
+one canonical `job_id`. Job IDs use the same lowercase 80-character contract
+as proposal IDs. Actor, session, proposal, payload, and provider fields are not
+accepted from the client.
+
+`scheduled_job_create` requires a canonical `request_id`, the exact active
+`proposal_id`, an aware ISO 8601 `next_run_at`, and `max_attempts` from 1 through
+5. Optional quiet hours require exact integer `start_minute` and `end_minute`
+values from 0 through 1439 plus a bounded IANA timezone. Only frozen
+`browser.research` and `calendar.read` previews can be scheduled. The server
+derives the stable local-installation owner scope, retains the matching prepared
+read input in private local state, and generates the job ID. Write actions cannot
+be scheduled.
+
+The server returns `scheduled_jobs` with at most 64 jobs,
+`scheduled_job_update` with one job, or `scheduled_job_error` with a canonical
+`job_id` and one safe code: `control_failed`, `job_not_found`, or `unavailable`.
+An error never carries raw exception text or provider details.
+Creation updates and errors may echo the canonical `request_id` so the client
+can clear only the matching pending form. Completed read jobs deliver either
+`scheduled_job_research_result` or `scheduled_job_calendar_result`; these use
+the same bounded item/event contracts as their immediate productivity-result
+counterparts and correlate by server-generated `job_id`.
+
+Each job has exactly `job_id`, `action`, `state`, `next_run_at`,
+`attempt_count`, and `max_attempts`, plus optional `quiet_hours_label`. Actions
+are bounded opaque identifiers. State is one of `scheduled`, `paused`,
+`running`, `interrupted`, `completed`, `failed`, or `cancelled`.
+`next_run_at` is a bounded timezone-aware ISO 8601 timestamp. Attempt values
+are integers in the range 0 through 100, `max_attempts` is at least 1, and
+`attempt_count` cannot exceed `max_attempts`. Unknown or privacy-sensitive
+fields are rejected before a message is accepted or sent.
+
+Scheduled ownership is stable across reconnects for a paired loopback owner on
+one HIKARI installation. It is not a portable multi-device identity. Guests are
+never rebound to that scope. Startup recovers interrupted reads through audited
+compare-and-swap transitions. Delivery uses job-ID correlation and durable
+meaningful-change fingerprints; transport acceptance is not represented as an
+end-user reading acknowledgement.

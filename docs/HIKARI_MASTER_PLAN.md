@@ -320,6 +320,8 @@ Exit:
 - jobs are visible, pausable, and audited
 - no third-party tool exceeds its declared permissions
 
+Completion evidence: `docs/PHASE_3_COMPLETION.md`.
+
 ### Phase 4 - Vision and mobile capture
 
 Outcome: users can safely ask for help with an image, screenshot, document, or live camera view.

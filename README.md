@@ -54,6 +54,7 @@ H1KARI/
 - `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
 - `docs/PHASE_1_COMPLETION.md` - safe companion kernel completion record.
 - `docs/PHASE_2_COMPLETION.md` - voice companion completion record.
+- `docs/PHASE_3_COMPLETION.md` - safe productivity tools completion record.
 - `docs/VOICE_COMPANION.md` - voice behavior, controls, privacy, and failure boundaries.
 - `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
 - `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.
