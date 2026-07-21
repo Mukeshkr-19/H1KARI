@@ -330,6 +330,27 @@ class ScheduledJobRunner:
         except Exception:
             return
 
+    def _pause_unaudited_schedule(
+        self, job: ScheduledJob, *, now: datetime
+    ) -> None:
+        """Best-effort exact-CAS compensation for an unaudited active retry.
+
+        A stale revision is never mutated: another runner or controller may
+        already have claimed, paused, cancelled, or otherwise revised it.
+        """
+        try:
+            self._store.transition(
+                job.job_id,
+                expected_state=JobState.SCHEDULED,
+                new_state=JobState.PAUSED,
+                expected_updated_at=job.updated_at,
+                updated_at=now,
+                actor_id=job.actor_id,
+                session_id=job.session_id,
+            )
+        except Exception:
+            return
+
     def _resolve_execution(self, job: ScheduledJob) -> bool:
         """Return True only for an explicit successful ``ExecutionResult``."""
         try:
@@ -507,6 +528,13 @@ class ScheduledJobRunner:
                     retried=False,
                     suppressed=False,
                 )
+            self._append_event(
+                job=interrupted,
+                previous_state=JobState.RUNNING,
+                new_state=JobState.INTERRUPTED,
+                reason=AuditReasonCode.STATE_TRANSITION,
+                occurred_at=now,
+            )
             backoff = _bounded_backoff_seconds(
                 job.attempt_count,
                 base_seconds=self._base_backoff_seconds,
@@ -542,13 +570,17 @@ class ScheduledJobRunner:
                 now=now,
             )
             if rescheduled is not None:
-                self._append_event(
-                    job=rescheduled,
-                    previous_state=JobState.INTERRUPTED,
-                    new_state=JobState.SCHEDULED,
-                    reason=AuditReasonCode.STATE_TRANSITION,
-                    occurred_at=now,
-                )
+                try:
+                    self._append_event(
+                        job=rescheduled,
+                        previous_state=JobState.INTERRUPTED,
+                        new_state=JobState.SCHEDULED,
+                        reason=AuditReasonCode.STATE_TRANSITION,
+                        occurred_at=now,
+                    )
+                except JobRunnerError:
+                    self._pause_unaudited_schedule(rescheduled, now=now)
+                    raise
             return JobRunOutcome(
                 previous_state=JobState.RUNNING,
                 new_state=JobState.SCHEDULED,
@@ -612,7 +644,13 @@ class ScheduledJobRunner:
                 for remaining in claimed[index + 1 :]:
                     self._compensate_claimed(remaining, now=now)
                 raise
-            outcomes.append(self._process_claimed(job, now=now))
+            try:
+                outcome = self._process_claimed(job, now=now)
+            except JobRunnerError:
+                for remaining in claimed[index + 1 :]:
+                    self._compensate_claimed(remaining, now=now)
+                raise
+            outcomes.append(outcome)
         return tuple(outcomes)
 
     def recover_startup(self, *, limit: int = 64) -> int:

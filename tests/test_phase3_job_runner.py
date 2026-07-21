@@ -403,6 +403,179 @@ def test_run_once_retries_within_max_attempts(
     assert fetched.attempt_count == 1
     assert fetched.next_run_at > now
 
+    transitions = [
+        (event.previous_state, event.new_state)
+        for event in audit_store.read("job-1")
+    ]
+    assert transitions == [
+        (JobState.SCHEDULED, JobState.RUNNING),
+        (JobState.RUNNING, JobState.INTERRUPTED),
+        (JobState.INTERRUPTED, JobState.SCHEDULED),
+    ]
+
+
+def test_retry_interrupted_audit_failure_leaves_job_inactive(
+    store: ScheduledJobStore,
+    audit_db_path: Path,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    store.add(
+        _make_job(
+            next_run_at=_aware(2026, 7, 18, 8, 30),
+            created_at=_aware(2026, 7, 18, 8, 0),
+            updated_at=_aware(2026, 7, 18, 8, 0),
+            max_attempts=3,
+        )
+    )
+
+    class _FailSecondAudit(ScheduledJobAuditStore):
+        calls = 0
+
+        def append(self, event):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("audit boom")
+            return super().append(event)
+
+    audit_store = _FailSecondAudit(audit_db_path)
+    runner = ScheduledJobRunner(
+        store, audit_store, lambda: now, _failed, event_id_factory
+    )
+
+    with pytest.raises(JobRunnerError, match="audit append failed"):
+        runner.run_once(limit=1)
+
+    fetched = store.get("job-1", actor_id="actor-1", session_id="session-1")
+    assert fetched is not None
+    assert fetched.state is JobState.INTERRUPTED
+    assert [event.new_state for event in audit_store.read("job-1")] == [
+        JobState.RUNNING
+    ]
+
+
+def test_retry_reschedule_audit_failure_pauses_exact_active_revision(
+    store: ScheduledJobStore,
+    audit_db_path: Path,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    store.add(
+        _make_job(
+            next_run_at=_aware(2026, 7, 18, 8, 30),
+            created_at=_aware(2026, 7, 18, 8, 0),
+            updated_at=_aware(2026, 7, 18, 8, 0),
+            max_attempts=3,
+        )
+    )
+
+    class _FailThirdAudit(ScheduledJobAuditStore):
+        calls = 0
+
+        def append(self, event):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 3:
+                raise RuntimeError("audit boom")
+            return super().append(event)
+
+    audit_store = _FailThirdAudit(audit_db_path)
+    runner = ScheduledJobRunner(
+        store, audit_store, lambda: now, _failed, event_id_factory
+    )
+
+    with pytest.raises(JobRunnerError, match="audit append failed"):
+        runner.run_once(limit=1)
+
+    fetched = store.get("job-1", actor_id="actor-1", session_id="session-1")
+    assert fetched is not None
+    assert fetched.state is JobState.PAUSED
+    assert fetched.attempt_count == 1
+    assert [event.new_state for event in audit_store.read("job-1")] == [
+        JobState.RUNNING,
+        JobState.INTERRUPTED,
+    ]
+
+
+def test_retry_audit_failure_compensates_remaining_claimed_jobs(
+    store: ScheduledJobStore,
+    audit_db_path: Path,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    for job_id, next_run_at in (
+        ("job-1", _aware(2026, 7, 18, 8, 29)),
+        ("job-2", _aware(2026, 7, 18, 8, 30)),
+    ):
+        store.add(
+            _make_job(
+                job_id=job_id,
+                next_run_at=next_run_at,
+                created_at=_aware(2026, 7, 18, 8, 0),
+                updated_at=_aware(2026, 7, 18, 8, 0),
+                max_attempts=3,
+            )
+        )
+
+    class _FailSecondAudit(ScheduledJobAuditStore):
+        calls = 0
+
+        def append(self, event):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            if self.calls == 2:
+                raise RuntimeError("audit boom")
+            return super().append(event)
+
+    runner = ScheduledJobRunner(
+        store,
+        _FailSecondAudit(audit_db_path),
+        lambda: now,
+        _failed,
+        event_id_factory,
+    )
+
+    with pytest.raises(JobRunnerError, match="audit append failed"):
+        runner.run_once(limit=2)
+
+    first = store.get("job-1", actor_id="actor-1", session_id="session-1")
+    second = store.get("job-2", actor_id="actor-1", session_id="session-1")
+    assert first is not None
+    assert second is not None
+    assert first.state is JobState.INTERRUPTED
+    assert second.state is JobState.SCHEDULED
+
+
+def test_retry_audit_compensation_does_not_mutate_newer_revision(
+    store: ScheduledJobStore,
+    audit_store: ScheduledJobAuditStore,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    original = _make_job(
+        state=JobState.SCHEDULED,
+        next_run_at=_aware(2026, 7, 18, 9, 30),
+        created_at=_aware(2026, 7, 18, 8, 0),
+        updated_at=now,
+        max_attempts=3,
+    )
+    store.add(original)
+    revised = store.update_next_run(
+        "job-1",
+        next_run_at=_aware(2026, 7, 18, 10, 0),
+        expected_updated_at=original.updated_at,
+        updated_at=_aware(2026, 7, 18, 9, 1),
+        actor_id="actor-1",
+        session_id="session-1",
+    )
+    assert revised is not None
+    runner = ScheduledJobRunner(
+        store, audit_store, lambda: now, _failed, event_id_factory
+    )
+
+    runner._pause_unaudited_schedule(original, now=now)
+
+    fetched = store.get("job-1", actor_id="actor-1", session_id="session-1")
+    assert fetched == revised
+
 
 def test_run_once_quiet_hours_reschedules_after_window(
     store: ScheduledJobStore,
