@@ -332,8 +332,8 @@ class WebSocketServer:
         try:
             async for message in websocket:
                 await self._handle_message(websocket, message)
-        except Exception as e:
-            print(f"[WS] Client error: {e}")
+        except Exception:
+            print("[WS] Client error")
         finally:
             if self._email_draft_registry is not None:
                 try:
@@ -1130,8 +1130,8 @@ class WebSocketServer:
                     }
                 )
             )
-        except Exception as e:
-            print(f"[WS] Request failed: {e}")
+        except Exception:
+            print("[WS] Request failed")
             await websocket.send(
                 json.dumps(
                     {

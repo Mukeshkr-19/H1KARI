@@ -28,6 +28,18 @@ class EmptyConnection(MockWebSocket):
         raise StopAsyncIteration
 
 
+class FailingConnection(MockWebSocket):
+    def __init__(self, marker: str):
+        super().__init__()
+        self.marker = marker
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise RuntimeError(self.marker)
+
+
 class TestServerPairingSafety(unittest.TestCase):
     def test_pairing_code_is_random_six_character_hex(self):
         codes = {WebSocketServer(MagicMock()).pairing_code for _ in range(20)}
@@ -244,18 +256,34 @@ class TestServerPairingSafety(unittest.TestCase):
         websocket = MockWebSocket()
         server._paired_client_ids.add(str(id(websocket)))
 
-        asyncio.run(
-            server._handle_message(
-                websocket,
-                json.dumps({"type": "message", "text": "hello"}),
+        with patch("builtins.print") as print_mock:
+            asyncio.run(
+                server._handle_message(
+                    websocket,
+                    json.dumps({"type": "message", "text": "hello"}),
+                )
             )
-        )
 
         self.assertEqual(
             websocket.sent,
             [{"type": "error", "message": "Request failed"}],
         )
         self.assertNotIn(marker, json.dumps(websocket.sent))
+        self.assertNotIn(marker, repr(print_mock.call_args_list))
+        print_mock.assert_called_once_with("[WS] Request failed")
+
+    def test_connection_errors_do_not_log_exception_text(self):
+        marker = "PRIVATE_CONNECTION_FAILURE_/private/path"
+        server = WebSocketServer(MagicMock())
+        websocket = FailingConnection(marker)
+
+        with patch("builtins.print") as print_mock:
+            asyncio.run(server._handle_connection(websocket))
+
+        printed = repr(print_mock.call_args_list)
+        self.assertNotIn(marker, printed)
+        self.assertIn("[WS] Client error", printed)
+        self.assertNotIn("PRIVATE_CONNECTION_FAILURE", printed)
 
     def test_non_loopback_paired_message_is_guest(self):
         orchestrator = MagicMock()
