@@ -46,6 +46,8 @@ def _validate_field_value(field: str, value: Any, field_spec: dict) -> str | Non
     expected = field_spec["type"]
     if not _matches_type(value, expected):
         return f"Invalid field type: {field}"
+    if "equals" in field_spec and value != field_spec["equals"]:
+        return f"Invalid field value: {field}"
     if expected == "string":
         min_length = field_spec.get("min_length")
         if min_length is not None and len(value) < int(min_length):

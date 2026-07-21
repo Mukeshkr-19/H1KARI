@@ -70,6 +70,97 @@
       "optional": {}
     },
     "status": {"required": {}, "optional": {}},
+    "pairing_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "pairing_confirm": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "challenge_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "min_length": 6, "max_length": 6, "pattern": "^[0-9A-F]{6}$"}
+      },
+      "optional": {}
+    },
+    "pairing_cancel": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "challenge_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "pairing_revoke": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "device_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "optional": {}
+    },
+    "handoff_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "task_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "summary": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+      },
+      "optional": {}
+    },
+    "handoff_accept": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "acknowledged": {"type": "boolean", "equals": true}
+      },
+      "optional": {}
+    },
+    "handoff_reject": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "handoff_cancel": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "handoff_status": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "visual_transfer_begin": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "mime_type": {"type": "string", "enum": ["image/png", "image/jpeg"]},
+        "size_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "width": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "height": {"type": "integer", "minimum": 1, "maximum": 4096},
+        "frame_count": {"type": "integer", "enum": [1]}
+      },
+      "optional": {}
+    },
+    "visual_transfer_cancel": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "optional": {}
+    },
+    "visual_transfer_status": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "optional": {}
+    },
     "productivity_email_draft_prepare": {
       "required": {
         "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
@@ -222,6 +313,109 @@
     "task_update": ["task_id", "root_task_id", "status", "progress", "checkpoint"],
     "document_explanation": ["task_id", "root_task_id", "text", "provider"],
     "document_error": ["task_id", "root_task_id", "code", "message"],
+    "pairing_challenge": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "challenge_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "expires_at": {"type": "number", "finite": true}
+      },
+      "optional": {}
+    },
+    "pairing_confirmed": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "device_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "expires_at": {"type": "number", "finite": true},
+        "protocol_version": {"type": "integer", "enum": [1]}
+      },
+      "optional": {}
+    },
+    "pairing_update": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "status": {"type": "string", "enum": ["cancelled", "revoked", "expired"]}
+      },
+      "optional": {
+        "challenge_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "device_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "variants": {
+        "field": "status",
+        "cases": {
+          "cancelled": {"required": ["challenge_id"], "forbidden": ["device_id"]},
+          "expired": {"required": ["challenge_id"], "forbidden": ["device_id"]},
+          "revoked": {"required": ["device_id"], "forbidden": ["challenge_id"]}
+        }
+      }
+    },
+    "pairing_error": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": ["unavailable", "unauthorized", "invalid_request", "challenge_invalid", "challenge_expired", "pairing_locked", "rate_limited", "device_not_found"]}
+      },
+      "optional": {}
+    },
+    "handoff_offer": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "task_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "summary": {"type": "string", "min_length": 1, "max_length": 200, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true},
+        "expires_at": {"type": "number", "finite": true}
+      },
+      "optional": {}
+    },
+    "handoff_update": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "status": {"type": "string", "enum": ["offered", "accepted", "rejected", "cancelled", "expired"]}
+      },
+      "optional": {}
+    },
+    "handoff_error": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": ["unavailable", "unauthorized", "invalid_request", "task_not_found", "handoff_not_found", "handoff_expired", "handoff_conflict", "policy_denied"]}
+      },
+      "optional": {
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      }
+    },
+    "visual_transfer_ready": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "expires_at": {"type": "number", "finite": true}
+      },
+      "optional": {}
+    },
+    "visual_transfer_update": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "status": {"type": "string", "enum": ["pending", "receiving", "validating", "completed", "cancelled", "failed"]},
+        "bytes_received": {"type": "integer", "minimum": 0, "maximum": 1048576}
+      },
+      "optional": {}
+    },
+    "visual_transfer_complete": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"},
+        "content_hash": {"type": "string", "min_length": 71, "max_length": 71, "pattern": "^sha256\\.[0-9a-f]{64}$"}
+      },
+      "optional": {}
+    },
+    "visual_transfer_error": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": ["unavailable", "unauthorized", "invalid_request", "transfer_not_found", "transfer_expired", "handoff_not_accepted", "mime_unsupported", "mime_mismatch", "size_exceeded", "dimensions_exceeded", "frame_count_invalid", "decompression_limit", "metadata_rejected", "malformed_image", "rate_limited"]}
+      },
+      "optional": {
+        "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      }
+    },
     "productivity_confirmation_required": {
       "required": {
         "proposal_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},

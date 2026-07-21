@@ -27,6 +27,60 @@ Server and client message names and their required fields are declared in the JS
 contract. New message types must be added there first, then implemented and tested on
 both sides. Public HTTP status and QR/connect pages never expose the pairing secret.
 
+## Phase 4 pairing and handoff control contract
+
+Phase 4 adds control-message contracts without changing the meaning of an existing
+v1 message. These declarations are additive and therefore remain protocol v1. They
+do not by themselves enable the transport handlers: the legacy `pair` exchange stays
+active until the new bounded runtime is wired and verified.
+
+Pairing challenges prove temporary-secret possession only. They never establish
+owner identity. The server continues to derive actor and session identity from the
+transport, and a paired non-loopback device remains a guest. Device IDs are opaque
+display and revocation references; they are not reconnect credentials, grants, or
+bearer authority.
+
+Pairing client messages are:
+
+- `pairing_prepare` with one canonical `request_id`.
+- `pairing_confirm` with the correlated `request_id`, an opaque `challenge_id`, and
+  exactly six uppercase hexadecimal characters in `code`.
+- `pairing_cancel` with the correlated `request_id` and `challenge_id`.
+- `pairing_revoke` with the correlated `request_id` and opaque `device_id`; the
+  transport adapter must authorize revocation as a local-owner operation.
+
+The server answers with `pairing_challenge`, `pairing_confirmed`, `pairing_update`, or
+`pairing_error`. Challenge secrets are never echoed. Expiry values must be finite.
+Errors contain a fixed safe code only, and every reply carries the exact `request_id`.
+
+A handoff transfers a bounded task reference, never mobile authority. The guest sends
+`handoff_prepare` with a canonical `request_id`, opaque `task_id`, and bounded frozen
+summary. The server generates the `handoff_id` and returns `handoff_offer`. A local
+owner may send `handoff_accept` only with `acknowledged: true`, or may reject or cancel
+the offer. `handoff_status` is read-only. Acceptance must still perform fresh desktop
+policy evaluation; approval IDs, grants, and execution tickets are not portable.
+`handoff_update` and `handoff_error` carry correlation and status or safe codes, not
+task contents or identity fields.
+
+Visual-transfer JSON messages carry metadata and lifecycle state only:
+
+- `visual_transfer_begin` binds one image to an accepted `handoff_id`. It allows only
+  `image/png` or `image/jpeg`, at most 1,048,576 encoded bytes, dimensions from 1
+  through 4096, and exactly one frame.
+- `visual_transfer_ready` returns the server-generated opaque `transfer_id`.
+- `visual_transfer_status`, `visual_transfer_update`, and `visual_transfer_cancel`
+  correlate that exact transfer without carrying image content.
+- `visual_transfer_complete` returns only a `sha256.`-prefixed lowercase digest as a
+  receipt. The digest is not authorization and must not become a durable tracking ID.
+- `visual_transfer_error` contains one fixed safe code.
+
+Bytes, base64, data URLs, filenames, filesystem paths, actor/session IDs, approval
+IDs, grants, execution tickets, provider details, task payloads, and raw errors are
+unknown fields and fail validation. A later bounded authenticated binary transport
+may carry one image for an accepted transfer; image bytes never travel in this JSON
+control protocol and this contract performs no capture, upload, OCR, provider call,
+or external execution.
+
 ## Document task flow
 
 The Phase 1 document flow is additive to the existing v1 chat protocol:
