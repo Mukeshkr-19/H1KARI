@@ -33,6 +33,13 @@ from core.vision.description import (
     DescriptionStatus,
     LocalDescriptionAdapter,
 )
+from core.vision.mlx_worker import (
+    LocalVisionConfig,
+    SpawnedMlxDescriptionRunner,
+    VisionProvisioningError,
+    create_optional_mlx_description_adapter_from_environment,
+    load_verified_local_vision_config,
+)
 
 __all__ = (
     "ANALYSIS_TTL_SECONDS",
@@ -53,6 +60,11 @@ __all__ = (
     "DescriptionResult",
     "DescriptionStatus",
     "LocalDescriptionAdapter",
+    "LocalVisionConfig",
+    "SpawnedMlxDescriptionRunner",
+    "VisionProvisioningError",
+    "create_optional_mlx_description_adapter_from_environment",
+    "load_verified_local_vision_config",
     "VisionRuntime",
     "VisionAnalysisState",
     "VisionCapability",

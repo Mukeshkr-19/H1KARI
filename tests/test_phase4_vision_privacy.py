@@ -142,8 +142,18 @@ def test_vision_modules_have_no_capture_network_provider_or_persistence_boundary
         calls = _called_names(tree)
         assert imports.isdisjoint(FORBIDDEN_IMPORT_ROOTS), path.name
         assert "tempfile" not in imports, path.name
-        assert calls.isdisjoint(FORBIDDEN_EFFECT_CALLS), path.name
-        assert calls.isdisjoint(FORBIDDEN_PERSISTENCE_CALLS), path.name
+        allowed_effects = {"send"} if path.name == "mlx_worker.py" else set()
+        allowed_reads = (
+            {"open", "read_text"} if path.name == "mlx_worker.py" else set()
+        )
+        assert calls.isdisjoint(FORBIDDEN_EFFECT_CALLS - allowed_effects), path.name
+        assert calls.isdisjoint(
+            FORBIDDEN_PERSISTENCE_CALLS - allowed_reads
+        ), path.name
+        if path.name == "mlx_worker.py":
+            assert calls.isdisjoint(
+                {"write_bytes", "write_text", "NamedTemporaryFile", "mkstemp"}
+            )
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):

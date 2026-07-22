@@ -774,8 +774,10 @@ def test_no_storage_filesystem_persistence_telemetry_or_cloud_egress() -> None:
             "logging",  # telemetry
             "openai", "anthropic", "boto3", "google",  # cloud
         }
-        # json is allowed in contracts for digest computation
-        if path.name == "contracts.py":
+        # JSON is used only for deterministic digests or the explicit, read-only
+        # local-model provisioning manifest. Filesystem writes remain forbidden
+        # by the dedicated vision privacy contracts.
+        if path.name in {"contracts.py", "mlx_worker.py"}:
             forbidden.discard("json")
         assert imports.isdisjoint(forbidden), f"{path.name}: {imports & forbidden}"
 

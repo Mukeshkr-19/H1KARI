@@ -1,6 +1,6 @@
 """
 HIKARI v2.0 - Multi-Provider AI Router
-Routes requests across Google, Groq, OpenRouter, Cerebras, DeepSeek, NVIDIA
+Routes requests across local gateways and configured model providers
 Smart fallback chain with usage tracking
 """
 
@@ -15,6 +15,7 @@ import re
 from typing import Optional, Dict, Any, Tuple, Callable, Sequence
 from dataclasses import dataclass, field
 from collections import defaultdict
+from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 from core.quiet import is_quiet
@@ -67,6 +68,42 @@ def _redact_sensitive_text(value: Any) -> Any:
 
 # Provider configurations
 PROVIDER_CONFIGS = {
+    "omniroute": {
+        "api_key_env": "OMNIROUTE_API_KEY",
+        "base_url": "http://127.0.0.1:20128/v1",
+        "base_url_env": "OMNIROUTE_BASE_URL",
+        "models": {
+            "fast": "auto/fast",
+            "balanced": "auto",
+            "smart": "auto/smart",
+        },
+        "model_envs": {
+            "fast": "OMNIROUTE_FAST_MODEL",
+            "balanced": "OMNIROUTE_BALANCED_MODEL",
+            "smart": "OMNIROUTE_SMART_MODEL",
+        },
+        "rate_limit_rpm": 120,
+        "max_tokens_per_min": 250000,
+        "local_gateway": True,
+    },
+    "9router": {
+        "api_key_env": "NINEROUTER_API_KEY",
+        "base_url": "http://127.0.0.1:20129/v1",
+        "base_url_env": "NINEROUTER_BASE_URL",
+        "models": {
+            "fast": "free-forever",
+            "balanced": "free-forever",
+            "smart": "free-forever",
+        },
+        "model_envs": {
+            "fast": "NINEROUTER_FAST_MODEL",
+            "balanced": "NINEROUTER_BALANCED_MODEL",
+            "smart": "NINEROUTER_SMART_MODEL",
+        },
+        "rate_limit_rpm": 120,
+        "max_tokens_per_min": 250000,
+        "local_gateway": True,
+    },
     "google": {
         "api_key_env": "GOOGLE_AI_STUDIO_KEY",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
@@ -166,6 +203,8 @@ TASK_QUALITY_MAP = {
 
 # Fallback chain order - OLLAMA IS LAST RESORT (local free fallback only when ALL others fail)
 FALLBACK_CHAIN = [
+    "omniroute",  # Local multi-provider gateway
+    "9router",  # Local combo router on a distinct port
     "groq",  # Fastest
     "cerebras",  # Fast
     "google",  # Best quality
@@ -174,6 +213,48 @@ FALLBACK_CHAIN = [
     "cohere",  # Command R
     "ollama",  # LAST - local Gemma 4 fallback when everything else fails
 ]
+
+_LOCAL_OPENAI_GATEWAYS = frozenset({"omniroute", "9router"})
+_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+
+
+def _local_gateway_base_url(provider: str) -> Optional[str]:
+    """Resolve an explicitly local OpenAI-compatible gateway endpoint."""
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config or not config.get("local_gateway"):
+        return None
+    value = os.getenv(config["base_url_env"], config["base_url"]).strip()
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return None
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "::1"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or port is None
+        or not (1 <= port <= 65535)
+    ):
+        return None
+    path = parsed.path.rstrip("/")
+    if path != "/v1":
+        return None
+    return value.rstrip("/")
+
+
+def _provider_model(provider: str, quality: str) -> Optional[str]:
+    config = PROVIDER_CONFIGS.get(provider)
+    if not config:
+        return None
+    env_name = config.get("model_envs", {}).get(quality)
+    value = os.getenv(env_name, "").strip() if env_name else ""
+    if not value:
+        value = str(config.get("models", {}).get(quality, "")).strip()
+    return value if _MODEL_ID.fullmatch(value) else None
 
 
 @dataclass
@@ -215,16 +296,30 @@ class AIRouter:
                 os.getenv(config["api_key_env"]) if config.get("api_key_env") else None
             )
 
-            # Ollama is always available (local)
+            # Ollama is always available (local). Local gateways require an
+            # explicit bearer key, a valid loopback endpoint, and a model.
             is_ollama = name == "ollama"
+            gateway_ready = (
+                name in _LOCAL_OPENAI_GATEWAYS
+                and bool(api_key)
+                and _local_gateway_base_url(name) is not None
+                and all(
+                    _provider_model(name, quality)
+                    for quality in ("fast", "balanced", "smart")
+                )
+            )
 
             self.providers[name] = ProviderStatus(
                 name=name,
-                available=bool(api_key) or is_ollama,
+                available=(
+                    gateway_ready
+                    if name in _LOCAL_OPENAI_GATEWAYS
+                    else bool(api_key) or is_ollama
+                ),
             )
             if is_ollama:
                 _router_log(f"[ROUTER] {name}: local (always available)")
-            elif api_key:
+            elif self.providers[name].available:
                 _router_log(f"[ROUTER] {name}: configured")
             else:
                 _router_log(f"[ROUTER] {name}: not configured (skipping)")
@@ -305,13 +400,35 @@ class AIRouter:
         if not candidates:
             return None
 
-        # Prioritize fast cloud providers - ollama is only for fallback
+        # Prefer configured local gateways. They make their own upstream
+        # routing decision; Ollama remains the last local fallback.
         if quality == "fast":
-            priority = ["groq", "cerebras", "google", "openrouter"]
+            priority = [
+                "omniroute",
+                "9router",
+                "groq",
+                "cerebras",
+                "google",
+                "openrouter",
+            ]
         elif quality == "balanced":
-            priority = ["google", "groq", "openrouter", "cerebras"]
+            priority = [
+                "omniroute",
+                "9router",
+                "google",
+                "groq",
+                "openrouter",
+                "cerebras",
+            ]
         else:  # smart
-            priority = ["google", "openrouter", "nvidia", "cohere"]
+            priority = [
+                "omniroute",
+                "9router",
+                "google",
+                "openrouter",
+                "nvidia",
+                "cohere",
+            ]
 
         for p in priority:
             if p in candidates:
@@ -467,7 +584,14 @@ class AIRouter:
         if provider == "ollama":
             return self._call_ollama(model, messages, max_tokens, temperature)
 
-        url = f"{config['base_url']}/chat/completions"
+        base_url = (
+            _local_gateway_base_url(provider)
+            if provider in _LOCAL_OPENAI_GATEWAYS
+            else config.get("base_url")
+        )
+        if not api_key or not base_url:
+            return None
+        url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
@@ -497,9 +621,7 @@ class AIRouter:
                 _router_log(f"[ROUTER] Credits exhausted on {provider}")
                 self.providers[provider].consecutive_failures += 1
             else:
-                _router_log(
-                    f"[ROUTER] HTTP {response.status_code} from {provider}: {response.text[:200]}"
-                )
+                _router_log(f"[ROUTER] HTTP {response.status_code} from {provider}")
             return None
         except requests.exceptions.Timeout:
             _router_log(f"[ROUTER] Timeout on {provider}")
@@ -608,8 +730,9 @@ class AIRouter:
             _router_log("[ROUTER] No providers available")
             return None
 
-        config = PROVIDER_CONFIGS[provider]
-        model = config["models"][quality]
+        model = _provider_model(provider, quality)
+        if not model:
+            return None
         self._last_provider = provider
         self._last_model = model
 
@@ -631,8 +754,9 @@ class AIRouter:
                 if fallback_status.consecutive_failures >= 3:
                     continue
 
-                fallback_config = PROVIDER_CONFIGS[fallback_name]
-                fallback_model = fallback_config["models"][quality]
+                fallback_model = _provider_model(fallback_name, quality)
+                if not fallback_model:
+                    continue
                 _router_log(f"[ROUTER] Trying fallback: {fallback_name}/{fallback_model}")
 
                 response = self._try_generate(
@@ -687,7 +811,9 @@ class AIRouter:
 
         attempted = []
         for provider in candidates:
-            model = PROVIDER_CONFIGS[provider]["models"][quality]
+            model = _provider_model(provider, quality)
+            if not model:
+                continue
             try:
                 approved = before_provider_call(provider)
             except Exception:
@@ -720,6 +846,10 @@ class AIRouter:
         temperature: float,
     ) -> Optional[str]:
         """Use exactly one outbound transport for a permissioned attempt."""
+        if provider in _LOCAL_OPENAI_GATEWAYS:
+            return self._call_direct_api(
+                provider, model, messages, max_tokens, temperature
+            )
         if provider == "google":
             return self._call_google_direct(
                 model,
@@ -746,7 +876,11 @@ class AIRouter:
         max_tokens: int,
         temperature: float,
     ) -> Optional[str]:
-        # Ollama requires direct API call (not LiteLLM)
+        # Local endpoints require direct API calls (not LiteLLM).
+        if provider in _LOCAL_OPENAI_GATEWAYS:
+            return self._call_direct_api(
+                provider, model, messages, max_tokens, temperature
+            )
         if provider == "ollama":
             return self._call_ollama(model, messages, max_tokens, temperature)
 
@@ -788,7 +922,7 @@ class AIRouter:
         provider = self._select_provider(quality)
         model = None
         if provider:
-            model = PROVIDER_CONFIGS[provider]["models"].get(quality)
+            model = _provider_model(provider, quality)
 
         fallback_labels: list[str] = []
         for name in FALLBACK_CHAIN:
@@ -799,7 +933,7 @@ class AIRouter:
                 continue
             if status.consecutive_failures >= 3:
                 continue
-            fb_model = PROVIDER_CONFIGS[name]["models"].get(quality, "?")
+            fb_model = _provider_model(name, quality) or "?"
             fallback_labels.append(f"{name}/{fb_model}")
 
         return {

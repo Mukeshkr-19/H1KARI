@@ -94,15 +94,14 @@ test("reduceCameraCapture happy path lifecycle", () => {
   });
   assert.equal(state.status, "captured");
   assert.equal(state.capturedFrame, blob);
-  // The reducer is pure; the component/controller owns track cleanup.
-  assert.equal(stream.tracks[0].stopCount, 0);
+  assert.equal(stream.tracks[0].stopCount, 1);
 
   // 5. STOP_REQUESTED
   state = reduceCameraCapture(state, { type: "STOP_REQUESTED" });
   assert.equal(state.status, "stopped");
 });
 
-test("late or stale permission responses are ignored without reducer side effects", () => {
+test("late or stale permission responses stop the late stream and preserve state", () => {
   let state = createInitialCameraCaptureState();
   state = reduceCameraCapture(state, { type: "START_REQUESTED", token: 2 });
 
@@ -119,10 +118,10 @@ test("late or stale permission responses are ignored without reducer side effect
     stream: lateStream as unknown as MediaStream,
   });
   assert.strictEqual(next, state);
-  assert.equal(lateStream.tracks[0].stopCount, 0);
+  assert.equal(lateStream.tracks[0].stopCount, 1);
 });
 
-test("capture failure maps to a safe error without reducer side effects", () => {
+test("capture failure maps to a safe error and stops the stream", () => {
   let state = createInitialCameraCaptureState();
   state = reduceCameraCapture(state, { type: "START_REQUESTED", token: 1 });
   const stream = createFakeStream(1);
@@ -140,7 +139,7 @@ test("capture failure maps to a safe error without reducer side effects", () => 
   });
   assert.equal(state.status, "failed");
   assert.equal(state.errorCode, "dimensions_exceeded");
-  assert.equal(stream.tracks[0].stopCount, 0);
+  assert.equal(stream.tracks[0].stopCount, 1);
 });
 
 test("validateCapturedFrame bounds byte size and mime type", () => {

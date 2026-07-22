@@ -4,10 +4,10 @@ Provides a deterministic boundary around an injected local description runner.
 No network, browser, camera, screenshot, provider, cloud, upload, or model
 download is permitted. Construction and import perform no execution.
 
-No reviewed local description engine is currently selected in this repository.
-Production use requires an explicit absolute executable/model path or an
-explicitly injected callable; bootstrap must remain fail-closed until a
-reviewed engine is chosen.
+The optional production candidate is provisioned through a separately reviewed
+and verified local model manifest and a disposable spawned worker. This adapter remains
+usable with an explicitly injected callable or absolute executable; missing or
+invalid provisioning makes the capability fail closed.
 """
 
 from __future__ import annotations
@@ -182,7 +182,8 @@ class BoundedLocalDescriptionRunner:
     """Subprocess boundary for an explicit absolute local executable.
 
     This runner does not discover models, search PATH, expand home directories,
-    or download assets. No reviewed description engine is currently selected.
+    or download assets. It remains available as an injected compatibility
+    boundary; the optional production candidate uses the spawned MLX runner.
     """
 
     def __init__(self, executable_path: Path | str) -> None:
@@ -413,6 +414,15 @@ class LocalDescriptionAdapter:
         except Exception:
             return ()
         return (observation,)
+
+    def cancel(self) -> None:
+        """Request cancellation when the injected runner supports it."""
+        cancel = getattr(self._runner, "cancel", None)
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception:
+                pass
 
     def __repr__(self) -> str:
         return "LocalDescriptionAdapter()"

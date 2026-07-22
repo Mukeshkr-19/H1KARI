@@ -5,6 +5,7 @@ from __future__ import annotations
 from core.action_policy import Actor, ActorContext
 from core.protocol import validate_server_message
 from core.vision import VisionAnalysisService, VisionRuntime
+from core.vision.contracts import VisionObservation, VisionObservationKind
 from core.vision.ocr import OcrResult, OcrStatus
 
 
@@ -13,6 +14,22 @@ class _Ocr:
         assert image_bytes == b"image"
         assert mime_type == "image/png"
         return OcrResult(status=OcrStatus.SUCCESS, text="measured text")
+
+
+class _Description:
+    def __init__(self) -> None:
+        self.cancel_count = 0
+
+    def __call__(self, image_bytes: bytes, *, mime_type: str):
+        return (
+            VisionObservation(
+                kind=VisionObservationKind.DESCRIPTION,
+                text="bounded description",
+            ),
+        )
+
+    def cancel(self) -> None:
+        self.cancel_count += 1
 
 
 def _actor(session_id: str = "session-1") -> ActorContext:
@@ -24,7 +41,7 @@ def _actor(session_id: str = "session-1") -> ActorContext:
     )
 
 
-def _runtime(*, accepted=True) -> VisionRuntime:
+def _runtime(*, accepted=True, description_analyzer=None) -> VisionRuntime:
     service = VisionAnalysisService(
         clock=lambda: 1000.0,
         analysis_id_factory=lambda: "analysis-1",
@@ -32,6 +49,7 @@ def _runtime(*, accepted=True) -> VisionRuntime:
     return VisionRuntime(
         service=service,
         ocr_adapter=_Ocr(),
+        description_analyzer=description_analyzer,
         handoff_accepted=lambda session_id, handoff_id: (
             accepted and session_id == "session-1" and handoff_id == "handoff-1"
         ),
@@ -86,6 +104,20 @@ def test_runtime_rejects_unaccepted_mismatched_and_cross_session_requests() -> N
     )
 
 
+def test_unprovisioned_description_fails_before_analysis_state_is_created() -> None:
+    runtime = _runtime()
+    result = runtime.prepare(_actor(), "request-1", "handoff-1", "describe")
+
+    assert result == {
+        "type": "vision_analysis_error",
+        "request_id": "request-1",
+        "code": "capability_unavailable",
+    }
+    assert runtime.status(_actor(), "status-1", "analysis-1")["code"] == (
+        "analysis_not_found"
+    )
+
+
 def test_runtime_cancel_and_session_cleanup_discard_analysis_state() -> None:
     runtime = _runtime()
     actor = _actor()
@@ -102,3 +134,32 @@ def test_runtime_cancel_and_session_cleanup_discard_analysis_state() -> None:
     assert other.status(actor, "status-1", "analysis-1")["code"] == (
         "analysis_not_found"
     )
+
+
+def test_description_cancel_is_scoped_to_the_exact_owner_analysis() -> None:
+    analyzer = _Description()
+    runtime = _runtime(description_analyzer=analyzer)
+    actor = _actor()
+    runtime.prepare(actor, "request-1", "handoff-1", "describe")
+
+    cross_session = runtime.cancel(
+        _actor("session-2"), "cancel-1", "analysis-1"
+    )
+    assert cross_session["code"] == "analysis_not_found"
+    assert analyzer.cancel_count == 0
+
+    cancelled = runtime.cancel(actor, "cancel-2", "analysis-1")
+    assert cancelled["state"] == "cancelled"
+    assert analyzer.cancel_count == 1
+
+
+def test_ocr_cancel_does_not_interrupt_description_runner() -> None:
+    analyzer = _Description()
+    runtime = _runtime(description_analyzer=analyzer)
+    actor = _actor()
+    runtime.prepare(actor, "request-1", "handoff-1", "ocr")
+
+    assert runtime.cancel(actor, "cancel-1", "analysis-1")["state"] == (
+        "cancelled"
+    )
+    assert analyzer.cancel_count == 0

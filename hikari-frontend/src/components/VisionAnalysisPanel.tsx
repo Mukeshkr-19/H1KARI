@@ -139,14 +139,14 @@ export function VisionAnalysisPanel({
             />
             <span>OCR (Text Extraction)</span>
           </label>
-          <label className="flex items-center space-x-2 text-sm text-gray-500 cursor-not-allowed">
+          <label className="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
             <input
               type="radio"
               name="vision-capability"
               value="describe"
               checked={selectedCapability === "describe"}
               onChange={() => handleCapabilityChange("describe")}
-              disabled
+              disabled={isPending}
               aria-describedby="vision-description-unavailable"
               className="text-blue-600 focus:ring-blue-500 bg-gray-800 border-gray-600"
             />
@@ -154,7 +154,8 @@ export function VisionAnalysisPanel({
           </label>
         </div>
         <p id="vision-description-unavailable" className="mt-2 text-xs text-gray-400">
-          Image description is unavailable until a reviewed local engine is configured.
+          Image description requires an explicitly provisioned local engine. If it is
+          unavailable, analysis stops before camera capture.
         </p>
       </fieldset>
 

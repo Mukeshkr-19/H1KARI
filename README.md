@@ -51,6 +51,8 @@ H1KARI/
 - `docs/NEURAL_MEMORY_ACCEPTANCE.md` - neural memory acceptance criteria.
 - `docs/MODEL_PROVENANCE.md` - reviewed voice-model sources and download policy.
 - `docs/PROVIDER_PROVENANCE.md` - hosted-provider and external-service data flows.
+- `docs/LOCAL_ROUTER_GATEWAYS.md` - optional OmniRoute and 9Router setup.
+- `docs/LOCAL_VISION_PROVISIONING.md` - optional offline image-description model boundary.
 - `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
 - `docs/PHASE_1_COMPLETION.md` - safe companion kernel completion record.
 - `docs/PHASE_2_COMPLETION.md` - voice companion completion record.
@@ -106,6 +108,10 @@ only when the created environment is Python 3.12 on macOS arm64.
 Edit the ignored local `.env` file and add at least one provider key, for example
 `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`. The file is ignored by Git and is
 loaded automatically at runtime. Keep it local and never commit credentials.
+
+H1KARI can also route text through separately running local OmniRoute or 9Router
+gateways. See `docs/LOCAL_ROUTER_GATEWAYS.md`. These gateways aggregate upstream
+provider accounts and quotas; they do not create guaranteed free tokens.
 
 ## Run
 

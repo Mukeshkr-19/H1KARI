@@ -24,7 +24,12 @@ from core.visual_transfer import (
     VisualTransferRuntime,
     VisualTransferService,
 )
-from core.vision import DescriptionAnalyzer, VisionAnalysisService, VisionRuntime
+from core.vision import (
+    DescriptionAnalyzer,
+    VisionAnalysisService,
+    VisionRuntime,
+    create_optional_mlx_description_adapter_from_environment,
+)
 from core.vision.ocr import LocalOcrAdapter
 
 
@@ -134,6 +139,11 @@ def create_phase4_subsystem(
             if selected_ocr_path is None
             else LocalOcrAdapter(executable_path=selected_ocr_path)
         )
+        selected_description_analyzer = description_analyzer
+        if selected_description_analyzer is None:
+            selected_description_analyzer = (
+                create_optional_mlx_description_adapter_from_environment()
+            )
         pairing_runtime = create_pairing_runtime(
             db_path=pairing_db_path,
             clock=clock_fn,
@@ -154,7 +164,7 @@ def create_phase4_subsystem(
             vision_runtime=VisionRuntime(
                 service=vision_service,
                 ocr_adapter=ocr_adapter,
-                description_analyzer=description_analyzer,
+                description_analyzer=selected_description_analyzer,
                 handoff_accepted=handoff_service.is_accepted_for_session,
             ),
         )

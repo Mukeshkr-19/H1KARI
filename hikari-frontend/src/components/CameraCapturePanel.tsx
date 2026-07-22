@@ -135,13 +135,11 @@ export function CameraCapturePanel({
     const height = video.videoHeight;
 
     if (!width || !height) {
-      stopStreamTracks(currentStreamRef.current);
       dispatch({ type: "CAPTURE_FAILED", token: curToken, errorCode: "capture_failed" });
       return;
     }
 
     if (width > MAX_FRAME_DIMENSION || height > MAX_FRAME_DIMENSION) {
-      stopStreamTracks(currentStreamRef.current);
       dispatch({ type: "CAPTURE_FAILED", token: curToken, errorCode: "dimensions_exceeded" });
       return;
     }
@@ -153,7 +151,6 @@ export function CameraCapturePanel({
     canvas.height = height;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
-      stopStreamTracks(currentStreamRef.current);
       dispatch({ type: "CAPTURE_FAILED", token: curToken, errorCode: "capture_failed" });
       return;
     }
@@ -166,16 +163,13 @@ export function CameraCapturePanel({
           return;
         }
         if (!blob || blob.size === 0) {
-          stopStreamTracks(currentStreamRef.current);
           dispatch({ type: "CAPTURE_FAILED", token: curToken, errorCode: "capture_failed" });
           return;
         }
         if (blob.size > MAX_FRAME_BYTES) {
-          stopStreamTracks(currentStreamRef.current);
           dispatch({ type: "CAPTURE_FAILED", token: curToken, errorCode: "image_too_large" });
           return;
         }
-        stopStreamTracks(currentStreamRef.current);
         dispatch({ type: "FRAME_CAPTURED", token: curToken, frame: blob });
         if (onFrameCaptured) {
           onFrameCaptured(blob);
@@ -189,7 +183,6 @@ export function CameraCapturePanel({
 
   const handleStopCamera = useCallback(() => {
     tokenRef.current += 1;
-    stopStreamTracks(currentStreamRef.current);
     dispatch({ type: "STOP_REQUESTED" });
   }, []);
 

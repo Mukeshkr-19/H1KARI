@@ -112,6 +112,7 @@ export function reduceCameraCapture(
   action: CameraCaptureAction,
 ): CameraCaptureState {
   if (action.type === "RESET") {
+    stopStreamTracks(state.streamRef);
     return Object.freeze({
       status: "idle",
       token: state.token + 1,
@@ -142,6 +143,7 @@ export function reduceCameraCapture(
 
     case "PERMISSION_GRANTED": {
       if (action.token !== state.token || state.status !== "requesting") {
+        stopStreamTracks(action.stream);
         return state;
       }
       return Object.freeze({
@@ -192,6 +194,7 @@ export function reduceCameraCapture(
       }
       const validBlob = validateCapturedFrame(action.frame);
       if (!validBlob) {
+        stopStreamTracks(state.streamRef);
         return Object.freeze({
           ...state,
           status: "failed",
@@ -200,6 +203,7 @@ export function reduceCameraCapture(
           errorCode: action.frame && action.frame.size > MAX_FRAME_BYTES ? "image_too_large" : "capture_failed",
         });
       }
+      stopStreamTracks(state.streamRef);
       return Object.freeze({
         ...state,
         status: "captured",
@@ -214,6 +218,7 @@ export function reduceCameraCapture(
         return state;
       }
       const err = isCameraCaptureErrorCode(action.errorCode) ? action.errorCode : "capture_failed";
+      stopStreamTracks(state.streamRef);
       return Object.freeze({
         ...state,
         status: "failed",
@@ -228,6 +233,7 @@ export function reduceCameraCapture(
       if (state.status === "stopped" || state.status === "idle") {
         return state;
       }
+      stopStreamTracks(state.streamRef);
       return Object.freeze({
         ...state,
         status: "stopped",

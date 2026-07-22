@@ -108,6 +108,14 @@ class VisionRuntime:
             parsed_capability = VisionCapability(capability)
         except (TypeError, ValueError):
             return self._error(request_id, "invalid_request")
+        if (
+            parsed_capability is VisionCapability.OCR
+            and self._ocr_adapter is None
+        ) or (
+            parsed_capability is VisionCapability.DESCRIBE
+            and self._description_analyzer is None
+        ):
+            return self._error(request_id, "capability_unavailable")
         if self._handoff_accepted is None:
             return self._error(request_id, "unavailable")
         try:
@@ -290,6 +298,7 @@ class VisionRuntime:
     def cancel(
         self, actor: ActorContext, request_id: str, analysis_id: str
     ) -> dict:
+        record = self._service._record_for_runtime(actor, analysis_id)
         try:
             outcome = self._service.cancel(actor, analysis_id)
         except Exception:
@@ -298,6 +307,17 @@ class VisionRuntime:
             return self._error(request_id, "analysis_not_found", analysis_id)
         if outcome.code is not VisionOutcomeCode.CANCELLED:
             return self._error(request_id, "analysis_failed", analysis_id)
+        if (
+            record is not None
+            and record.capability is VisionCapability.DESCRIBE
+            and record.state is not VisionAnalysisState.CANCELLED
+        ):
+            analyzer_cancel = getattr(self._description_analyzer, "cancel", None)
+            if callable(analyzer_cancel):
+                try:
+                    analyzer_cancel()
+                except Exception:
+                    pass
         message = self._message(
             {
                 "type": "vision_analysis_update",

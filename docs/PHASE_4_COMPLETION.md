@@ -27,12 +27,14 @@ device an owner and does not transfer grants, approvals, or execution tickets.
 
 ## Optional description capability
 
-The local description adapter boundary is implemented and accepts only an
-explicitly injected, reviewed local analyzer. No description engine is selected
-or discovered automatically. The default server therefore fails closed for
-`describe`, and the frontend marks that option unavailable. Enabling it later
-requires an explicit reviewed local engine; it must not introduce downloads,
-cloud fallback, provider selection, or fabricated confidence.
+The selected candidate is Qwen3-VL-4B-Instruct using a reviewed, pinned 4-bit
+MLX conversion. No model or runtime is bundled or downloaded. Optional activation
+requires an absolute local directory and a verified exact-file manifest. MLX is
+imported only inside a disposable spawn worker with a hard timeout, cancellation,
+offline flags, bounded decoding and no fabricated confidence. Without verified
+provisioning, `describe` returns `capability_unavailable` before camera capture.
+The frontend keeps the capability selectable so a provisioned installation works
+without a separate build.
 
 ## Scope exclusions
 
