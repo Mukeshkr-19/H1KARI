@@ -2,8 +2,8 @@
 
 Status: generated audit input; not a final release notice or legal approval
 Source: `hikari-frontend/package-lock.json`
-Lock SHA-256: `8ef2c29fc7db2abc5becb1e06d9cc2c7cad624d5192fb048490c9494303d73b4`
-Package entries: 405
+Lock SHA-256: `e351219a7d6c59d78f803aacd495f5642e58f06581c40e7dbe22980a84878834`
+Package entries: 406
 
 Regenerate with `python scripts/frontend_third_party.py`. Verify with `python scripts/frontend_third_party.py --check`.
 
@@ -21,11 +21,11 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 
 | Entries | Lock license expression |
 |---:|---|
-| 317 | MIT |
-| 29 | Apache-2.0 |
+| 314 | MIT |
+| 32 | Apache-2.0 |
 | 17 | ISC |
 | 12 | MPL-2.0 |
-| 9 | LGPL-3.0-or-later |
+| 10 | LGPL-3.0-or-later |
 | 7 | BSD-2-Clause |
 | 3 | Apache-2.0 AND LGPL-3.0-or-later |
 | 3 | BlueOak-1.0.0 |
@@ -40,19 +40,20 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 
 | Package path | Version | Lock license expression | Registry archive |
 |---|---:|---|---|
-| `node_modules/@img/sharp-libvips-darwin-arm64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-darwin-x64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linux-arm` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linux-arm64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linux-ppc64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linux-s390x` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linux-x64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linuxmusl-arm64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.2.0.tgz) |
-| `node_modules/@img/sharp-libvips-linuxmusl-x64` | 1.2.0 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.2.0.tgz) |
-| `node_modules/@img/sharp-wasm32` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later AND MIT | [archive](https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.34.3.tgz) |
-| `node_modules/@img/sharp-win32-arm64` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.34.3.tgz) |
-| `node_modules/@img/sharp-win32-ia32` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.34.3.tgz) |
-| `node_modules/@img/sharp-win32-x64` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.34.3.tgz) |
+| `node_modules/@img/sharp-libvips-darwin-arm64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-darwin-x64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-arm` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-arm64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-ppc64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-riscv64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-s390x` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linux-x64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linuxmusl-arm64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.3.2.tgz) |
+| `node_modules/@img/sharp-libvips-linuxmusl-x64` | 1.3.2 | LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.3.2.tgz) |
+| `node_modules/@img/sharp-wasm32` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later AND MIT | [archive](https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.3.tgz) |
+| `node_modules/@img/sharp-win32-arm64` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.35.3.tgz) |
+| `node_modules/@img/sharp-win32-ia32` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.3.tgz) |
+| `node_modules/@img/sharp-win32-x64` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later | [archive](https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.3.tgz) |
 | `node_modules/argparse` | 2.0.1 | Python-2.0 | [archive](https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz) |
 | `node_modules/axe-core` | 4.10.3 | MPL-2.0 | [archive](https://registry.npmjs.org/axe-core/-/axe-core-4.10.3.tgz) |
 | `node_modules/caniuse-lite` | 1.0.30001733 | CC-BY-4.0 | [archive](https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001733.tgz) |
@@ -76,7 +77,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/@alloc/quick-lru` | `@alloc/quick-lru` | 5.2.0 | MIT |
 | `node_modules/@ampproject/remapping` | `@ampproject/remapping` | 2.3.0 | Apache-2.0 |
 | `node_modules/@emnapi/core` | `@emnapi/core` | 1.4.5 | MIT |
-| `node_modules/@emnapi/runtime` | `@emnapi/runtime` | 1.4.5 | MIT |
+| `node_modules/@emnapi/runtime` | `@emnapi/runtime` | 1.11.2 | MIT |
 | `node_modules/@emnapi/wasi-threads` | `@emnapi/wasi-threads` | 1.0.4 | MIT |
 | `node_modules/@eslint-community/eslint-utils` | `@eslint-community/eslint-utils` | 4.7.0 | MIT |
 | `node_modules/@eslint-community/eslint-utils/node_modules/eslint-visitor-keys` | `eslint-visitor-keys` | 3.4.3 | Apache-2.0 |
@@ -93,28 +94,33 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/@humanfs/node/node_modules/@humanwhocodes/retry` | `@humanwhocodes/retry` | 0.3.1 | Apache-2.0 |
 | `node_modules/@humanwhocodes/module-importer` | `@humanwhocodes/module-importer` | 1.0.1 | Apache-2.0 |
 | `node_modules/@humanwhocodes/retry` | `@humanwhocodes/retry` | 0.4.3 | Apache-2.0 |
-| `node_modules/@img/sharp-darwin-arm64` | `@img/sharp-darwin-arm64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-darwin-x64` | `@img/sharp-darwin-x64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-libvips-darwin-arm64` | `@img/sharp-libvips-darwin-arm64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-darwin-x64` | `@img/sharp-libvips-darwin-x64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linux-arm` | `@img/sharp-libvips-linux-arm` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linux-arm64` | `@img/sharp-libvips-linux-arm64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linux-ppc64` | `@img/sharp-libvips-linux-ppc64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linux-s390x` | `@img/sharp-libvips-linux-s390x` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linux-x64` | `@img/sharp-libvips-linux-x64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linuxmusl-arm64` | `@img/sharp-libvips-linuxmusl-arm64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-libvips-linuxmusl-x64` | `@img/sharp-libvips-linuxmusl-x64` | 1.2.0 | LGPL-3.0-or-later |
-| `node_modules/@img/sharp-linux-arm` | `@img/sharp-linux-arm` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linux-arm64` | `@img/sharp-linux-arm64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linux-ppc64` | `@img/sharp-linux-ppc64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linux-s390x` | `@img/sharp-linux-s390x` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linux-x64` | `@img/sharp-linux-x64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linuxmusl-arm64` | `@img/sharp-linuxmusl-arm64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-linuxmusl-x64` | `@img/sharp-linuxmusl-x64` | 0.34.3 | Apache-2.0 |
-| `node_modules/@img/sharp-wasm32` | `@img/sharp-wasm32` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
-| `node_modules/@img/sharp-win32-arm64` | `@img/sharp-win32-arm64` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later |
-| `node_modules/@img/sharp-win32-ia32` | `@img/sharp-win32-ia32` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later |
-| `node_modules/@img/sharp-win32-x64` | `@img/sharp-win32-x64` | 0.34.3 | Apache-2.0 AND LGPL-3.0-or-later |
+| `node_modules/@img/colour` | `@img/colour` | 1.1.0 | MIT |
+| `node_modules/@img/sharp-darwin-arm64` | `@img/sharp-darwin-arm64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-darwin-x64` | `@img/sharp-darwin-x64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-freebsd-wasm32` | `@img/sharp-freebsd-wasm32` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-libvips-darwin-arm64` | `@img/sharp-libvips-darwin-arm64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-darwin-x64` | `@img/sharp-libvips-darwin-x64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-arm` | `@img/sharp-libvips-linux-arm` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-arm64` | `@img/sharp-libvips-linux-arm64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-ppc64` | `@img/sharp-libvips-linux-ppc64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-riscv64` | `@img/sharp-libvips-linux-riscv64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-s390x` | `@img/sharp-libvips-linux-s390x` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linux-x64` | `@img/sharp-libvips-linux-x64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linuxmusl-arm64` | `@img/sharp-libvips-linuxmusl-arm64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-libvips-linuxmusl-x64` | `@img/sharp-libvips-linuxmusl-x64` | 1.3.2 | LGPL-3.0-or-later |
+| `node_modules/@img/sharp-linux-arm` | `@img/sharp-linux-arm` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linux-arm64` | `@img/sharp-linux-arm64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linux-ppc64` | `@img/sharp-linux-ppc64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linux-riscv64` | `@img/sharp-linux-riscv64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linux-s390x` | `@img/sharp-linux-s390x` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linux-x64` | `@img/sharp-linux-x64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linuxmusl-arm64` | `@img/sharp-linuxmusl-arm64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-linuxmusl-x64` | `@img/sharp-linuxmusl-x64` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-wasm32` | `@img/sharp-wasm32` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later AND MIT |
+| `node_modules/@img/sharp-webcontainers-wasm32` | `@img/sharp-webcontainers-wasm32` | 0.35.3 | Apache-2.0 |
+| `node_modules/@img/sharp-win32-arm64` | `@img/sharp-win32-arm64` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later |
+| `node_modules/@img/sharp-win32-ia32` | `@img/sharp-win32-ia32` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later |
+| `node_modules/@img/sharp-win32-x64` | `@img/sharp-win32-x64` | 0.35.3 | Apache-2.0 AND LGPL-3.0-or-later |
 | `node_modules/@isaacs/fs-minipass` | `@isaacs/fs-minipass` | 4.0.1 | ISC |
 | `node_modules/@jridgewell/gen-mapping` | `@jridgewell/gen-mapping` | 0.3.12 | MIT |
 | `node_modules/@jridgewell/resolve-uri` | `@jridgewell/resolve-uri` | 3.1.2 | MIT |
@@ -230,10 +236,8 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/chalk` | `chalk` | 4.1.2 | MIT |
 | `node_modules/chownr` | `chownr` | 3.0.0 | BlueOak-1.0.0 |
 | `node_modules/client-only` | `client-only` | 0.0.1 | MIT |
-| `node_modules/color` | `color` | 4.2.3 | MIT |
 | `node_modules/color-convert` | `color-convert` | 2.0.1 | MIT |
 | `node_modules/color-name` | `color-name` | 1.1.4 | MIT |
-| `node_modules/color-string` | `color-string` | 1.9.1 | MIT |
 | `node_modules/concat-map` | `concat-map` | 0.0.1 | MIT |
 | `node_modules/cross-spawn` | `cross-spawn` | 7.0.6 | MIT |
 | `node_modules/csstype` | `csstype` | 3.1.3 | MIT |
@@ -245,7 +249,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/deep-is` | `deep-is` | 0.1.4 | MIT |
 | `node_modules/define-data-property` | `define-data-property` | 1.1.4 | MIT |
 | `node_modules/define-properties` | `define-properties` | 1.2.1 | MIT |
-| `node_modules/detect-libc` | `detect-libc` | 2.0.4 | Apache-2.0 |
+| `node_modules/detect-libc` | `detect-libc` | 2.1.2 | Apache-2.0 |
 | `node_modules/doctrine` | `doctrine` | 2.1.0 | Apache-2.0 |
 | `node_modules/dunder-proto` | `dunder-proto` | 1.0.1 | MIT |
 | `node_modules/emoji-regex` | `emoji-regex` | 9.2.2 | MIT |
@@ -318,7 +322,6 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/imurmurhash` | `imurmurhash` | 0.1.4 | MIT |
 | `node_modules/internal-slot` | `internal-slot` | 1.1.0 | MIT |
 | `node_modules/is-array-buffer` | `is-array-buffer` | 3.0.5 | MIT |
-| `node_modules/is-arrayish` | `is-arrayish` | 0.3.2 | MIT |
 | `node_modules/is-async-function` | `is-async-function` | 2.1.1 | MIT |
 | `node_modules/is-bigint` | `is-bigint` | 1.1.0 | MIT |
 | `node_modules/is-boolean-object` | `is-boolean-object` | 1.2.2 | MIT |
@@ -424,18 +427,17 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/safe-push-apply` | `safe-push-apply` | 1.0.0 | MIT |
 | `node_modules/safe-regex-test` | `safe-regex-test` | 1.1.0 | MIT |
 | `node_modules/scheduler` | `scheduler` | 0.26.0 | MIT |
-| `node_modules/semver` | `semver` | 7.7.2 | ISC |
+| `node_modules/semver` | `semver` | 7.8.5 | ISC |
 | `node_modules/set-function-length` | `set-function-length` | 1.2.2 | MIT |
 | `node_modules/set-function-name` | `set-function-name` | 2.0.2 | MIT |
 | `node_modules/set-proto` | `set-proto` | 1.0.0 | MIT |
-| `node_modules/sharp` | `sharp` | 0.34.3 | Apache-2.0 |
+| `node_modules/sharp` | `sharp` | 0.35.3 | Apache-2.0 |
 | `node_modules/shebang-command` | `shebang-command` | 2.0.0 | MIT |
 | `node_modules/shebang-regex` | `shebang-regex` | 3.0.0 | MIT |
 | `node_modules/side-channel` | `side-channel` | 1.1.0 | MIT |
 | `node_modules/side-channel-list` | `side-channel-list` | 1.0.0 | MIT |
 | `node_modules/side-channel-map` | `side-channel-map` | 1.0.1 | MIT |
 | `node_modules/side-channel-weakmap` | `side-channel-weakmap` | 1.0.2 | MIT |
-| `node_modules/simple-swizzle` | `simple-swizzle` | 0.2.2 | MIT |
 | `node_modules/source-map-js` | `source-map-js` | 1.2.1 | BSD-3-Clause |
 | `node_modules/stable-hash` | `stable-hash` | 0.0.5 | MIT |
 | `node_modules/stop-iteration-iterator` | `stop-iteration-iterator` | 1.1.0 | MIT |
