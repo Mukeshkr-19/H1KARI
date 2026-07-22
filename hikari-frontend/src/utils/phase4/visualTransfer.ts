@@ -65,14 +65,14 @@ export interface VisualTransferState {
   readonly status: VisualTransferStatus;
   readonly requestId: string | null;
   readonly transferId: string | null;
-  readonly fileRef: File | null;
+  readonly fileRef: Blob | null;
   readonly fileSize: number | null;
   readonly fileType: string | null;
   readonly errorCode: VisualTransferErrorCode | "not_a_file" | null;
 }
 
 export type VisualTransferAction =
-  | { type: "SELECT_FILE"; file: File }
+  | { type: "SELECT_FILE"; file: Blob }
   | { type: "BEGIN_TRANSFER"; requestId: string }
   | { type: "SET_READY"; requestId: string; transferId: string }
   | { type: "START_TRANSFERRING"; transferId: string }
@@ -120,7 +120,7 @@ export function validateImageFile(file: unknown): {
   valid: boolean;
   errorCode: VisualTransferErrorCode | "not_a_file" | null;
 } {
-  if (!(file instanceof File)) {
+  if (!(file instanceof Blob)) {
     return { valid: false, errorCode: "not_a_file" };
   }
   if (!ALLOWED_MIME_TYPES.includes(file.type)) {

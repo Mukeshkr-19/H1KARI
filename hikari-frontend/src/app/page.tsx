@@ -32,6 +32,7 @@ import { Phase4PairingPanel } from "@/components/Phase4PairingPanel";
 import { HandoffOfferPanel } from "@/components/HandoffOfferPanel";
 import { VisualTransferPanel } from "@/components/VisualTransferPanel";
 import { VisionAnalysisPanel } from "@/components/VisionAnalysisPanel";
+import { CameraCapturePanel } from "@/components/CameraCapturePanel";
 import {
   createInitialPairingState,
   isPairingErrorCode,
@@ -2613,7 +2614,7 @@ export default function Home() {
     setHandoffState(next);
   }, []);
 
-  const selectVisualTransferFileAction = useCallback((file: File) => {
+  const selectVisualTransferFileAction = useCallback((file: Blob) => {
     if (visualTransferPendingRef.current || isVisualTransferPending(visualTransferStateRef.current.status)) {
       return;
     }
@@ -2625,7 +2626,7 @@ export default function Home() {
     setVisualTransferState(next);
   }, []);
 
-  const beginVisualTransferAction = useCallback(async (file: File) => {
+  const beginVisualTransferAction = useCallback(async (file: Blob) => {
     if (
       visualTransferPendingRef.current ||
       visualTransferStateRef.current.status !== "selected" ||
@@ -3531,6 +3532,12 @@ export default function Home() {
               onStartAnalysis={startVisionAnalysisAction}
               onCancelAnalysis={cancelVisionAnalysisAction}
             />
+            {handoffState.status === "accepted" &&
+              visionAnalysisState.status === "awaiting_image" && (
+                <CameraCapturePanel
+                  onFrameCaptured={selectVisualTransferFileAction}
+                />
+              )}
             {productivityProposal && (
               <>
                 <ProductivityActionPreview

@@ -33,6 +33,7 @@ def _policy(actor: ActorContext, _preview: FrozenHandoffPreview) -> bool:
 
 def test_subsystem_uses_injected_factories_and_private_permissions(tmp_path) -> None:
     codes: list[str] = []
+    description_analyzer = MagicMock(return_value=())
     subsystem = create_phase4_subsystem(
         task_lookup=_lookup,
         acceptance_policy=_policy,
@@ -46,6 +47,7 @@ def test_subsystem_uses_injected_factories_and_private_permissions(tmp_path) -> 
         secret_code_factory=lambda: "ABC123",
         digest_key=b"phase4-test-digest-key",
         display_sink=codes.append,
+        description_analyzer=description_analyzer,
     )
 
     challenge = subsystem.pairing_runtime.prepare("request-1")
@@ -54,6 +56,8 @@ def test_subsystem_uses_injected_factories_and_private_permissions(tmp_path) -> 
     assert subsystem.handoff_runtime is not None
     assert subsystem.handoff_transport is not None
     assert subsystem.visual_transfer_runtime is not None
+    assert subsystem.vision_runtime is not None
+    assert subsystem.vision_runtime._description_analyzer is description_analyzer
 
     for path in (
         tmp_path / "handoff" / "handoffs.db",

@@ -25,6 +25,14 @@ from core.vision.contracts import (
 )
 from core.vision.service import VisionAnalysisService
 from core.vision.runtime import DescriptionAnalyzer, VisionRuntime
+from core.vision.description import (
+    BoundedLocalDescriptionRunner,
+    DescriptionAdapterError,
+    DescriptionAnalyzerResult,
+    DescriptionResult,
+    DescriptionStatus,
+    LocalDescriptionAdapter,
+)
 
 __all__ = (
     "ANALYSIS_TTL_SECONDS",
@@ -39,6 +47,12 @@ __all__ = (
     "VisionAnalysisRequest",
     "VisionAnalysisService",
     "DescriptionAnalyzer",
+    "BoundedLocalDescriptionRunner",
+    "DescriptionAdapterError",
+    "DescriptionAnalyzerResult",
+    "DescriptionResult",
+    "DescriptionStatus",
+    "LocalDescriptionAdapter",
     "VisionRuntime",
     "VisionAnalysisState",
     "VisionCapability",

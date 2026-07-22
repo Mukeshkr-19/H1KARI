@@ -18,7 +18,7 @@ import {
 export interface VisualTransferPanelProps {
   readonly state: VisualTransferState;
   readonly onSelectFile?: (file: File) => void;
-  readonly onBeginTransfer?: (file: File) => void;
+  readonly onBeginTransfer?: (file: Blob) => void;
   readonly onCancel?: () => void;
   readonly headingRef?: React.RefObject<HTMLHeadingElement | null>;
 }

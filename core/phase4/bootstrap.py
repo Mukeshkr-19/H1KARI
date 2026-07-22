@@ -24,7 +24,7 @@ from core.visual_transfer import (
     VisualTransferRuntime,
     VisualTransferService,
 )
-from core.vision import VisionAnalysisService, VisionRuntime
+from core.vision import DescriptionAnalyzer, VisionAnalysisService, VisionRuntime
 from core.vision.ocr import LocalOcrAdapter
 
 
@@ -84,6 +84,7 @@ def create_phase4_subsystem(
     transfer_id_factory: Callable[[], str] | None = None,
     analysis_id_factory: Callable[[], str] | None = None,
     ocr_executable_path: Path | str | None = None,
+    description_analyzer: DescriptionAnalyzer | None = None,
     challenge_id_factory: Callable[[], str] | None = None,
     device_id_factory: Callable[[], str] | None = None,
     secret_code_factory: Callable[[], str] | None = None,
@@ -153,6 +154,7 @@ def create_phase4_subsystem(
             vision_runtime=VisionRuntime(
                 service=vision_service,
                 ocr_adapter=ocr_adapter,
+                description_analyzer=description_analyzer,
                 handoff_accepted=handoff_service.is_accepted_for_session,
             ),
         )

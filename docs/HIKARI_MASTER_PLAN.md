@@ -339,6 +339,8 @@ Exit:
 - uncertainty is communicated
 - mobile cannot broaden desktop permissions
 
+Completion evidence: `docs/PHASE_4_COMPLETION.md`.
+
 ### Phase 5 - Learning, care, and accessibility release
 
 Outcome: Teach Me, Guide My Hands, Care, and child experiences pass real accessibility and safety validation.
