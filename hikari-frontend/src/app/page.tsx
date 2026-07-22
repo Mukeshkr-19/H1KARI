@@ -31,6 +31,7 @@ import { ScheduledJobCreateForm } from "@/components/ScheduledJobCreateForm";
 import { Phase4PairingPanel } from "@/components/Phase4PairingPanel";
 import { HandoffOfferPanel } from "@/components/HandoffOfferPanel";
 import { VisualTransferPanel } from "@/components/VisualTransferPanel";
+import { VisionAnalysisPanel } from "@/components/VisionAnalysisPanel";
 import {
   createInitialPairingState,
   isPairingErrorCode,
@@ -59,6 +60,14 @@ import {
 } from "@/utils/phase4/visualTransfer";
 import { createCanonicalRequestId } from "@/utils/phase4/identifiers";
 import {
+  createInitialVisionAnalysisState,
+  isVisionAnalysisErrorCode,
+  isVisionAnalysisPending,
+  reduceVisionAnalysis,
+  type VisionAnalysisState,
+  type VisionCapability,
+} from "@/utils/phase4/visionAnalysis";
+import {
   encodeHandoffAccept,
   encodeHandoffCancel,
   encodeHandoffReject,
@@ -67,6 +76,8 @@ import {
   encodePairingPrepare,
   encodeVisualTransferBegin,
   encodeVisualTransferCancel,
+  encodeVisionAnalysisCancel,
+  encodeVisionAnalysisPrepare,
   parsePhase4ServerMessage,
   type Phase4ServerMessage,
 } from "@/utils/phase4/phase4Protocol";
@@ -211,6 +222,10 @@ const STRICT_DEDICATED_SERVER_MESSAGE_TYPES = new Set<string>([
   "visual_transfer_update",
   "visual_transfer_complete",
   "visual_transfer_error",
+  "vision_analysis_ready",
+  "vision_analysis_update",
+  "vision_observation",
+  "vision_analysis_error",
 ]);
 
 function parseWebSocketFrameType(raw: string): string | null {
@@ -683,6 +698,12 @@ export default function Home() {
   const [, setVisualTransferPending] = useState(false);
   const visualTransferPendingRef = useRef(false);
   const visualTransferBytesRef = useRef<ArrayBuffer | null>(null);
+
+  const [visionAnalysisState, setVisionAnalysisState] = useState<VisionAnalysisState>(
+    createInitialVisionAnalysisState,
+  );
+  const visionAnalysisStateRef = useRef<VisionAnalysisState>(visionAnalysisState);
+  const visionRequestIdRef = useRef<string | null>(null);
 
   // Accessible heading refs
   const pairingHeadingRef = useRef<HTMLHeadingElement>(null);
@@ -2124,6 +2145,11 @@ export default function Home() {
     visualTransferPendingRef.current = false;
     visualTransferBytesRef.current = null;
     setVisualTransferPending(false);
+
+    const initVision = createInitialVisionAnalysisState();
+    visionAnalysisStateRef.current = initVision;
+    setVisionAnalysisState(initVision);
+    visionRequestIdRef.current = null;
   }, []);
 
   const applyPhase4ServerMessage = useCallback(
@@ -2355,6 +2381,78 @@ export default function Home() {
           setVisualTransferState(next);
           break;
         }
+
+        case "vision_analysis_ready": {
+          if (visionRequestIdRef.current !== msg.request_id) return;
+          const next = reduceVisionAnalysis(visionAnalysisStateRef.current, {
+            type: "READY_RECEIVED",
+            requestId: msg.request_id,
+            analysisId: msg.analysis_id,
+          });
+          if (next === visionAnalysisStateRef.current) return;
+          visionAnalysisStateRef.current = next;
+          setVisionAnalysisState(next);
+          break;
+        }
+
+        case "vision_analysis_update": {
+          if (visionAnalysisStateRef.current.analysisId !== msg.analysis_id) return;
+          let next = visionAnalysisStateRef.current;
+          if (msg.state === "analyzing") {
+            next = reduceVisionAnalysis(next, {
+              type: "ANALYSIS_STARTED",
+              requestId: visionAnalysisStateRef.current.requestId ?? msg.request_id,
+              analysisId: msg.analysis_id,
+            });
+          } else if (msg.state === "cancelled") {
+            next = reduceVisionAnalysis(next, {
+              type: "CANCEL_CONFIRMED",
+              analysisId: msg.analysis_id,
+            });
+          } else if (msg.state === "expired") {
+            next = reduceVisionAnalysis(next, { type: "EXPIRED", analysisId: msg.analysis_id });
+          }
+          if (next !== visionAnalysisStateRef.current) {
+            visionAnalysisStateRef.current = next;
+            setVisionAnalysisState(next);
+          }
+          break;
+        }
+
+        case "vision_observation": {
+          if (
+            visionAnalysisStateRef.current.analysisId !== msg.analysis_id ||
+            visionAnalysisStateRef.current.requestId !== msg.request_id
+          ) return;
+          const next = reduceVisionAnalysis(visionAnalysisStateRef.current, {
+            type: "OBSERVATION_RECEIVED",
+            requestId: msg.request_id,
+            analysisId: msg.analysis_id,
+            observations: msg.observations,
+          });
+          if (next !== visionAnalysisStateRef.current) {
+            visionAnalysisStateRef.current = next;
+            setVisionAnalysisState(next);
+          }
+          break;
+        }
+
+        case "vision_analysis_error": {
+          const state = visionAnalysisStateRef.current;
+          const matchesPrepare = state.analysisId === null && state.requestId === msg.request_id;
+          const matchesAnalysis = msg.analysis_id !== undefined && state.analysisId === msg.analysis_id;
+          if (!matchesPrepare && !matchesAnalysis) return;
+          const next = reduceVisionAnalysis(state, {
+            type: "SAFE_ERROR",
+            analysisId: msg.analysis_id,
+            errorCode: isVisionAnalysisErrorCode(msg.code) ? msg.code : "unavailable",
+          });
+          if (next !== state) {
+            visionAnalysisStateRef.current = next;
+            setVisionAnalysisState(next);
+          }
+          break;
+        }
       }
     },
     [],
@@ -2569,10 +2667,52 @@ export default function Home() {
       file.size,
       dimensions.width,
       dimensions.height,
+      visionAnalysisStateRef.current.status === "awaiting_image"
+        ? visionAnalysisStateRef.current.analysisId ?? undefined
+        : undefined,
     );
     if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(encoded));
     }
+  }, []);
+
+  const startVisionAnalysisAction = useCallback((capability: VisionCapability) => {
+    const handoffId = handoffStateRef.current.handoffId;
+    if (
+      handoffStateRef.current.status !== "accepted" ||
+      !handoffId ||
+      isVisionAnalysisPending(visionAnalysisStateRef.current.status)
+    ) return;
+    if (visionAnalysisStateRef.current.status !== "idle") {
+      const reset = createInitialVisionAnalysisState();
+      visionAnalysisStateRef.current = reset;
+      setVisionAnalysisState(reset);
+    }
+    const requestId = createCanonicalRequestId("vis");
+    const encoded = encodeVisionAnalysisPrepare(requestId, handoffId, capability);
+    if (!encoded || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const next = reduceVisionAnalysis(visionAnalysisStateRef.current, {
+      type: "PREPARE_REQUESTED",
+      requestId,
+      capability,
+      handoffId,
+    });
+    visionAnalysisStateRef.current = next;
+    visionRequestIdRef.current = requestId;
+    setVisionAnalysisState(next);
+    wsRef.current.send(JSON.stringify(encoded));
+  }, []);
+
+  const cancelVisionAnalysisAction = useCallback(() => {
+    const state = visionAnalysisStateRef.current;
+    if (!isVisionAnalysisPending(state.status) || state.cancelPending || !state.analysisId) return;
+    const requestId = createCanonicalRequestId("vis");
+    const encoded = encodeVisionAnalysisCancel(requestId, state.analysisId);
+    if (!encoded || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    const next = reduceVisionAnalysis(state, { type: "CANCEL_REQUESTED" });
+    visionAnalysisStateRef.current = next;
+    setVisionAnalysisState(next);
+    wsRef.current.send(JSON.stringify(encoded));
   }, []);
 
   const cancelVisualTransferAction = useCallback(() => {
@@ -3385,6 +3525,11 @@ export default function Home() {
               onBeginTransfer={beginVisualTransferAction}
               onCancel={cancelVisualTransferAction}
               headingRef={visualTransferHeadingRef}
+            />
+            <VisionAnalysisPanel
+              state={visionAnalysisState}
+              onStartAnalysis={startVisionAnalysisAction}
+              onCancelAnalysis={cancelVisionAnalysisAction}
             />
             {productivityProposal && (
               <>

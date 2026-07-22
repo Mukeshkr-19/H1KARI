@@ -74,6 +74,7 @@ from core.jobs.runner import ExecutionResult, ExecutionStatus
 from core.handoff import HandoffTransportAdapter
 from core.pairing import PairingRuntime
 from core.visual_transfer import VisualTransferRuntime
+from core.vision import VisionRuntime
 
 
 class _EmptyPreparationRegistry:
@@ -133,6 +134,7 @@ class WebSocketServer:
         pairing_runtime: Optional[PairingRuntime] = None,
         handoff_transport: Optional[HandoffTransportAdapter] = None,
         visual_transfer_runtime: Optional[VisualTransferRuntime] = None,
+        vision_runtime: Optional[VisionRuntime] = None,
     ):
         self.orchestrator = orchestrator
         self.host = host
@@ -169,10 +171,15 @@ class WebSocketServer:
         self._pairing_runtime = pairing_runtime
         self._handoff_transport = handoff_transport
         self._visual_transfer_runtime = visual_transfer_runtime
+        self._vision_runtime = vision_runtime
         self._phase4_device_ids: Dict[str, str] = {}
         self._phase4_challenges: Dict[str, tuple[str, str]] = {}
         self._phase4_handoff_origins: Dict[str, str] = {}
         self._phase4_pending_transfers: Dict[str, tuple[str, str]] = {}
+        self._phase4_transfer_analyses: Dict[
+            str, tuple[str, str, str, str]
+        ] = {}
+        self._vision_jobs: Dict[tuple[str, str], asyncio.Task] = {}
         self._scheduled_runner_task: asyncio.Task | None = None
         self._scheduled_runner = None
 
@@ -389,6 +396,12 @@ class WebSocketServer:
                     self._visual_transfer_runtime.clear_session(actor.session_id)
                 except Exception:
                     pass
+            if self._vision_runtime is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._vision_runtime.clear_session(actor)
+                except Exception:
+                    pass
             self.connected_clients.discard(websocket)
             client_key = str(id(websocket))
             for key, job in list(self._document_jobs.items()):
@@ -421,6 +434,11 @@ class WebSocketServer:
                 except Exception:
                     pass
             self._phase4_pending_transfers.pop(client_key, None)
+            self._phase4_transfer_analyses.pop(client_key, None)
+            for key, job in list(self._vision_jobs.items()):
+                if key[0] == client_key:
+                    job.cancel()
+                    self._vision_jobs.pop(key, None)
             for handoff_id, origin_key in list(self._phase4_handoff_origins.items()):
                 if origin_key == client_key:
                     self._phase4_handoff_origins.pop(handoff_id, None)
@@ -753,6 +771,53 @@ class WebSocketServer:
                 }
         await self._send_handoff_result(websocket, data, result)
 
+    async def _handle_vision_control(self, websocket, data: dict) -> None:
+        runtime = self._vision_runtime
+        request_id = data.get("request_id", "invalid-request")
+        actor = self._derive_actor_context(websocket).actor_context
+        client_key = str(id(websocket))
+        if runtime is None:
+            result = {
+                "type": "vision_analysis_error",
+                "request_id": request_id,
+                "code": "unavailable",
+            }
+        else:
+            try:
+                if data["type"] == "vision_analysis_prepare":
+                    result = await asyncio.to_thread(
+                        runtime.prepare,
+                        actor,
+                        request_id,
+                        data["handoff_id"],
+                        data["capability"],
+                    )
+                elif data["type"] == "vision_analysis_cancel":
+                    analysis_id = data["analysis_id"]
+                    job = self._vision_jobs.pop((client_key, analysis_id), None)
+                    if job is not None:
+                        job.cancel()
+                    result = await asyncio.to_thread(
+                        runtime.cancel,
+                        actor,
+                        request_id,
+                        analysis_id,
+                    )
+                else:
+                    result = await asyncio.to_thread(
+                        runtime.status,
+                        actor,
+                        request_id,
+                        data["analysis_id"],
+                    )
+            except Exception:
+                result = {
+                    "type": "vision_analysis_error",
+                    "request_id": request_id,
+                    "code": "unavailable",
+                }
+        await self._send_phase4_message(websocket, result)
+
     async def _handle_visual_control(self, websocket, data: dict) -> None:
         runtime = self._visual_transfer_runtime
         request_id = data.get("request_id", "invalid-request")
@@ -806,13 +871,94 @@ class WebSocketServer:
                 }]
         for result in messages:
             if result.get("type") == "visual_transfer_ready":
-                self._phase4_pending_transfers[str(id(websocket))] = (
+                client_key = str(id(websocket))
+                transfer_id = result["transfer_id"]
+                analysis_id = data.get("analysis_id")
+                if isinstance(analysis_id, str):
+                    if self._vision_runtime is None:
+                        await asyncio.to_thread(
+                            runtime.cancel,
+                            actor.session_id,
+                            request_id,
+                            transfer_id,
+                        )
+                        await self._send_phase4_message(
+                            websocket,
+                            {
+                                "type": "vision_analysis_error",
+                                "request_id": request_id,
+                                "analysis_id": analysis_id,
+                                "code": "unavailable",
+                            },
+                        )
+                        continue
+                    vision_result = await asyncio.to_thread(
+                        self._vision_runtime.attach_transfer,
+                        actor,
+                        analysis_id,
+                        data["handoff_id"],
+                        transfer_id,
+                    )
+                    if vision_result.get("type") == "vision_analysis_error":
+                        await asyncio.to_thread(
+                            runtime.cancel,
+                            actor.session_id,
+                            request_id,
+                            transfer_id,
+                        )
+                        await self._send_phase4_message(websocket, vision_result)
+                        continue
+                    self._phase4_transfer_analyses[client_key] = (
+                        analysis_id,
+                        data["handoff_id"],
+                        transfer_id,
+                        data["mime_type"],
+                    )
+                    await self._send_phase4_message(websocket, vision_result)
+                self._phase4_pending_transfers[client_key] = (
                     request_id,
-                    result["transfer_id"],
+                    transfer_id,
                 )
             if result.get("status") in {"cancelled", "failed"}:
-                self._phase4_pending_transfers.pop(str(id(websocket)), None)
+                client_key = str(id(websocket))
+                self._phase4_pending_transfers.pop(client_key, None)
+                binding = self._phase4_transfer_analyses.pop(client_key, None)
+                if binding is not None and self._vision_runtime is not None:
+                    vision_result = await asyncio.to_thread(
+                        self._vision_runtime.cancel_bound, actor, binding[0]
+                    )
+                    await self._send_phase4_message(websocket, vision_result)
             await self._send_phase4_message(websocket, result)
+
+    async def _run_vision_analysis(
+        self,
+        websocket,
+        actor,
+        binding: tuple[str, str, str, str],
+        frame: bytes,
+    ) -> None:
+        analysis_id, handoff_id, transfer_id, mime_type = binding
+        runtime = self._vision_runtime
+        if runtime is None:
+            return
+        try:
+            results = await asyncio.to_thread(
+                runtime.analyze,
+                actor,
+                analysis_id,
+                handoff_id,
+                transfer_id,
+                frame,
+                mime_type=mime_type,
+            )
+            for result in results:
+                await self._send_phase4_message(websocket, result)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        finally:
+            self._vision_jobs.pop((str(id(websocket)), analysis_id), None)
 
     async def _handle_visual_binary(self, websocket, frame: bytes) -> None:
         """Process one authenticated binary frame outside the JSON protocol."""
@@ -856,6 +1002,23 @@ class WebSocketServer:
         for result in messages:
             await self._send_phase4_message(websocket, result)
         self._phase4_pending_transfers.pop(client_key, None)
+        binding = self._phase4_transfer_analyses.pop(client_key, None)
+        completed = any(
+            result.get("type") == "visual_transfer_complete" for result in messages
+        )
+        if binding is not None and completed and self._vision_runtime is not None:
+            analysis_id = binding[0]
+            job = asyncio.create_task(
+                self._run_vision_analysis(websocket, actor, binding, frame)
+            )
+            self._vision_jobs[(client_key, analysis_id)] = job
+        elif binding is not None and self._vision_runtime is not None:
+            vision_result = await asyncio.to_thread(
+                self._vision_runtime.cancel_bound,
+                actor,
+                binding[0],
+            )
+            await self._send_phase4_message(websocket, vision_result)
 
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
@@ -1018,6 +1181,14 @@ class WebSocketServer:
                 "visual_transfer_cancel",
             }:
                 await self._handle_visual_control(websocket, data)
+                return
+
+            if msg_type in {
+                "vision_analysis_prepare",
+                "vision_analysis_cancel",
+                "vision_analysis_status",
+            }:
+                await self._handle_vision_control(websocket, data)
                 return
 
             if msg_type == "identify":

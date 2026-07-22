@@ -140,6 +140,19 @@ def _validate_object_value(field: str, value: dict, field_spec: dict) -> str | N
             and value[lower_field] > value[upper_field]
         ):
             return f"Invalid field value: {field}.{lower_field}"
+    variants = field_spec.get("variants")
+    if variants:
+        discriminator = variants.get("field")
+        cases = variants.get("cases", {})
+        case = cases.get(value.get(discriminator))
+        if not isinstance(case, dict):
+            return f"Invalid field value: {field}.{discriminator}"
+        for sub, sub_spec in case.get("field_specs", {}).items():
+            if sub not in value:
+                continue
+            error = _validate_field_value(f"{field}.{sub}", value[sub], sub_spec)
+            if error is not None:
+                return error
     return None
 
 

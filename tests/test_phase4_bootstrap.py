@@ -113,6 +113,7 @@ def test_run_server_lazily_injects_complete_phase4_subsystem(monkeypatch) -> Non
         pairing_runtime=object(),
         handoff_transport=object(),
         visual_transfer_runtime=object(),
+        vision_runtime=object(),
     )
     productivity_runtime = object()
     scheduled_runtime = object()
@@ -162,4 +163,5 @@ def test_run_server_lazily_injects_complete_phase4_subsystem(monkeypatch) -> Non
     assert kwargs["pairing_runtime"] is phase4_subsystem.pairing_runtime
     assert kwargs["handoff_transport"] is phase4_subsystem.handoff_transport
     assert kwargs["visual_transfer_runtime"] is phase4_subsystem.visual_transfer_runtime
+    assert kwargs["vision_runtime"] is phase4_subsystem.vision_runtime
     server.start.assert_called_once_with()

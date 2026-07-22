@@ -14,6 +14,9 @@ import {
   encodeHandoffCancel,
   encodeVisualTransferBegin,
   encodeVisualTransferCancel,
+  encodeVisionAnalysisCancel,
+  encodeVisionAnalysisPrepare,
+  encodeVisionAnalysisStatus,
 } from "./phase4Protocol";
 
 test("parsePhase4ServerMessage parses valid pairing_challenge frame", () => {
@@ -31,6 +34,56 @@ test("parsePhase4ServerMessage parses valid pairing_challenge frame", () => {
     assert.equal(parsed.challenge_id, "ch-001");
     assert.equal(parsed.expires_at, 1700000000);
   }
+});
+
+test("vision messages parse with exact correlation and optional confidence", () => {
+  const ready = parsePhase4ServerMessage({
+    type: "vision_analysis_ready",
+    request_id: "vision-1",
+    analysis_id: "analysis-1",
+    expires_at: 1700000000,
+  });
+  assert.equal(ready?.type, "vision_analysis_ready");
+
+  const observation = parsePhase4ServerMessage({
+    type: "vision_observation",
+    request_id: "vision-1",
+    analysis_id: "analysis-1",
+    observations: [{ kind: "text", text: "measured text" }],
+  });
+  assert.equal(observation?.type, "vision_observation");
+  if (observation?.type === "vision_observation") {
+    assert.equal(observation.observations[0].confidenceMilli, null);
+  }
+  assert.equal(parsePhase4ServerMessage({
+    type: "vision_observation",
+    request_id: "vision-1",
+    analysis_id: "analysis-1",
+    observations: [{ kind: "text", text: "x", provider: "forbidden" }],
+  }), null);
+});
+
+test("vision encoders and visual binding use exact fields", () => {
+  assert.deepEqual(encodeVisionAnalysisPrepare("vision-1", "handoff-1", "ocr"), {
+    type: "vision_analysis_prepare",
+    request_id: "vision-1",
+    handoff_id: "handoff-1",
+    capability: "ocr",
+  });
+  assert.deepEqual(encodeVisionAnalysisCancel("cancel-1", "analysis-1"), {
+    type: "vision_analysis_cancel",
+    request_id: "cancel-1",
+    analysis_id: "analysis-1",
+  });
+  assert.deepEqual(encodeVisionAnalysisStatus("status-1", "analysis-1"), {
+    type: "vision_analysis_status",
+    request_id: "status-1",
+    analysis_id: "analysis-1",
+  });
+  const bound = encodeVisualTransferBegin(
+    "visual-1", "handoff-1", "image/png", 100, 1, 1, "analysis-1",
+  );
+  assert.equal(bound?.analysis_id, "analysis-1");
 });
 
 test("parsePhase4ServerMessage rejects unknown extra fields", () => {

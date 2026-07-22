@@ -276,6 +276,7 @@ def run_server(host: str, port: int):
         server_kwargs["visual_transfer_runtime"] = (
             phase4_subsystem.visual_transfer_runtime
         )
+        server_kwargs["vision_runtime"] = phase4_subsystem.vision_runtime
     WebSocketServer(
         orchestrator,
         **server_kwargs,

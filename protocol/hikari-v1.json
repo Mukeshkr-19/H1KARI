@@ -145,7 +145,9 @@
         "height": {"type": "integer", "minimum": 1, "maximum": 4096},
         "frame_count": {"type": "integer", "enum": [1]}
       },
-      "optional": {}
+      "optional": {
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      }
     },
     "visual_transfer_cancel": {
       "required": {
@@ -158,6 +160,28 @@
       "required": {
         "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
         "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      },
+      "optional": {}
+    },
+    "vision_analysis_prepare": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "capability": {"type": "string", "enum": ["ocr", "describe"]}
+      },
+      "optional": {}
+    },
+    "vision_analysis_cancel": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
+      },
+      "optional": {}
+    },
+    "vision_analysis_status": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
       },
       "optional": {}
     },
@@ -414,6 +438,69 @@
       },
       "optional": {
         "transfer_id": {"type": "string", "min_length": 1, "max_length": 128, "pattern": "^[A-Za-z0-9._:-]+$"}
+      }
+    },
+    "vision_analysis_ready": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "expires_at": {"type": "number", "finite": true}
+      },
+      "optional": {}
+    },
+    "vision_analysis_update": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "state": {"type": "string", "enum": ["awaiting_image", "analyzing", "cancelled", "expired"]}
+      },
+      "optional": {}
+    },
+    "vision_observation": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "observations": {
+          "type": "array",
+          "min_items": 1,
+          "max_items": 16,
+          "items": {
+            "type": "object",
+          "required": {
+            "kind": {"type": "string", "enum": ["text", "description"]},
+            "text": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_unicode_format": true}
+          },
+          "optional": {
+            "confidence_milli": {"type": "integer", "minimum": 0, "maximum": 1000}
+          },
+          "exact_keys": true,
+          "variants": {
+            "field": "kind",
+            "cases": {
+              "text": {
+                "field_specs": {
+                  "text": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "allow_newline_tab": true, "forbid_unicode_format": true}
+                }
+              },
+              "description": {
+                "field_specs": {
+                  "text": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
+                }
+              }
+            }
+          }
+          }
+        }
+      },
+      "optional": {}
+    },
+    "vision_analysis_error": {
+      "required": {
+        "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
+        "code": {"type": "string", "enum": ["invalid_request", "analysis_not_found", "handoff_not_accepted", "transfer_mismatch", "analysis_expired", "analysis_cancelled", "capability_unavailable", "analysis_failed", "unavailable"]}
+      },
+      "optional": {
+        "analysis_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"}
       }
     },
     "productivity_confirmation_required": {

@@ -11,6 +11,7 @@ from core.handoff import FrozenHandoffPreview
 from core.phase4 import create_phase4_subsystem
 from core.protocol import validate_server_message
 from core.server import WebSocketServer
+from core.vision.ocr import OcrResult, OcrStatus
 
 
 class _WebSocket:
@@ -77,6 +78,7 @@ def _subsystem(tmp_path, policy_calls: list):
         pairing_db_path=tmp_path / "devices.db",
         handoff_id_factory=lambda: "handoff-1",
         transfer_id_factory=lambda: "transfer-1",
+        analysis_id_factory=lambda: "analysis-1",
         challenge_id_factory=lambda: "challenge-1",
         device_id_factory=lambda: "device-1",
         secret_code_factory=lambda: "ABC123",
@@ -92,8 +94,17 @@ def _server(tmp_path, policy_calls: list):
         pairing_runtime=subsystem.pairing_runtime,
         handoff_transport=subsystem.handoff_transport,
         visual_transfer_runtime=subsystem.visual_transfer_runtime,
+        vision_runtime=subsystem.vision_runtime,
     )
+    subsystem.vision_runtime._ocr_adapter = _FakeOcrAdapter()
     return server, subsystem
+
+
+class _FakeOcrAdapter:
+    def analyze(self, image_bytes: bytes, *, mime_type: str) -> OcrResult:
+        assert image_bytes
+        assert mime_type == "image/png"
+        return OcrResult(status=OcrStatus.SUCCESS, text="bounded observation")
 
 
 def test_pairing_is_one_use_and_remote_remains_guest(tmp_path) -> None:
@@ -274,6 +285,74 @@ def test_json_bytes_fields_and_unpaired_binary_fail_closed(tmp_path) -> None:
     server._paired_client_ids.discard(str(id(remote)))
     asyncio.run(server._handle_visual_binary(remote, b"raw"))
     assert remote.sent[-1]["type"] == "pairing_required"
+
+
+def test_vision_requires_pairing_and_exact_accepted_handoff_transfer(tmp_path) -> None:
+    async def scenario() -> None:
+        policy_calls: list = []
+        server, _ = _server(tmp_path, policy_calls)
+        guest = _WebSocket("10.0.0.2")
+        owner = _WebSocket("127.0.0.1")
+        for socket, token in ((guest, "guest-session"), (owner, "owner-session")):
+            server.connected_clients.add(socket)
+            server._connection_tokens[str(id(socket))] = token
+
+        await server._handle_message(guest, json.dumps({
+            "type": "vision_analysis_prepare",
+            "request_id": "vision-1",
+            "handoff_id": "handoff-1",
+            "capability": "ocr",
+        }))
+        assert guest.sent[-1]["type"] == "pairing_required"
+
+        server._paired_client_ids.update({str(id(guest)), str(id(owner))})
+        await server._handle_message(guest, json.dumps({
+            "type": "handoff_prepare",
+            "request_id": "offer-1",
+            "task_id": "task-1",
+            "summary": "Review result",
+        }))
+        await server._handle_message(owner, json.dumps({
+            "type": "handoff_accept",
+            "request_id": "accept-1",
+            "handoff_id": "handoff-1",
+            "acknowledged": True,
+        }))
+        await server._handle_message(guest, json.dumps({
+            "type": "vision_analysis_prepare",
+            "request_id": "vision-1",
+            "handoff_id": "handoff-1",
+            "capability": "ocr",
+        }))
+        assert guest.sent[-1]["type"] == "vision_analysis_ready"
+        assert guest.sent[-1]["analysis_id"] == "analysis-1"
+
+        frame = _png()
+        await server._handle_message(guest, json.dumps({
+            "type": "visual_transfer_begin",
+            "request_id": "visual-1",
+            "handoff_id": "handoff-1",
+            "analysis_id": "analysis-1",
+            "mime_type": "image/png",
+            "size_bytes": len(frame),
+            "width": 1,
+            "height": 1,
+            "frame_count": 1,
+        }))
+        assert guest.sent[-1]["type"] == "visual_transfer_ready"
+        await server._handle_visual_binary(guest, frame)
+        jobs = tuple(server._vision_jobs.values())
+        assert len(jobs) == 1
+        await asyncio.gather(*jobs)
+        assert guest.sent[-1] == {
+            "type": "vision_observation",
+            "request_id": "vision-1",
+            "analysis_id": "analysis-1",
+            "observations": [{"kind": "text", "text": "bounded observation"}],
+        }
+        assert all("image_bytes" not in message for message in guest.sent)
+
+    asyncio.run(scenario())
 
 
 def test_disconnect_marks_device_stale_and_clears_connection_state(tmp_path) -> None:

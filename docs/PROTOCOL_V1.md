@@ -83,6 +83,80 @@ transfer scope. Image bytes never enter JSON and are removed on completion, fail
 cancel, expiry, or disconnect. This boundary performs no capture, upload, OCR,
 provider call, or external execution.
 
+## Phase 4 vision-analysis control contract
+
+Vision analysis is an additive control-plane contract layered on the accepted
+handoff and the authenticated bounded binary-transfer path. It remains protocol v1:
+no existing message is renamed, retyped, or removed, and `visual_transfer_begin`
+gains only one optional `analysis_id` field (backward-compatible; omitting it is
+unchanged v1 behavior).
+
+`vision_analysis_prepare` does not capture or upload. It declares intent to run one
+bounded capability (`ocr` or `describe`) against an image that still travels the
+authenticated bounded binary-transfer path. The current JSON protocol carries no
+image bytes: `bytes`, `data`, `base64`, `data_url`, filenames, filesystem paths, and
+URLs are unknown fields and fail validation. No OCR execution, provider selection,
+upload, or external action occurs at prepare time.
+
+The analysis must be bound to the same accepted handoff/session that produced the
+transfer. Remote devices remain guests; desktop permissions are freshly evaluated
+for every analysis and are not portable across sessions, handoffs, or transfers.
+Approval IDs, grants, execution tickets, provider/model/destination fields, and
+content hashes as authorization are unknown fields and fail validation.
+
+`request_id` correlates the prepare attempt. `analysis_id` is always server-generated
+and opaque; stale or mismatched IDs disclose nothing beyond a fixed safe error code.
+Cancellation is terminal only after `vision_analysis_update` reports `cancelled`.
+`vision_observation` is terminal. Errors contain fixed codes only — no raw
+`message`, `detail`, or `stack`.
+
+OCR and description output is user content. It must not enter logs, audits, or any
+durable tracking surface. `confidence_milli` is evidence about the observation, not
+authorization; it never grants, escalates, or bypasses policy. Uncertainty must be
+communicated through the bounded observation and confidence fields, never silently
+suppressed.
+
+Client messages:
+
+- `vision_analysis_prepare` carries exactly `request_id` (canonical ID, max 80),
+  `handoff_id` (canonical ID, max 80), and `capability` (enum: `ocr`, `describe`).
+  No optional fields.
+- `vision_analysis_cancel` carries exactly `request_id` and `analysis_id` (canonical
+  ID, max 80). No optional fields.
+- `vision_analysis_status` carries exactly `request_id` and `analysis_id` (canonical
+  ID, max 80). No optional fields.
+- `visual_transfer_begin` gains one optional `analysis_id` (canonical ID, max 80)
+  that binds the transfer to a prepared analysis. Omitting it is unchanged v1
+  behavior and remains fully compatible.
+
+Server messages:
+
+- `vision_analysis_ready` carries exactly `request_id`, the server-generated
+  `analysis_id` (canonical ID, max 80), and `expires_at` (finite number; booleans
+  and non-finite values rejected). No optional fields.
+- `vision_analysis_update` carries exactly `request_id`, `analysis_id`, and `state`
+  (enum: `awaiting_image`, `analyzing`, `cancelled`, `expired`). No optional fields.
+- `vision_observation` is terminal and carries exactly `request_id`, `analysis_id`,
+  and `observations` (array, 1–16 items). Each observation requires exact fields
+  `kind` (enum: `text`, `description`) and `text` (string, 1–2000 Unicode code
+  points). OCR text may contain newline and tab; descriptions reject all controls
+  and whitespace-only values. Unicode format characters are always rejected.
+  `confidence_milli` is optional and, when measured by the analyzer, is an integer
+  from 0 through 1000 with booleans rejected. Its absence means confidence was not
+  available; callers must not fabricate a score.
+- `vision_analysis_error` carries exactly `request_id` and `code` (enum:
+  `invalid_request`, `analysis_not_found`, `handoff_not_accepted`,
+  `transfer_mismatch`, `analysis_expired`, `analysis_cancelled`,
+  `capability_unavailable`, `analysis_failed`, `unavailable`). Optional
+  `analysis_id` (canonical ID, max 80) may be present; no other fields.
+
+Actor/session/device IDs, approval/grant/execution-ticket fields,
+provider/model/destination, bytes/data/base64/data_url, filename/filesystem path/URL,
+task content/payload, raw error/message/detail/stack, OCR/image contents in request
+messages, content hashes as authorization, unknown fields, non-finite numbers,
+invalid IDs, oversized arrays/text, invalid confidence, and wrong states/codes all
+fail validation.
+
 ## Document task flow
 
 The Phase 1 document flow is additive to the existing v1 chat protocol:

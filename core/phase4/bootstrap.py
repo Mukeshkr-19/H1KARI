@@ -24,6 +24,8 @@ from core.visual_transfer import (
     VisualTransferRuntime,
     VisualTransferService,
 )
+from core.vision import VisionAnalysisService, VisionRuntime
+from core.vision.ocr import LocalOcrAdapter
 
 
 class Phase4BootstrapError(RuntimeError):
@@ -42,6 +44,7 @@ class Phase4Subsystem:
     handoff_runtime: HandoffRuntime
     handoff_transport: HandoffTransportAdapter
     visual_transfer_runtime: VisualTransferRuntime
+    vision_runtime: VisionRuntime
 
 
 def _handoff_id() -> str:
@@ -50,6 +53,24 @@ def _handoff_id() -> str:
 
 def _transfer_id() -> str:
     return f"transfer-{secrets.token_hex(16)}"
+
+
+def _analysis_id() -> str:
+    return f"analysis-{secrets.token_hex(16)}"
+
+
+def _default_tesseract_path() -> Path | None:
+    for candidate in (
+        Path("/opt/homebrew/bin/tesseract"),
+        Path("/usr/local/bin/tesseract"),
+        Path("/usr/bin/tesseract"),
+    ):
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
 
 
 def create_phase4_subsystem(
@@ -61,6 +82,8 @@ def create_phase4_subsystem(
     pairing_db_path: Path | str | None = None,
     handoff_id_factory: Callable[[], str] | None = None,
     transfer_id_factory: Callable[[], str] | None = None,
+    analysis_id_factory: Callable[[], str] | None = None,
+    ocr_executable_path: Path | str | None = None,
     challenge_id_factory: Callable[[], str] | None = None,
     device_id_factory: Callable[[], str] | None = None,
     secret_code_factory: Callable[[], str] | None = None,
@@ -96,6 +119,20 @@ def create_phase4_subsystem(
             transfer_id_factory=transfer_id_factory or _transfer_id,
             handoff_accepted=handoff_service.is_accepted_for_session,
         )
+        vision_service = VisionAnalysisService(
+            clock=clock_fn,
+            analysis_id_factory=analysis_id_factory or _analysis_id,
+        )
+        selected_ocr_path = (
+            _default_tesseract_path()
+            if ocr_executable_path is None
+            else Path(ocr_executable_path)
+        )
+        ocr_adapter = (
+            None
+            if selected_ocr_path is None
+            else LocalOcrAdapter(executable_path=selected_ocr_path)
+        )
         pairing_runtime = create_pairing_runtime(
             db_path=pairing_db_path,
             clock=clock_fn,
@@ -112,6 +149,11 @@ def create_phase4_subsystem(
             visual_transfer_runtime=VisualTransferRuntime(
                 service=visual_service,
                 clock=clock_fn,
+            ),
+            vision_runtime=VisionRuntime(
+                service=vision_service,
+                ocr_adapter=ocr_adapter,
+                handoff_accepted=handoff_service.is_accepted_for_session,
             ),
         )
     except Phase4BootstrapError:

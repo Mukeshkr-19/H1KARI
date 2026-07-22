@@ -26,6 +26,12 @@ import {
 import { isPairingErrorCode } from "./pairing";
 import { isHandoffErrorCode } from "./handoff";
 import { isVisualTransferErrorCode } from "./visualTransfer";
+import {
+  isValidObservationText,
+  isVisionAnalysisErrorCode,
+  type VisionAnalysisErrorCode,
+  type VisionObservation,
+} from "./visionAnalysis";
 export const PHASE4_SERVER_MESSAGE_TYPES = Object.freeze([
   "pairing_challenge",
   "pairing_confirmed",
@@ -38,6 +44,10 @@ export const PHASE4_SERVER_MESSAGE_TYPES = Object.freeze([
   "visual_transfer_update",
   "visual_transfer_complete",
   "visual_transfer_error",
+  "vision_analysis_ready",
+  "vision_analysis_update",
+  "vision_observation",
+  "vision_analysis_error",
 ] as const);
 
 export type Phase4ServerMessageType = (typeof PHASE4_SERVER_MESSAGE_TYPES)[number];
@@ -123,6 +133,34 @@ export type VisualTransferErrorMessage = Readonly<{
   code: string;
 }>;
 
+export type VisionAnalysisReadyMessage = Readonly<{
+  type: "vision_analysis_ready";
+  request_id: string;
+  analysis_id: string;
+  expires_at: number;
+}>;
+
+export type VisionAnalysisUpdateMessage = Readonly<{
+  type: "vision_analysis_update";
+  request_id: string;
+  analysis_id: string;
+  state: "awaiting_image" | "analyzing" | "cancelled" | "expired";
+}>;
+
+export type VisionObservationMessage = Readonly<{
+  type: "vision_observation";
+  request_id: string;
+  analysis_id: string;
+  observations: readonly VisionObservation[];
+}>;
+
+export type VisionAnalysisErrorMessage = Readonly<{
+  type: "vision_analysis_error";
+  request_id: string;
+  analysis_id?: string;
+  code: VisionAnalysisErrorCode;
+}>;
+
 export type Phase4ServerMessage =
   | PairingChallengeMessage
   | PairingConfirmedMessage
@@ -134,7 +172,11 @@ export type Phase4ServerMessage =
   | VisualTransferReadyMessage
   | VisualTransferUpdateMessage
   | VisualTransferCompleteMessage
-  | VisualTransferErrorMessage;
+  | VisualTransferErrorMessage
+  | VisionAnalysisReadyMessage
+  | VisionAnalysisUpdateMessage
+  | VisionObservationMessage
+  | VisionAnalysisErrorMessage;
 
 function hasOnlyKeys(obj: Record<string, unknown>, allowedKeys: Set<string>): boolean {
   for (const key of Object.keys(obj)) {
@@ -414,6 +456,69 @@ export function parsePhase4ServerMessage(raw: unknown): Phase4ServerMessage | nu
       });
     }
 
+    case "vision_analysis_ready": {
+      if (!hasOnlyKeys(rec, new Set(["type", "request_id", "analysis_id", "expires_at"]))) return null;
+      if (!isValidCanonicalId(rec.request_id) || !isValidCanonicalId(rec.analysis_id)) return null;
+      if (typeof rec.expires_at !== "number" || !Number.isFinite(rec.expires_at)) return null;
+      return Object.freeze({
+        type: "vision_analysis_ready",
+        request_id: rec.request_id,
+        analysis_id: rec.analysis_id,
+        expires_at: rec.expires_at,
+      });
+    }
+
+    case "vision_analysis_update": {
+      if (!hasOnlyKeys(rec, new Set(["type", "request_id", "analysis_id", "state"]))) return null;
+      if (!isValidCanonicalId(rec.request_id) || !isValidCanonicalId(rec.analysis_id)) return null;
+      if (!new Set(["awaiting_image", "analyzing", "cancelled", "expired"]).has(String(rec.state))) return null;
+      return Object.freeze({
+        type: "vision_analysis_update",
+        request_id: rec.request_id,
+        analysis_id: rec.analysis_id,
+        state: rec.state as VisionAnalysisUpdateMessage["state"],
+      });
+    }
+
+    case "vision_observation": {
+      if (!hasOnlyKeys(rec, new Set(["type", "request_id", "analysis_id", "observations"]))) return null;
+      if (!isValidCanonicalId(rec.request_id) || !isValidCanonicalId(rec.analysis_id)) return null;
+      if (!Array.isArray(rec.observations) || rec.observations.length < 1 || rec.observations.length > 16) return null;
+      const observations: VisionObservation[] = [];
+      for (const raw of rec.observations) {
+        if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+        const item = raw as Record<string, unknown>;
+        if (!hasOnlyKeys(item, new Set(["kind", "text", "confidence_milli"]))) return null;
+        if (item.kind !== "text" && item.kind !== "description") return null;
+        if (!isValidObservationText(item.text, item.kind)) return null;
+        if (item.confidence_milli !== undefined &&
+            (!Number.isInteger(item.confidence_milli) || (item.confidence_milli as number) < 0 || (item.confidence_milli as number) > 1000)) return null;
+        observations.push(Object.freeze({
+          kind: item.kind,
+          text: item.text,
+          confidenceMilli: item.confidence_milli === undefined ? null : item.confidence_milli as number,
+        }));
+      }
+      return Object.freeze({
+        type: "vision_observation",
+        request_id: rec.request_id,
+        analysis_id: rec.analysis_id,
+        observations: Object.freeze(observations),
+      });
+    }
+
+    case "vision_analysis_error": {
+      if (!hasOnlyKeys(rec, new Set(["type", "request_id", "analysis_id", "code"]))) return null;
+      if (!isValidCanonicalId(rec.request_id) || !isVisionAnalysisErrorCode(rec.code)) return null;
+      if (rec.analysis_id !== undefined && !isValidCanonicalId(rec.analysis_id)) return null;
+      return Object.freeze({
+        type: "vision_analysis_error",
+        request_id: rec.request_id,
+        ...(rec.analysis_id !== undefined ? { analysis_id: rec.analysis_id } : {}),
+        code: rec.code,
+      });
+    }
+
     default:
       return null;
   }
@@ -486,12 +591,14 @@ export function encodeVisualTransferBegin(
   fileSize: number,
   width: number,
   height: number,
+  analysisId?: string,
 ) {
   if (!isValidCanonicalId(requestId) || !isValidCanonicalId(handoffId)) return null;
   if (mimeType !== "image/png" && mimeType !== "image/jpeg") return null;
   if (typeof fileSize !== "number" || fileSize <= 0 || fileSize > 1048576) return null;
   if (!Number.isInteger(width) || width < 1 || width > 4096) return null;
   if (!Number.isInteger(height) || height < 1 || height > 4096) return null;
+  if (analysisId !== undefined && !isValidCanonicalId(analysisId)) return null;
   return {
     type: "visual_transfer_begin",
     request_id: requestId,
@@ -501,7 +608,24 @@ export function encodeVisualTransferBegin(
     width,
     height,
     frame_count: 1,
+    ...(analysisId !== undefined ? { analysis_id: analysisId } : {}),
   };
+}
+
+export function encodeVisionAnalysisPrepare(requestId: string, handoffId: string, capability: "ocr" | "describe") {
+  if (!isValidCanonicalId(requestId) || !isValidCanonicalId(handoffId)) return null;
+  if (capability !== "ocr" && capability !== "describe") return null;
+  return { type: "vision_analysis_prepare", request_id: requestId, handoff_id: handoffId, capability };
+}
+
+export function encodeVisionAnalysisCancel(requestId: string, analysisId: string) {
+  if (!isValidCanonicalId(requestId) || !isValidCanonicalId(analysisId)) return null;
+  return { type: "vision_analysis_cancel", request_id: requestId, analysis_id: analysisId };
+}
+
+export function encodeVisionAnalysisStatus(requestId: string, analysisId: string) {
+  if (!isValidCanonicalId(requestId) || !isValidCanonicalId(analysisId)) return null;
+  return { type: "vision_analysis_status", request_id: requestId, analysis_id: analysisId };
 }
 
 export function encodeVisualTransferCancel(requestId: string, transferId: string) {
