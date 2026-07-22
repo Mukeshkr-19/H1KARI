@@ -14,8 +14,10 @@ from core.handoff.contracts import (
     HandoffState,
     make_offer_record,
 )
+from core.handoff.runtime import HandoffRuntime
 from core.handoff.service import AcceptancePolicy, HandoffService, TaskLookup
 from core.handoff.store import HandoffStore
+from core.handoff.transport import HandoffTransportAdapter
 
 __all__ = [
     "FrozenHandoffPreview",
@@ -23,9 +25,11 @@ __all__ = [
     "HandoffErrorCode",
     "HandoffRecord",
     "HandoffResult",
+    "HandoffRuntime",
     "HandoffService",
     "HandoffState",
     "HandoffStore",
+    "HandoffTransportAdapter",
     "TaskLookup",
     "make_offer_record",
 ]

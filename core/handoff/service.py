@@ -428,6 +428,12 @@ class HandoffService:
         """Transition all past-TTL offered handoffs to expired."""
         return self._store.expire_due(now=self._now())
 
+    def is_accepted_for_session(self, session_id: str, handoff_id: str) -> bool:
+        """Return a content-free proof for an exact origin session."""
+        if not isinstance(session_id, str) or not isinstance(handoff_id, str):
+            return False
+        return self._store.is_accepted_for_session(handoff_id, session_id)
+
     def _validate_actor_context(self, actor: object) -> tuple[bool, str]:
         """Validate server-derived actor metadata."""
         return validate_actor_context(actor)

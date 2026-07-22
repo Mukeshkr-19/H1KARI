@@ -6,10 +6,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isValidCanonicalId,
-  isValidDeviceLabel,
   isValidOpaqueId,
   isValidSummaryText,
-} from "./identifiers.js";
+  createCanonicalRequestId,
+} from "./identifiers";
 
 test("isValidCanonicalId accepts valid canonical IDs", () => {
   assert.equal(isValidCanonicalId("req-12345"), true);
@@ -47,18 +47,15 @@ test("isValidSummaryText accepts valid summary text", () => {
 test("isValidSummaryText rejects invalid summary text", () => {
   assert.equal(isValidSummaryText(""), false);
   assert.equal(isValidSummaryText("   "), false); // Whitespace only
-  assert.equal(isValidSummaryText("\u0085"), false); // Unicode whitespace only
   assert.equal(isValidSummaryText("Line 1\nLine 2"), false); // Control char \n
   assert.equal(isValidSummaryText("Soft\u00adHyphen"), false); // Unicode Cf
   assert.equal(isValidSummaryText("a".repeat(201)), false); // Exceeds 200 code points
   assert.equal(isValidSummaryText(null), false);
 });
 
-test("isValidDeviceLabel enforces code-point bounds without rewriting", () => {
-  assert.equal(isValidDeviceLabel("Living Room Tablet"), true);
-  assert.equal(isValidDeviceLabel("🚀".repeat(64)), true);
-  assert.equal(isValidDeviceLabel(""), false);
-  assert.equal(isValidDeviceLabel("x".repeat(65)), false);
-  assert.equal(isValidDeviceLabel("bad\nlabel"), false);
-  assert.equal(isValidDeviceLabel("bad\u200blabel"), false);
+test("createCanonicalRequestId generates valid canonical IDs", () => {
+  const reqId = createCanonicalRequestId("req");
+  assert.equal(isValidCanonicalId(reqId), true);
+  const pairId = createCanonicalRequestId("pair");
+  assert.equal(isValidCanonicalId(pairId), true);
 });

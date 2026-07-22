@@ -9,7 +9,7 @@ import {
   isPairingPending,
   isPairingTerminal,
   reducePairing,
-} from "./pairing.js";
+} from "./pairing";
 
 test("Pairing lifecycle happy path", () => {
   let state = createInitialPairingState();

@@ -10,7 +10,7 @@ import {
   isVisualTransferTerminal,
   reduceVisualTransfer,
   validateImageFile,
-} from "./visualTransfer.js";
+} from "./visualTransfer";
 
 function createTestFile(name: string, type: string, sizeBytes: number): File {
   const blob = new Blob(["a".repeat(sizeBytes)], { type });

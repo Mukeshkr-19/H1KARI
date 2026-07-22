@@ -9,7 +9,7 @@ import {
   isHandoffPending,
   isHandoffTerminal,
   reduceHandoff,
-} from "./handoff.js";
+} from "./handoff";
 
 test("Handoff offer creation creates a frozen preview copy", () => {
   let state = createInitialHandoffState();

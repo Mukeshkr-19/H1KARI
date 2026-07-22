@@ -28,6 +28,48 @@ import { ResearchProposalForm } from "@/components/ResearchProposalForm";
 import { ReminderProposalForm } from "@/components/ReminderProposalForm";
 import { ScheduledJobsPanel } from "@/components/ScheduledJobsPanel";
 import { ScheduledJobCreateForm } from "@/components/ScheduledJobCreateForm";
+import { Phase4PairingPanel } from "@/components/Phase4PairingPanel";
+import { HandoffOfferPanel } from "@/components/HandoffOfferPanel";
+import { VisualTransferPanel } from "@/components/VisualTransferPanel";
+import {
+  createInitialPairingState,
+  isPairingErrorCode,
+  isPairingPending,
+  isPairingTerminal,
+  reducePairing,
+  type PairingState,
+} from "@/utils/phase4/pairing";
+import {
+  createInitialHandoffState,
+  isHandoffErrorCode,
+  isHandoffPending,
+  isHandoffTerminal,
+  reduceHandoff,
+  type HandoffState,
+} from "@/utils/phase4/handoff";
+import {
+  createInitialVisualTransferState,
+  isVisualTransferErrorCode,
+  isVisualTransferPending,
+  isVisualTransferTerminal,
+  reduceVisualTransfer,
+  inspectImageDimensions,
+  validateImageFile,
+  type VisualTransferState,
+} from "@/utils/phase4/visualTransfer";
+import { createCanonicalRequestId } from "@/utils/phase4/identifiers";
+import {
+  encodeHandoffAccept,
+  encodeHandoffCancel,
+  encodeHandoffReject,
+  encodePairingCancel,
+  encodePairingConfirm,
+  encodePairingPrepare,
+  encodeVisualTransferBegin,
+  encodeVisualTransferCancel,
+  parsePhase4ServerMessage,
+  type Phase4ServerMessage,
+} from "@/utils/phase4/phase4Protocol";
 import {
   createInitialProposalLifecycleState,
   reduceProposalLifecycle,
@@ -158,6 +200,17 @@ const STRICT_DEDICATED_SERVER_MESSAGE_TYPES = new Set<string>([
   "scheduled_job_error",
   "scheduled_job_research_result",
   "scheduled_job_calendar_result",
+  "pairing_challenge",
+  "pairing_confirmed",
+  "pairing_update",
+  "pairing_error",
+  "handoff_offer",
+  "handoff_update",
+  "handoff_error",
+  "visual_transfer_ready",
+  "visual_transfer_update",
+  "visual_transfer_complete",
+  "visual_transfer_error",
 ]);
 
 function parseWebSocketFrameType(raw: string): string | null {
@@ -608,6 +661,33 @@ export default function Home() {
   const [scheduledCalendarResult, setScheduledCalendarResult] = useState<
     ScheduledJobCalendarResultMessage | null
   >(null);
+
+  // Phase 4 Pairing state & refs
+  const [pairingState, setPairingState] = useState<PairingState>(createInitialPairingState);
+  const pairingStateRef = useRef<PairingState>(pairingState);
+  const [, setPairingPending] = useState(false);
+  const pairingPendingRef = useRef(false);
+
+  // Phase 4 Handoff state & refs
+  const [handoffState, setHandoffState] = useState<HandoffState>(createInitialHandoffState);
+  const handoffStateRef = useRef<HandoffState>(handoffState);
+  const [, setHandoffPending] = useState(false);
+  const handoffPendingRef = useRef(false);
+  const handoffRequestIdRef = useRef<string | null>(null);
+
+  // Phase 4 Visual Transfer state & refs
+  const [visualTransferState, setVisualTransferState] = useState<VisualTransferState>(
+    createInitialVisualTransferState
+  );
+  const visualTransferStateRef = useRef<VisualTransferState>(visualTransferState);
+  const [, setVisualTransferPending] = useState(false);
+  const visualTransferPendingRef = useRef(false);
+  const visualTransferBytesRef = useRef<ArrayBuffer | null>(null);
+
+  // Accessible heading refs
+  const pairingHeadingRef = useRef<HTMLHeadingElement>(null);
+  const handoffHeadingRef = useRef<HTMLHeadingElement>(null);
+  const visualTransferHeadingRef = useRef<HTMLHeadingElement>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const voiceTurnActiveRef = useRef(false);
@@ -2024,6 +2104,512 @@ export default function Home() {
     clearReminderForm();
   }, [clearReminderForm, isProductivityPreparePending]);
 
+  const resetPhase4State = useCallback(() => {
+    const initPair = createInitialPairingState();
+    pairingStateRef.current = initPair;
+    setPairingState(initPair);
+    pairingPendingRef.current = false;
+    setPairingPending(false);
+
+    const initHandoff = createInitialHandoffState();
+    handoffStateRef.current = initHandoff;
+    setHandoffState(initHandoff);
+    handoffPendingRef.current = false;
+    handoffRequestIdRef.current = null;
+    setHandoffPending(false);
+
+    const initVisual = createInitialVisualTransferState();
+    visualTransferStateRef.current = initVisual;
+    setVisualTransferState(initVisual);
+    visualTransferPendingRef.current = false;
+    visualTransferBytesRef.current = null;
+    setVisualTransferPending(false);
+  }, []);
+
+  const applyPhase4ServerMessage = useCallback(
+    (msg: Phase4ServerMessage) => {
+      switch (msg.type) {
+        case "pairing_challenge": {
+          if (
+            pairingStateRef.current.requestId &&
+            msg.request_id !== pairingStateRef.current.requestId
+          ) {
+            return;
+          }
+          pairingPendingRef.current = false;
+          setPairingPending(false);
+          const next = reducePairing(pairingStateRef.current, {
+            type: "RECEIVE_CHALLENGE",
+            requestId: msg.request_id,
+            challengeId: msg.challenge_id,
+          });
+          pairingStateRef.current = next;
+          setPairingState(next);
+          pairingHeadingRef.current?.focus();
+          break;
+        }
+
+        case "pairing_confirmed": {
+          if (pairingStateRef.current.requestId !== msg.request_id) {
+            return;
+          }
+          const challengeId = pairingStateRef.current.challengeId;
+          if (!challengeId) return;
+          pairingPendingRef.current = false;
+          setPairingPending(false);
+          const next = reducePairing(pairingStateRef.current, {
+            type: "CONFIRM_SUCCESS",
+            challengeId,
+            deviceId: msg.device_id,
+          });
+          pairingStateRef.current = next;
+          setPairingState(next);
+          setIsPaired(true);
+          break;
+        }
+
+        case "pairing_update": {
+          if (pairingStateRef.current.requestId !== msg.request_id) {
+            return;
+          }
+          pairingPendingRef.current = false;
+          setPairingPending(false);
+          let next = pairingStateRef.current;
+          if (msg.status === "cancelled") {
+            next = reducePairing(next, { type: "CANCEL_COMPLETE" });
+          } else if (msg.status === "expired") {
+            next = reducePairing(next, { type: "EXPIRE" });
+          } else if (msg.status === "revoked") {
+            next = reducePairing(next, { type: "REVOKE" });
+          }
+          pairingStateRef.current = next;
+          setPairingState(next);
+          break;
+        }
+
+        case "pairing_error": {
+          if (pairingStateRef.current.requestId !== msg.request_id) {
+            return;
+          }
+          pairingPendingRef.current = false;
+          setPairingPending(false);
+          const next = reducePairing(pairingStateRef.current, {
+            type: "FAIL",
+            errorCode: isPairingErrorCode(msg.code) ? msg.code : "unavailable",
+          });
+          pairingStateRef.current = next;
+          setPairingState(next);
+          break;
+        }
+
+        case "handoff_offer": {
+          if (isHandoffPending(handoffStateRef.current.status)) {
+            return;
+          }
+          handoffPendingRef.current = false;
+          setHandoffPending(false);
+          const next = reduceHandoff(handoffStateRef.current, {
+            type: "RECEIVE_OFFER",
+            handoffId: msg.handoff_id,
+            taskId: msg.task_id,
+            summary: msg.summary,
+          });
+          if (next !== handoffStateRef.current) {
+            handoffStateRef.current = next;
+            setHandoffState(next);
+            setActiveTab("files");
+            handoffHeadingRef.current?.focus();
+          }
+          break;
+        }
+
+        case "handoff_update": {
+          if (
+            handoffStateRef.current.handoffId !== msg.handoff_id ||
+            (handoffRequestIdRef.current !== null && handoffRequestIdRef.current !== msg.request_id)
+          ) {
+            return;
+          }
+          handoffRequestIdRef.current = null;
+          handoffPendingRef.current = false;
+          setHandoffPending(false);
+          let next = handoffStateRef.current;
+          if (msg.status === "accepted") {
+            next = reduceHandoff(next, { type: "ACCEPT_COMPLETE", handoffId: msg.handoff_id });
+          } else if (msg.status === "rejected") {
+            next = reduceHandoff(next, { type: "REJECT_COMPLETE", handoffId: msg.handoff_id });
+          } else if (msg.status === "cancelled") {
+            next = reduceHandoff(next, { type: "CANCEL_COMPLETE" });
+          } else if (msg.status === "expired") {
+            next = reduceHandoff(next, { type: "EXPIRE" });
+          }
+          handoffStateRef.current = next;
+          setHandoffState(next);
+          break;
+        }
+
+        case "handoff_error": {
+          if (
+            handoffRequestIdRef.current !== msg.request_id ||
+            (msg.handoff_id !== undefined && handoffStateRef.current.handoffId !== msg.handoff_id)
+          ) {
+            return;
+          }
+          handoffRequestIdRef.current = null;
+          handoffPendingRef.current = false;
+          setHandoffPending(false);
+          const next = reduceHandoff(handoffStateRef.current, {
+            type: "FAIL",
+            errorCode: isHandoffErrorCode(msg.code) ? msg.code : "unavailable",
+          });
+          handoffStateRef.current = next;
+          setHandoffState(next);
+          break;
+        }
+
+        case "visual_transfer_ready": {
+          if (
+            visualTransferStateRef.current.requestId &&
+            visualTransferStateRef.current.requestId !== msg.request_id
+          ) {
+            return;
+          }
+          visualTransferPendingRef.current = false;
+          setVisualTransferPending(false);
+          const next = reduceVisualTransfer(visualTransferStateRef.current, {
+            type: "SET_READY",
+            requestId: msg.request_id,
+            transferId: msg.transfer_id,
+          });
+          visualTransferStateRef.current = next;
+          setVisualTransferState(next);
+          const binary = visualTransferBytesRef.current;
+          if (binary && wsRef.current?.readyState === WebSocket.OPEN) {
+            const transferring = reduceVisualTransfer(next, {
+              type: "START_TRANSFERRING",
+              transferId: msg.transfer_id,
+            });
+            visualTransferStateRef.current = transferring;
+            setVisualTransferState(transferring);
+            wsRef.current.send(binary);
+            visualTransferBytesRef.current = null;
+          }
+          visualTransferHeadingRef.current?.focus();
+          break;
+        }
+
+        case "visual_transfer_update": {
+          if (visualTransferStateRef.current.transferId !== msg.transfer_id) {
+            return;
+          }
+          visualTransferPendingRef.current = false;
+          setVisualTransferPending(false);
+          let next = visualTransferStateRef.current;
+          if (msg.status === "receiving") {
+            next = reduceVisualTransfer(next, { type: "START_TRANSFERRING", transferId: msg.transfer_id });
+          } else if (msg.status === "validating") {
+            next = reduceVisualTransfer(next, { type: "VALIDATE", transferId: msg.transfer_id });
+          } else if (msg.status === "completed") {
+            next = reduceVisualTransfer(next, { type: "TRANSFER_COMPLETE", transferId: msg.transfer_id });
+          } else if (msg.status === "cancelled") {
+            next = reduceVisualTransfer(next, { type: "CANCEL_COMPLETE" });
+          } else if (msg.status === "failed") {
+            next = reduceVisualTransfer(next, { type: "FAIL" });
+          }
+          visualTransferStateRef.current = next;
+          setVisualTransferState(next);
+          break;
+        }
+
+        case "visual_transfer_complete": {
+          if (visualTransferStateRef.current.transferId !== msg.transfer_id) {
+            return;
+          }
+          visualTransferPendingRef.current = false;
+          setVisualTransferPending(false);
+          const next = reduceVisualTransfer(visualTransferStateRef.current, {
+            type: "TRANSFER_COMPLETE",
+            transferId: msg.transfer_id,
+          });
+          visualTransferStateRef.current = next;
+          setVisualTransferState(next);
+          break;
+        }
+
+        case "visual_transfer_error": {
+          const matchesTransfer =
+            msg.transfer_id !== undefined && visualTransferStateRef.current.transferId === msg.transfer_id;
+          const matchesBegin =
+            msg.transfer_id === undefined && visualTransferStateRef.current.requestId === msg.request_id;
+          if (!matchesTransfer && !matchesBegin) {
+            return;
+          }
+          visualTransferBytesRef.current = null;
+          visualTransferPendingRef.current = false;
+          setVisualTransferPending(false);
+          const next = reduceVisualTransfer(visualTransferStateRef.current, {
+            type: "FAIL",
+            errorCode: isVisualTransferErrorCode(msg.code) ? msg.code : "unavailable",
+          });
+          visualTransferStateRef.current = next;
+          setVisualTransferState(next);
+          break;
+        }
+      }
+    },
+    [],
+  );
+
+  const startPairing = useCallback(() => {
+    if (pairingPendingRef.current || isPairingPending(pairingStateRef.current.status)) {
+      return;
+    }
+    const requestId = createCanonicalRequestId("pair");
+    pairingPendingRef.current = true;
+    setPairingPending(true);
+
+    const next = reducePairing(pairingStateRef.current, {
+      type: "START_PREPARING",
+      requestId,
+    });
+    pairingStateRef.current = next;
+    setPairingState(next);
+
+    const encoded = encodePairingPrepare(requestId);
+    if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(encoded));
+    }
+  }, []);
+
+  const confirmPairingCode = useCallback((code: string) => {
+    if (pairingPendingRef.current || pairingStateRef.current.status !== "challenge") {
+      return;
+    }
+    const { requestId, challengeId } = pairingStateRef.current;
+    if (!requestId || !challengeId) {
+      return;
+    }
+    pairingPendingRef.current = true;
+    setPairingPending(true);
+
+    const next = reducePairing(pairingStateRef.current, {
+      type: "SUBMIT_CONFIRM",
+      challengeId,
+    });
+    pairingStateRef.current = next;
+    setPairingState(next);
+
+    const encoded = encodePairingConfirm(requestId, challengeId, code);
+    if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(encoded));
+    }
+  }, []);
+
+  const cancelPairingAction = useCallback(() => {
+    if (pairingStateRef.current.status === "idle" || isPairingTerminal(pairingStateRef.current.status)) {
+      return;
+    }
+    const { requestId, challengeId } = pairingStateRef.current;
+    if (!requestId || !challengeId) return;
+    const next = reducePairing(pairingStateRef.current, { type: "CANCEL" });
+    pairingStateRef.current = next;
+    setPairingState(next);
+    pairingPendingRef.current = true;
+    setPairingPending(true);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const encoded = encodePairingCancel(requestId, challengeId);
+      if (encoded) {
+        wsRef.current.send(JSON.stringify(encoded));
+      }
+    }
+  }, []);
+
+  const acceptHandoffAction = useCallback(() => {
+    if (
+      handoffPendingRef.current ||
+      handoffStateRef.current.status !== "offered" ||
+      !handoffStateRef.current.acknowledged
+    ) {
+      return;
+    }
+    const handoffId = handoffStateRef.current.handoffId;
+    if (!handoffId) return;
+
+    const requestId = createCanonicalRequestId("hoff");
+    handoffRequestIdRef.current = requestId;
+    handoffPendingRef.current = true;
+    setHandoffPending(true);
+
+    const next = reduceHandoff(handoffStateRef.current, {
+      type: "ACCEPT",
+      handoffId,
+    });
+    handoffStateRef.current = next;
+    setHandoffState(next);
+
+    const encoded = encodeHandoffAccept(requestId, handoffId);
+    if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(encoded));
+    }
+  }, []);
+
+  const rejectHandoffAction = useCallback(() => {
+    if (handoffPendingRef.current || handoffStateRef.current.status !== "offered") {
+      return;
+    }
+    const handoffId = handoffStateRef.current.handoffId;
+    if (!handoffId) return;
+
+    const requestId = createCanonicalRequestId("hoff");
+    handoffRequestIdRef.current = requestId;
+    handoffPendingRef.current = true;
+    setHandoffPending(true);
+
+    const next = reduceHandoff(handoffStateRef.current, {
+      type: "REJECT",
+      handoffId,
+    });
+    handoffStateRef.current = next;
+    setHandoffState(next);
+
+    const encoded = encodeHandoffReject(requestId, handoffId);
+    if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(encoded));
+    }
+  }, []);
+
+  const cancelHandoffAction = useCallback(() => {
+    if (
+      handoffPendingRef.current ||
+      handoffStateRef.current.status === "idle" ||
+      isHandoffTerminal(handoffStateRef.current.status)
+    ) {
+      return;
+    }
+    const handoffId = handoffStateRef.current.handoffId;
+    if (!handoffId) return;
+
+    const requestId = createCanonicalRequestId("hoff");
+    handoffRequestIdRef.current = requestId;
+    const next = reduceHandoff(handoffStateRef.current, { type: "CANCEL" });
+    handoffStateRef.current = next;
+    setHandoffState(next);
+    handoffPendingRef.current = true;
+    setHandoffPending(true);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const encoded = encodeHandoffCancel(requestId, handoffId);
+      if (encoded) {
+        wsRef.current.send(JSON.stringify(encoded));
+      }
+    }
+  }, []);
+
+  const toggleHandoffAck = useCallback((acknowledged: boolean) => {
+    const next = reduceHandoff(handoffStateRef.current, {
+      type: "TOGGLE_ACKNOWLEDGE",
+      acknowledged,
+    });
+    handoffStateRef.current = next;
+    setHandoffState(next);
+  }, []);
+
+  const selectVisualTransferFileAction = useCallback((file: File) => {
+    if (visualTransferPendingRef.current || isVisualTransferPending(visualTransferStateRef.current.status)) {
+      return;
+    }
+    const next = reduceVisualTransfer(visualTransferStateRef.current, {
+      type: "SELECT_FILE",
+      file,
+    });
+    visualTransferStateRef.current = next;
+    setVisualTransferState(next);
+  }, []);
+
+  const beginVisualTransferAction = useCallback(async (file: File) => {
+    if (
+      visualTransferPendingRef.current ||
+      visualTransferStateRef.current.status !== "selected" ||
+      !visualTransferStateRef.current.fileRef
+    ) {
+      return;
+    }
+    const val = validateImageFile(file);
+    if (!val.valid) return;
+
+    const handoffId = handoffStateRef.current.handoffId;
+    if (handoffStateRef.current.status !== "accepted" || !handoffId) return;
+    let binary: ArrayBuffer;
+    try {
+      binary = await file.arrayBuffer();
+    } catch {
+      return;
+    }
+    if (binary.byteLength !== file.size) return;
+    const dimensions = inspectImageDimensions(binary, file.type);
+    if (!dimensions) return;
+
+    const requestId = createCanonicalRequestId("vtx");
+    visualTransferPendingRef.current = true;
+    visualTransferBytesRef.current = binary;
+    setVisualTransferPending(true);
+
+    const next = reduceVisualTransfer(visualTransferStateRef.current, {
+      type: "BEGIN_TRANSFER",
+      requestId,
+    });
+    visualTransferStateRef.current = next;
+    setVisualTransferState(next);
+
+    const encoded = encodeVisualTransferBegin(
+      requestId,
+      handoffId,
+      file.type,
+      file.size,
+      dimensions.width,
+      dimensions.height,
+    );
+    if (encoded && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify(encoded));
+    }
+  }, []);
+
+  const cancelVisualTransferAction = useCallback(() => {
+    if (
+      visualTransferStateRef.current.status === "idle" ||
+      isVisualTransferTerminal(visualTransferStateRef.current.status)
+    ) {
+      return;
+    }
+    const transferId = visualTransferStateRef.current.transferId;
+    if (!transferId) {
+      if (visualTransferStateRef.current.status === "selected") {
+        let local = reduceVisualTransfer(visualTransferStateRef.current, { type: "CANCEL" });
+        local = reduceVisualTransfer(local, { type: "CANCEL_COMPLETE" });
+        visualTransferStateRef.current = local;
+        setVisualTransferState(local);
+        visualTransferBytesRef.current = null;
+      }
+      return;
+    }
+    const requestId = createCanonicalRequestId("vtx");
+
+    const next = reduceVisualTransfer(visualTransferStateRef.current, { type: "CANCEL" });
+    visualTransferStateRef.current = next;
+    setVisualTransferState(next);
+    visualTransferPendingRef.current = true;
+    visualTransferBytesRef.current = null;
+    setVisualTransferPending(true);
+
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const encoded = encodeVisualTransferCancel(requestId, transferId);
+      if (encoded) {
+        wsRef.current.send(JSON.stringify(encoded));
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (calendarPrepareError) {
       calendarPrepareErrorHeadingRef.current?.focus();
@@ -2071,7 +2657,37 @@ export default function Home() {
       }
     };
 
+    const initializePairedConnection = () => {
+      setIsPaired(true);
+      setInterfaceError("");
+      const savedTaskId = window.localStorage.getItem(ROOT_DOCUMENT_TASK_KEY) ?? "";
+      if (savedTaskId.length > 0 && savedTaskId.length <= DOCUMENT_TASK_ID_MAX) {
+        documentTaskIdRef.current = savedTaskId;
+        documentTaskIdsSeenRef.current.add(savedTaskId);
+        setDocumentTaskId(savedTaskId);
+        ws.send(encodeClientMessage("task_status", { task_id: savedTaskId }));
+        setDocumentStatus("Reconnecting to document task");
+      } else if (savedTaskId) {
+        window.localStorage.removeItem(ROOT_DOCUMENT_TASK_KEY);
+      }
+      if (VOICE_COMPANION_UI_ENABLED) {
+        resetVoiceCompanion();
+        const prefs = loadCompanionPrefs();
+        syncCompanionPrefs(prefs.companionType, prefs.presentation);
+      }
+      ws.send(JSON.stringify(encodeScheduledJobsList()));
+      addMessage("Connected to HIKARI! Ask me anything.", "ai");
+    };
+
     ws.onmessage = (event) => {
+      const phase4Message = parsePhase4ServerMessage(event.data);
+      if (phase4Message) {
+        applyPhase4ServerMessage(phase4Message);
+        if (phase4Message.type === "pairing_confirmed") {
+          initializePairedConnection();
+        }
+        return;
+      }
       const productivityMessage = parseProductivityServerMessage(event.data);
       if (productivityMessage) {
         applyProductivityMessage(productivityMessage);
@@ -2092,25 +2708,7 @@ export default function Home() {
       const data = parseServerMessage(event.data);
       if (!data) return;
       if (data.type === "paired") {
-        setIsPaired(true);
-        setInterfaceError("");
-        const savedTaskId = window.localStorage.getItem(ROOT_DOCUMENT_TASK_KEY) ?? "";
-        if (savedTaskId.length > 0 && savedTaskId.length <= DOCUMENT_TASK_ID_MAX) {
-          documentTaskIdRef.current = savedTaskId;
-          documentTaskIdsSeenRef.current.add(savedTaskId);
-          setDocumentTaskId(savedTaskId);
-          ws.send(encodeClientMessage("task_status", { task_id: savedTaskId }));
-          setDocumentStatus("Reconnecting to document task");
-        } else if (savedTaskId) {
-          window.localStorage.removeItem(ROOT_DOCUMENT_TASK_KEY);
-        }
-        if (VOICE_COMPANION_UI_ENABLED) {
-          resetVoiceCompanion();
-          const prefs = loadCompanionPrefs();
-          syncCompanionPrefs(prefs.companionType, prefs.presentation);
-        }
-        ws.send(JSON.stringify(encodeScheduledJobsList()));
-        addMessage("Connected to HIKARI! Ask me anything.", "ai");
+        initializePairedConnection();
       } else if (data.type === "companion_update" && data.companion) {
         applyCompanionUpdate(data.companion as Record<string, unknown>);
       } else if (data.type === "response") {
@@ -2273,6 +2871,7 @@ export default function Home() {
       }
       clearProductivityLifecycle();
       clearScheduledJobsState();
+      resetPhase4State();
       speechOutputRef.current?.cancel();
       speechOutputRef.current?.clearLastVoiceResponse();
       cancelVoiceCapture();
@@ -2280,7 +2879,7 @@ export default function Home() {
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState, applyPhase4ServerMessage, resetPhase4State]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -2551,11 +3150,20 @@ export default function Home() {
           </div>
           <button
             onClick={connect}
-            disabled={!serverUrl || !pairingCode}
+            disabled={!serverUrl || isConnected}
             className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-3 rounded-xl transition-all duration-200"
           >
             Connect
           </button>
+          {isConnected && (
+            <Phase4PairingPanel
+              state={pairingState}
+              onStartPairing={startPairing}
+              onConfirm={confirmPairingCode}
+              onCancel={cancelPairingAction}
+              headingRef={pairingHeadingRef}
+            />
+          )}
           {isConnected && !isPaired && (
             <p
               className="text-center text-yellow-400 text-sm animate-pulse"
@@ -2754,6 +3362,30 @@ export default function Home() {
 
         {activeTab === "files" && (
           <div className="p-4 overflow-y-auto h-full space-y-5">
+            <Phase4PairingPanel
+              state={pairingState}
+              onStartPairing={startPairing}
+              onConfirm={confirmPairingCode}
+              onCancel={cancelPairingAction}
+              headingRef={pairingHeadingRef}
+            />
+
+            <HandoffOfferPanel
+              state={handoffState}
+              onAccept={acceptHandoffAction}
+              onReject={rejectHandoffAction}
+              onCancel={cancelHandoffAction}
+              onToggleAcknowledge={toggleHandoffAck}
+              headingRef={handoffHeadingRef}
+            />
+
+            <VisualTransferPanel
+              state={visualTransferState}
+              onSelectFile={selectVisualTransferFileAction}
+              onBeginTransfer={beginVisualTransferAction}
+              onCancel={cancelVisualTransferAction}
+              headingRef={visualTransferHeadingRef}
+            />
             {productivityProposal && (
               <>
                 <ProductivityActionPreview

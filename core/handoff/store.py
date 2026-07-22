@@ -248,6 +248,19 @@ class HandoffStore:
         with self._connect() as conn:
             return self._load_by_id(conn, handoff_id)
 
+    def is_accepted_for_session(self, handoff_id: str, session_id: str) -> bool:
+        """Return only whether one exact origin session owns an accepted handoff."""
+        try:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM handoffs WHERE handoff_id = ? AND session_id = ? "
+                    "AND state = ? LIMIT 1",
+                    (handoff_id, session_id, HandoffState.ACCEPTED.value),
+                ).fetchone()
+            return row is not None
+        except (sqlite3.Error, TypeError, ValueError):
+            return False
+
     def _transition(
         self,
         handoff_id: str,

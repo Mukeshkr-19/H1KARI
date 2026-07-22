@@ -200,16 +200,16 @@ def test_server_injects_scheduled_job_runtime(monkeypatch):
     hikari.run_server("127.0.0.1", 9876)
 
     scheduled_job_factory.assert_called_once_with()
-    server_class.assert_called_once_with(
-        orchestrator,
-        host="127.0.0.1",
-        port=9876,
-        productivity_runtime=productivity_runtime,
-        scheduled_job_runtime=scheduled_job_runtime,
-        scheduled_job_subsystem=scheduled_job_subsystem,
-        email_draft_factory=email_draft_factory,
-        email_draft_registry=email_draft_registry,
-    )
+    server_class.assert_called_once()
+    args, kwargs = server_class.call_args
+    assert args == (orchestrator,)
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9876
+    assert kwargs["productivity_runtime"] is productivity_runtime
+    assert kwargs["scheduled_job_runtime"] is scheduled_job_runtime
+    assert kwargs["scheduled_job_subsystem"] is scheduled_job_subsystem
+    assert kwargs["email_draft_factory"] is email_draft_factory
+    assert kwargs["email_draft_registry"] is email_draft_registry
     server.start.assert_called_once_with()
 
 
@@ -253,15 +253,15 @@ def test_scheduled_job_bootstrap_failure_is_safe(monkeypatch, capsys):
 
     hikari.run_server("127.0.0.1", 9876)
 
-    server_class.assert_called_once_with(
-        orchestrator,
-        host="127.0.0.1",
-        port=9876,
-        productivity_runtime=productivity_runtime,
-        scheduled_job_runtime=None,
-        email_draft_factory=email_draft_factory,
-        email_draft_registry=email_draft_registry,
-    )
+    server_class.assert_called_once()
+    args, kwargs = server_class.call_args
+    assert args == (orchestrator,)
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9876
+    assert kwargs["productivity_runtime"] is productivity_runtime
+    assert kwargs["scheduled_job_runtime"] is None
+    assert kwargs["email_draft_factory"] is email_draft_factory
+    assert kwargs["email_draft_registry"] is email_draft_registry
     output = capsys.readouterr()
     assert "Scheduled jobs are temporarily unavailable" in output.err
     assert "private database" not in output.err

@@ -43,13 +43,18 @@ def test_page_parses_scheduled_jobs_before_schema_fallback():
 def test_page_requests_scheduled_jobs_list_only_after_pairing():
     text = _page()
     assert "encodeScheduledJobsList()" in text
+    initialize_idx = text.index("const initializePairedConnection = () => {")
+    list_idx = text.index("encodeScheduledJobsList()", initialize_idx)
     paired_idx = text.index('data.type === "paired"')
-    list_idx = text.index("encodeScheduledJobsList()", paired_idx)
-    assert list_idx > paired_idx
+    paired_call_idx = text.index("initializePairedConnection()", paired_idx)
+    phase4_paired_idx = text.index('phase4Message.type === "pairing_confirmed"')
+    phase4_call_idx = text.index("initializePairedConnection()", phase4_paired_idx)
+    assert initialize_idx < list_idx < paired_idx < paired_call_idx
+    assert phase4_paired_idx < phase4_call_idx
     assert "ws.send(JSON.stringify(encodeScheduledJobsList()))" in text
     # Not requested on bare websocket open.
     open_start = text.index("ws.onopen = () => {")
-    open_end = text.index("ws.onmessage = (event) => {", open_start)
+    open_end = initialize_idx
     assert "encodeScheduledJobsList" not in text[open_start:open_end]
 
 

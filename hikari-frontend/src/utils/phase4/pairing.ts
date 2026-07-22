@@ -9,7 +9,7 @@ import {
   isValidCanonicalId,
   isValidDeviceLabel,
   isValidOpaqueId,
-} from "./identifiers.js";
+} from "./identifiers";
 
 export type PairingErrorCode =
   | "unavailable"
@@ -31,6 +31,10 @@ const PAIRING_ERROR_CODES = new Set<PairingErrorCode>([
   "rate_limited",
   "device_not_found",
 ]);
+
+export function isPairingErrorCode(code: unknown): code is PairingErrorCode {
+  return typeof code === "string" && PAIRING_ERROR_CODES.has(code as PairingErrorCode);
+}
 
 export type PairingStatus =
   | "idle"

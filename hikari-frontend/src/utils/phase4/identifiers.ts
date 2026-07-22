@@ -84,3 +84,16 @@ export function isValidDeviceLabel(label: unknown): label is string {
   }
   return true;
 }
+
+/**
+ * Generates a valid canonical request ID with the specified prefix.
+ */
+export function createCanonicalRequestId(prefix: string = "req"): string {
+  const cleanPrefix = isValidCanonicalId(prefix) ? prefix : "req";
+  const ts = Date.now().toString(36);
+  const random = new Uint32Array(2);
+  globalThis.crypto.getRandomValues(random);
+  const rand = `${random[0].toString(36)}${random[1].toString(36)}`.slice(0, 12);
+  const id = `${cleanPrefix}-${ts}-${rand}`;
+  return isValidCanonicalId(id) ? id : `req-${ts}-${rand}`;
+}

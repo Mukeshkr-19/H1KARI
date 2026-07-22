@@ -9,7 +9,7 @@ import {
   isValidCanonicalId,
   isValidOpaqueId,
   isValidSummaryText,
-} from "./identifiers.js";
+} from "./identifiers";
 
 export type HandoffStatus =
   | "idle"
@@ -48,6 +48,10 @@ const HANDOFF_ERROR_CODES = new Set<HandoffErrorCode>([
   "handoff_conflict",
   "policy_denied",
 ]);
+
+export function isHandoffErrorCode(code: unknown): code is HandoffErrorCode {
+  return typeof code === "string" && HANDOFF_ERROR_CODES.has(code as HandoffErrorCode);
+}
 
 export interface HandoffState {
   readonly status: HandoffStatus;

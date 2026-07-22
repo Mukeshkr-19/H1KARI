@@ -243,16 +243,16 @@ def test_server_constructs_and_injects_productivity_runtime(monkeypatch):
     factory.assert_called_once_with()
     execution_factory.assert_called_once_with(runtime)
     scheduled_job_factory.assert_called_once_with()
-    server_class.assert_called_once_with(
-        orchestrator,
-        host="127.0.0.1",
-        port=9876,
-        productivity_runtime=runtime,
-        productivity_execution_coordinator=execution_coordinator,
-        scheduled_job_runtime=scheduled_job_runtime,
-        email_draft_factory=email_draft_factory,
-        email_draft_registry=email_draft_registry,
-    )
+    server_class.assert_called_once()
+    args, kwargs = server_class.call_args
+    assert args == (orchestrator,)
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9876
+    assert kwargs["productivity_runtime"] is runtime
+    assert kwargs["productivity_execution_coordinator"] is execution_coordinator
+    assert kwargs["scheduled_job_runtime"] is scheduled_job_runtime
+    assert kwargs["email_draft_factory"] is email_draft_factory
+    assert kwargs["email_draft_registry"] is email_draft_registry
     server.start.assert_called_once_with()
 
 
@@ -299,15 +299,15 @@ def test_server_bootstrap_failure_is_safe_and_fail_closed(monkeypatch, capsys):
 
     hikari.run_server("127.0.0.1", 9876)
 
-    server_class.assert_called_once_with(
-        orchestrator,
-        host="127.0.0.1",
-        port=9876,
-        productivity_runtime=None,
-        scheduled_job_runtime=scheduled_job_runtime,
-        email_draft_factory=None,
-        email_draft_registry=None,
-    )
+    server_class.assert_called_once()
+    args, kwargs = server_class.call_args
+    assert args == (orchestrator,)
+    assert kwargs["host"] == "127.0.0.1"
+    assert kwargs["port"] == 9876
+    assert kwargs["productivity_runtime"] is None
+    assert kwargs["scheduled_job_runtime"] is scheduled_job_runtime
+    assert kwargs["email_draft_factory"] is None
+    assert kwargs["email_draft_registry"] is None
     output = capsys.readouterr()
     assert "temporarily unavailable" in output.err
     assert "private path" not in output.err

@@ -17,11 +17,12 @@ message encoding, type allowlists, required server fields, and the protocol vers
 
 ## Authorization and validation
 
-Only `pair` and `ping` are accepted before pairing. All other client messages require
-the per-connection authorization established by `pair`. Required fields, field types,
-unknown fields, and string limits are checked before protected work reaches the
-orchestrator. Text and voice payloads are limited to 20,000 characters; device labels
-are limited to 64 characters.
+Only `pair`, `ping`, and the bounded `pairing_prepare`, `pairing_confirm`,
+`pairing_cancel`, and owner-authorized `pairing_revoke` control messages are accepted
+before pairing. All other client messages require per-connection pairing. Required
+fields, field types, unknown fields, and string limits are checked before protected
+work reaches the orchestrator. Text and voice payloads are limited to 20,000
+characters; legacy display-only device labels are limited to 64 characters.
 
 Server and client message names and their required fields are declared in the JSON
 contract. New message types must be added there first, then implemented and tested on
@@ -30,9 +31,9 @@ both sides. Public HTTP status and QR/connect pages never expose the pairing sec
 ## Phase 4 pairing and handoff control contract
 
 Phase 4 adds control-message contracts without changing the meaning of an existing
-v1 message. These declarations are additive and therefore remain protocol v1. They
-do not by themselves enable the transport handlers: the legacy `pair` exchange stays
-active until the new bounded runtime is wired and verified.
+v1 message. These declarations are additive and therefore remain protocol v1. The
+bounded runtime is wired alongside the legacy `pair` exchange so existing clients
+remain compatible while new clients use one-use challenges.
 
 Pairing challenges prove temporary-secret possession only. They never establish
 owner identity. The server continues to derive actor and session identity from the
@@ -76,10 +77,11 @@ Visual-transfer JSON messages carry metadata and lifecycle state only:
 
 Bytes, base64, data URLs, filenames, filesystem paths, actor/session IDs, approval
 IDs, grants, execution tickets, provider details, task payloads, and raw errors are
-unknown fields and fail validation. A later bounded authenticated binary transport
-may carry one image for an accepted transfer; image bytes never travel in this JSON
-control protocol and this contract performs no capture, upload, OCR, provider call,
-or external execution.
+unknown fields and fail validation. After `visual_transfer_ready`, one authenticated
+WebSocket binary frame may carry the declared image on the same exact connection and
+transfer scope. Image bytes never enter JSON and are removed on completion, failure,
+cancel, expiry, or disconnect. This boundary performs no capture, upload, OCR,
+provider call, or external execution.
 
 ## Document task flow
 

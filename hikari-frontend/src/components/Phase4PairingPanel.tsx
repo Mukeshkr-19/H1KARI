@@ -19,8 +19,10 @@ const PAIRING_CODE_PATTERN = /^[0-9A-F]{6}$/;
 
 export interface Phase4PairingPanelProps {
   readonly state: PairingState;
+  readonly onStartPairing?: (deviceLabel?: string) => void;
   readonly onConfirm?: (code: string) => void;
   readonly onCancel?: () => void;
+  readonly headingRef?: React.RefObject<HTMLHeadingElement | null>;
 }
 
 function formatStatusText(state: PairingState): string {
@@ -52,16 +54,25 @@ function formatStatusText(state: PairingState): string {
 
 export function Phase4PairingPanel({
   state,
+  onStartPairing,
   onConfirm,
   onCancel,
+  headingRef,
 }: Phase4PairingPanelProps) {
   const [code, setCode] = useState("");
   const isPending = isPairingPending(state.status);
   const isTerminal = isPairingTerminal(state.status);
 
+  const handleStart = useCallback(() => {
+    if (onStartPairing && state.status === "idle") {
+      onStartPairing();
+    }
+  }, [onStartPairing, state.status]);
+
   const handleConfirm = useCallback(() => {
-    if (PAIRING_CODE_PATTERN.test(code) && onConfirm && state.status === "challenge") {
-      onConfirm(code);
+    const uppercaseCode = code.toUpperCase();
+    if (PAIRING_CODE_PATTERN.test(uppercaseCode) && onConfirm && state.status === "challenge") {
+      onConfirm(uppercaseCode);
     }
   }, [code, onConfirm, state.status]);
 
@@ -78,6 +89,7 @@ export function Phase4PairingPanel({
     >
       <h2
         id="phase4-pairing-heading"
+        ref={headingRef}
         tabIndex={-1}
         className="text-lg font-semibold mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
       >
@@ -88,6 +100,16 @@ export function Phase4PairingPanel({
         <p className="text-sm text-gray-300 mb-3" id="pairing-device-label-desc">
           Device: <span className="font-medium text-white">{state.deviceLabel}</span>
         </p>
+      )}
+
+      {state.status === "idle" && (
+        <button
+          type="button"
+          onClick={handleStart}
+          className="mb-4 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-medium rounded focus:outline-none focus:ring-2 focus:ring-purple-400"
+        >
+          Start Device Pairing
+        </button>
       )}
 
       <div className="mb-4">
@@ -107,11 +129,11 @@ export function Phase4PairingPanel({
           pattern="[0-9A-F]{6}"
           autoComplete="one-time-code"
           aria-describedby={state.deviceLabel ? "pairing-code-hint pairing-device-label-desc" : "pairing-code-hint"}
-          className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-          placeholder="Enter 6-character code"
+          className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 font-mono tracking-wider uppercase"
+          placeholder="ENTER CODE"
         />
         <p id="pairing-code-hint" className="text-xs text-gray-400 mt-1">
-          Enter the six-character uppercase hexadecimal code displayed locally.
+          Enter 6-character uppercase code.
         </p>
       </div>
 
@@ -119,7 +141,7 @@ export function Phase4PairingPanel({
         <button
           type="button"
           onClick={handleConfirm}
-          disabled={isPending || isTerminal || state.status !== "challenge" || !PAIRING_CODE_PATTERN.test(code)}
+          disabled={isPending || isTerminal || state.status !== "challenge" || !PAIRING_CODE_PATTERN.test(code.toUpperCase())}
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Confirm
@@ -127,7 +149,7 @@ export function Phase4PairingPanel({
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isTerminal || state.status === "cancelling" || state.status === "idle"}
+          disabled={isTerminal || state.status === "cancelling" || !state.challengeId}
           className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Cancel

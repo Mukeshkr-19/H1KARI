@@ -71,6 +71,9 @@ from core.jobs.delivery_runtime import (
     MeaningfulChangeDeliveryRuntime,
 )
 from core.jobs.runner import ExecutionResult, ExecutionStatus
+from core.handoff import HandoffTransportAdapter
+from core.pairing import PairingRuntime
+from core.visual_transfer import VisualTransferRuntime
 
 
 class _EmptyPreparationRegistry:
@@ -127,6 +130,9 @@ class WebSocketServer:
         productivity_execution_coordinator: Optional[
             ProductivityExecutionCoordinator
         ] = None,
+        pairing_runtime: Optional[PairingRuntime] = None,
+        handoff_transport: Optional[HandoffTransportAdapter] = None,
+        visual_transfer_runtime: Optional[VisualTransferRuntime] = None,
     ):
         self.orchestrator = orchestrator
         self.host = host
@@ -160,6 +166,13 @@ class WebSocketServer:
         self._reminder_factory = reminder_factory
         self._reminder_registry = reminder_registry
         self._productivity_execution_coordinator = productivity_execution_coordinator
+        self._pairing_runtime = pairing_runtime
+        self._handoff_transport = handoff_transport
+        self._visual_transfer_runtime = visual_transfer_runtime
+        self._phase4_device_ids: Dict[str, str] = {}
+        self._phase4_challenges: Dict[str, tuple[str, str]] = {}
+        self._phase4_handoff_origins: Dict[str, str] = {}
+        self._phase4_pending_transfers: Dict[str, tuple[str, str]] = {}
         self._scheduled_runner_task: asyncio.Task | None = None
         self._scheduled_runner = None
 
@@ -331,7 +344,10 @@ class WebSocketServer:
 
         try:
             async for message in websocket:
-                await self._handle_message(websocket, message)
+                if isinstance(message, bytes):
+                    await self._handle_visual_binary(websocket, message)
+                else:
+                    await self._handle_message(websocket, message)
         except Exception:
             print("[WS] Client error")
         finally:
@@ -367,6 +383,12 @@ class WebSocketServer:
                     )
                 except Exception:
                     pass
+            if self._visual_transfer_runtime is not None:
+                try:
+                    actor = self._derive_actor_context(websocket).actor_context
+                    self._visual_transfer_runtime.clear_session(actor.session_id)
+                except Exception:
+                    pass
             self.connected_clients.discard(websocket)
             client_key = str(id(websocket))
             for key, job in list(self._document_jobs.items()):
@@ -379,6 +401,29 @@ class WebSocketServer:
             self.device_info.pop(client_key, None)
             self._companion_bridges.pop(client_key, None)
             self._owner_sessions.pop(client_key, None)
+            device_id = self._phase4_device_ids.pop(client_key, None)
+            if device_id is not None and self._pairing_runtime is not None:
+                try:
+                    await asyncio.to_thread(
+                        self._pairing_runtime.disconnect,
+                        device_id,
+                    )
+                except Exception:
+                    pass
+            challenge = self._phase4_challenges.pop(client_key, None)
+            if challenge is not None and self._pairing_runtime is not None:
+                try:
+                    await asyncio.to_thread(
+                        self._pairing_runtime.cancel,
+                        challenge[0],
+                        challenge[1],
+                    )
+                except Exception:
+                    pass
+            self._phase4_pending_transfers.pop(client_key, None)
+            for handoff_id, origin_key in list(self._phase4_handoff_origins.items()):
+                if origin_key == client_key:
+                    self._phase4_handoff_origins.pop(handoff_id, None)
             print(f"[WS] Client disconnected ({len(self.connected_clients)} total)")
 
     @staticmethod
@@ -563,6 +608,255 @@ class WebSocketServer:
         await bridge.finish_voice_turn_async()
         return full_text
 
+    async def _send_phase4_message(self, websocket, message: dict) -> None:
+        """Send one canonical Phase 4 message or a bounded generic failure."""
+        if not isinstance(message, dict) or validate_server_message(message) is not None:
+            await websocket.send(
+                json.dumps({"type": "error", "message": "Server request failed"})
+            )
+            return
+        await websocket.send(json.dumps(message))
+
+    async def _handle_pairing_control(self, websocket, data: dict) -> None:
+        runtime = self._pairing_runtime
+        request_id = data.get("request_id", "invalid-request")
+        if runtime is None:
+            await self._send_phase4_message(
+                websocket,
+                {
+                    "type": "pairing_error",
+                    "request_id": request_id,
+                    "code": "unavailable",
+                },
+            )
+            return
+        msg_type = data["type"]
+        client_key = str(id(websocket))
+        pending_challenge = self._phase4_challenges.get(client_key)
+        if (
+            msg_type == "pairing_prepare"
+            and pending_challenge is not None
+            and pending_challenge[0] != request_id
+        ):
+            await self._send_phase4_message(
+                websocket,
+                {
+                    "type": "pairing_error",
+                    "request_id": request_id,
+                    "code": "rate_limited",
+                },
+            )
+            return
+        actor = self._derive_actor_context(websocket).actor_context
+        try:
+            if msg_type == "pairing_prepare":
+                result = await asyncio.to_thread(runtime.prepare, request_id)
+            elif msg_type == "pairing_confirm":
+                result = await asyncio.to_thread(
+                    runtime.confirm,
+                    request_id,
+                    data["challenge_id"],
+                    data["code"],
+                )
+            elif msg_type == "pairing_cancel":
+                result = await asyncio.to_thread(
+                    runtime.cancel,
+                    request_id,
+                    data["challenge_id"],
+                )
+            else:
+                result = await asyncio.to_thread(
+                    runtime.revoke,
+                    actor,
+                    request_id,
+                    data["device_id"],
+                )
+        except Exception:
+            result = {
+                "type": "pairing_error",
+                "request_id": request_id,
+                "code": "unavailable",
+            }
+
+        if result.get("type") == "pairing_challenge":
+            self._phase4_challenges[client_key] = (
+                result["request_id"],
+                result["challenge_id"],
+            )
+        elif result.get("type") == "pairing_confirmed":
+            self._paired_client_ids.add(client_key)
+            self._pair_attempts.pop(client_key, None)
+            self._phase4_device_ids[client_key] = result["device_id"]
+            self._phase4_challenges.pop(client_key, None)
+        elif result.get("type") == "pairing_update" and result.get("status") == "cancelled":
+            self._phase4_challenges.pop(client_key, None)
+        elif result.get("type") == "pairing_update" and result.get("status") == "revoked":
+            revoked_id = result.get("device_id")
+            for client_key, device_id in list(self._phase4_device_ids.items()):
+                if device_id == revoked_id:
+                    self._phase4_device_ids.pop(client_key, None)
+                    self._paired_client_ids.discard(client_key)
+        await self._send_phase4_message(websocket, result)
+
+    async def _send_handoff_result(self, websocket, data: dict, result: dict) -> None:
+        """Route handoff results to the caller and the exact known counterpart."""
+        await self._send_phase4_message(websocket, result)
+        msg_type = result.get("type")
+        handoff_id = result.get("handoff_id")
+        caller_key = str(id(websocket))
+        if msg_type == "handoff_offer" and isinstance(handoff_id, str):
+            self._phase4_handoff_origins[handoff_id] = caller_key
+            for candidate in tuple(self.connected_clients):
+                candidate_key = str(id(candidate))
+                if (
+                    candidate is websocket
+                    or candidate_key not in self._paired_client_ids
+                    or not self._is_loopback(candidate)
+                ):
+                    continue
+                try:
+                    await self._send_phase4_message(candidate, result)
+                except Exception:
+                    continue
+            return
+        if not isinstance(handoff_id, str):
+            return
+        origin_key = self._phase4_handoff_origins.get(handoff_id)
+        if origin_key is not None and origin_key != caller_key:
+            for candidate in tuple(self.connected_clients):
+                if str(id(candidate)) == origin_key:
+                    try:
+                        await self._send_phase4_message(candidate, result)
+                    except Exception:
+                        pass
+                    break
+        if result.get("status") in {"accepted", "rejected", "cancelled", "expired"}:
+            self._phase4_handoff_origins.pop(handoff_id, None)
+
+    async def _handle_handoff_control(self, websocket, data: dict) -> None:
+        adapter = self._handoff_transport
+        if adapter is None:
+            result = {
+                "type": "handoff_error",
+                "request_id": data.get("request_id", "invalid-request"),
+                "code": "unavailable",
+            }
+        else:
+            actor = self._derive_actor_context(websocket).actor_context
+            try:
+                result = await asyncio.to_thread(adapter.dispatch, actor, data)
+            except Exception:
+                result = {
+                    "type": "handoff_error",
+                    "request_id": data.get("request_id", "invalid-request"),
+                    "code": "unavailable",
+                }
+        await self._send_handoff_result(websocket, data, result)
+
+    async def _handle_visual_control(self, websocket, data: dict) -> None:
+        runtime = self._visual_transfer_runtime
+        request_id = data.get("request_id", "invalid-request")
+        actor = self._derive_actor_context(websocket).actor_context
+        if runtime is None:
+            messages = [{
+                "type": "visual_transfer_error",
+                "request_id": request_id,
+                "code": "unavailable",
+            }]
+        else:
+            try:
+                if data["type"] == "visual_transfer_begin":
+                    if str(id(websocket)) in self._phase4_pending_transfers:
+                        messages = [{
+                            "type": "visual_transfer_error",
+                            "request_id": request_id,
+                            "code": "rate_limited",
+                        }]
+                    else:
+                        messages = await asyncio.to_thread(
+                            runtime.begin,
+                            actor.session_id,
+                            request_id,
+                            data["handoff_id"],
+                            data["mime_type"],
+                            data["size_bytes"],
+                            data["width"],
+                            data["height"],
+                            data["frame_count"],
+                        )
+                elif data["type"] == "visual_transfer_status":
+                    messages = await asyncio.to_thread(
+                        runtime.status,
+                        actor.session_id,
+                        request_id,
+                        data["transfer_id"],
+                    )
+                else:
+                    messages = await asyncio.to_thread(
+                        runtime.cancel,
+                        actor.session_id,
+                        request_id,
+                        data["transfer_id"],
+                    )
+            except Exception:
+                messages = [{
+                    "type": "visual_transfer_error",
+                    "request_id": request_id,
+                    "code": "unavailable",
+                }]
+        for result in messages:
+            if result.get("type") == "visual_transfer_ready":
+                self._phase4_pending_transfers[str(id(websocket))] = (
+                    request_id,
+                    result["transfer_id"],
+                )
+            if result.get("status") in {"cancelled", "failed"}:
+                self._phase4_pending_transfers.pop(str(id(websocket)), None)
+            await self._send_phase4_message(websocket, result)
+
+    async def _handle_visual_binary(self, websocket, frame: bytes) -> None:
+        """Process one authenticated binary frame outside the JSON protocol."""
+        client_key = str(id(websocket))
+        if client_key not in self._paired_client_ids:
+            await websocket.send(
+                json.dumps({
+                    "type": "pairing_required",
+                    "message": "Pair this connection before sending requests",
+                })
+            )
+            return
+        pending = self._phase4_pending_transfers.get(client_key)
+        runtime = self._visual_transfer_runtime
+        if pending is None or runtime is None:
+            await self._send_phase4_message(
+                websocket,
+                {
+                    "type": "visual_transfer_error",
+                    "request_id": "invalid-request",
+                    "code": "transfer_not_found",
+                },
+            )
+            return
+        request_id, transfer_id = pending
+        actor = self._derive_actor_context(websocket).actor_context
+        try:
+            messages = await asyncio.to_thread(
+                runtime.receive_binary,
+                actor.session_id,
+                request_id,
+                transfer_id,
+                frame,
+            )
+        except Exception:
+            messages = [{
+                "type": "visual_transfer_error",
+                "request_id": request_id,
+                "code": "unavailable",
+            }]
+        for result in messages:
+            await self._send_phase4_message(websocket, result)
+        self._phase4_pending_transfers.pop(client_key, None)
+
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
         try:
@@ -575,6 +869,29 @@ class WebSocketServer:
 
             msg_type = data.get("type", "")
             client_id = str(id(websocket))
+
+            if msg_type in {
+                "pairing_prepare",
+                "pairing_confirm",
+                "pairing_cancel",
+                "pairing_revoke",
+            }:
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    request_id = data.get("request_id")
+                    if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id):
+                        request_id = "invalid-request"
+                    await self._send_phase4_message(
+                        websocket,
+                        {
+                            "type": "pairing_error",
+                            "request_id": request_id,
+                            "code": "invalid_request",
+                        },
+                    )
+                    return
+                await self._handle_pairing_control(websocket, data)
+                return
 
             if msg_type == "pair":
                 validation_error = validate_client_message(data)
@@ -683,6 +1000,24 @@ class WebSocketServer:
                 await websocket.send(
                     json.dumps({"type": "error", "message": validation_error})
                 )
+                return
+
+            if msg_type in {
+                "handoff_prepare",
+                "handoff_accept",
+                "handoff_reject",
+                "handoff_cancel",
+                "handoff_status",
+            }:
+                await self._handle_handoff_control(websocket, data)
+                return
+
+            if msg_type in {
+                "visual_transfer_begin",
+                "visual_transfer_status",
+                "visual_transfer_cancel",
+            }:
+                await self._handle_visual_control(websocket, data)
                 return
 
             if msg_type == "identify":

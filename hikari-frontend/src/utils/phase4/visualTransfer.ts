@@ -5,7 +5,7 @@
  * zero persistence, and automatic file reference clearing on all terminal/cancel paths.
  */
 
-import { isValidCanonicalId, isValidOpaqueId } from "./identifiers.js";
+import { isValidCanonicalId, isValidOpaqueId } from "./identifiers";
 
 export type VisualTransferErrorCode =
   | "unavailable"
@@ -41,6 +41,10 @@ const VISUAL_TRANSFER_ERROR_CODES = new Set<VisualTransferErrorCode>([
   "malformed_image",
   "rate_limited",
 ]);
+
+export function isVisualTransferErrorCode(code: unknown): code is VisualTransferErrorCode {
+  return typeof code === "string" && VISUAL_TRANSFER_ERROR_CODES.has(code as VisualTransferErrorCode);
+}
 
 export type VisualTransferStatus =
   | "idle"
@@ -126,6 +130,56 @@ export function validateImageFile(file: unknown): {
     return { valid: false, errorCode: "size_exceeded" };
   }
   return { valid: true, errorCode: null };
+}
+
+export function inspectImageDimensions(
+  buffer: ArrayBuffer,
+  mimeType: string,
+): Readonly<{ width: number; height: number }> | null {
+  const bytes = new Uint8Array(buffer);
+  if (mimeType === "image/png") {
+    if (
+      bytes.length < 24 ||
+      bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47 ||
+      bytes[4] !== 0x0d || bytes[5] !== 0x0a || bytes[6] !== 0x1a || bytes[7] !== 0x0a
+    ) {
+      return null;
+    }
+    const view = new DataView(buffer);
+    const width = view.getUint32(16, false);
+    const height = view.getUint32(20, false);
+    return width >= 1 && width <= 4096 && height >= 1 && height <= 4096
+      ? Object.freeze({ width, height })
+      : null;
+  }
+  if (mimeType !== "image/jpeg" || bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    return null;
+  }
+  const sofMarkers = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
+  let offset = 2;
+  while (offset + 8 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    while (offset < bytes.length && bytes[offset] === 0xff) offset += 1;
+    if (offset >= bytes.length) return null;
+    const marker = bytes[offset++];
+    if (marker === 0xd9 || marker === 0xda) return null;
+    if (offset + 1 >= bytes.length) return null;
+    const segmentLength = (bytes[offset] << 8) | bytes[offset + 1];
+    if (segmentLength < 2 || offset + segmentLength > bytes.length) return null;
+    if (sofMarkers.has(marker)) {
+      if (segmentLength < 7) return null;
+      const height = (bytes[offset + 3] << 8) | bytes[offset + 4];
+      const width = (bytes[offset + 5] << 8) | bytes[offset + 6];
+      return width >= 1 && width <= 4096 && height >= 1 && height <= 4096
+        ? Object.freeze({ width, height })
+        : null;
+    }
+    offset += segmentLength;
+  }
+  return null;
 }
 
 export function reduceVisualTransfer(

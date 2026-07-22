@@ -20,6 +20,7 @@ export interface VisualTransferPanelProps {
   readonly onSelectFile?: (file: File) => void;
   readonly onBeginTransfer?: (file: File) => void;
   readonly onCancel?: () => void;
+  readonly headingRef?: React.RefObject<HTMLHeadingElement | null>;
 }
 
 function formatStatusText(state: VisualTransferState): string {
@@ -56,6 +57,7 @@ export function VisualTransferPanel({
   onSelectFile,
   onBeginTransfer,
   onCancel,
+  headingRef,
 }: VisualTransferPanelProps) {
   const isPending = isVisualTransferPending(state.status);
   const isTerminal = isVisualTransferTerminal(state.status);
@@ -90,6 +92,7 @@ export function VisualTransferPanel({
     >
       <h2
         id="phase4-visual-transfer-heading"
+        ref={headingRef}
         tabIndex={-1}
         className="text-lg font-semibold mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
       >
@@ -137,7 +140,12 @@ export function VisualTransferPanel({
         <button
           type="button"
           onClick={handleCancel}
-          disabled={isTerminal || state.status === "cancelling" || state.status === "idle"}
+          disabled={
+            isTerminal ||
+            state.status === "cancelling" ||
+            state.status === "idle" ||
+            (isPending && !state.transferId)
+          }
           className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white font-medium rounded focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Cancel
@@ -160,7 +168,7 @@ export function VisualTransferPanel({
           role="alert"
           className="mt-3 p-2 bg-red-900/50 border border-red-500 rounded text-sm text-red-200"
         >
-          {state.errorCode === "mime_unsupported"
+          {state.errorCode === "mime_unsupported" || state.errorCode === "mime_mismatch"
             ? "Validation error: Only PNG and JPEG images are allowed."
             : state.errorCode === "size_exceeded"
             ? "Validation error: Image file must be non-empty and 1 MiB or less."

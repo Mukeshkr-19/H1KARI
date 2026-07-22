@@ -1,5 +1,11 @@
 """Bounded Phase 4 pairing-challenge and device-session core."""
 
+from core.pairing.bootstrap import (
+    PAIRING_DB_NAME,
+    PairingBootstrapError,
+    create_pairing_runtime,
+    pairing_db_path,
+)
 from core.pairing.challenge_store import PairingChallengeStore
 from core.pairing.contracts import (
     CHALLENGE_TTL_SECONDS,
@@ -29,12 +35,14 @@ from core.pairing.contracts import (
     validate_request_id,
 )
 from core.pairing.device_store import DeviceSessionStore
+from core.pairing.runtime import PairingRuntime
 from core.pairing.service import PairingService
 
 __all__ = (
     "CHALLENGE_TTL_SECONDS",
     "DEVICE_SESSION_TTL_SECONDS",
     "MAX_CONFIRMATION_ATTEMPTS",
+    "PAIRING_DB_NAME",
     "CancelChallengeOutcome",
     "ConfirmChallengeOutcome",
     "ContractValidationError",
@@ -46,6 +54,7 @@ __all__ = (
     "DeviceSessionState",
     "DeviceSessionStore",
     "IssueDeviceOutcome",
+    "PairingBootstrapError",
     "PairingChallenge",
     "PairingChallengeState",
     "PairingChallengeStore",
@@ -53,8 +62,11 @@ __all__ = (
     "PairingErrorCode",
     "PairingOutcomeStatus",
     "PairingPrepareOutcome",
+    "PairingRuntime",
     "PairingService",
     "PrepareChallengeOutcome",
+    "create_pairing_runtime",
+    "pairing_db_path",
     "validate_challenge_id",
     "validate_code",
     "validate_device_id",

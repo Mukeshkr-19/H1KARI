@@ -591,3 +591,13 @@ def test_phase3_scheduled_jobs_panel_live_regions_and_labelled_controls():
     assert "aria-label={`Resume ${job.actionLabel" in panel
     assert "aria-label={`Cancel ${job.actionLabel" in panel
     assert "mapScheduledJobErrorMessage" in panel
+
+
+def test_phase4_frontend_integration_accessibility():
+    page = PAGE.read_text(encoding="utf-8")
+    assert "<Phase4PairingPanel" in page
+    assert "<HandoffOfferPanel" in page
+    assert "<VisualTransferPanel" in page
+    assert "headingRef={pairingHeadingRef}" in page
+    assert "headingRef={handoffHeadingRef}" in page
+    assert "headingRef={visualTransferHeadingRef}" in page

@@ -108,8 +108,59 @@ def run_server(host: str, port: int):
     except ImportError:
         create_reminder_preparation = None
     from core.server import WebSocketServer
+    from core.action_policy import (
+        ActionContext,
+        ActionRisk,
+        Actor,
+        DataScope,
+        PolicyOutcome,
+        evaluate_action,
+    )
+    from core.handoff import FrozenHandoffPreview
+    from core.phase1_runtime import create_phase1_runtime
+    from core.phase4 import create_phase4_subsystem
+    from core.tasks import TaskRecordContext, TaskStatus
 
     orchestrator = get_orchestrator()
+    phase1_runtime = None
+    phase4_subsystem = None
+    try:
+        phase1_runtime = create_phase1_runtime()
+
+        def phase4_task_lookup(actor, task_id):
+            context = TaskRecordContext(
+                speaker_label=actor.actor_id,
+                session_id=actor.session_id,
+                source=actor.source,
+                actor=actor.actor.value,
+                is_guest=actor.actor is Actor.GUEST,
+            )
+            record = phase1_runtime.tasks.get_task(task_id, context=context)
+            if record is None or record.status is not TaskStatus.COMPLETED:
+                return None
+            summary = record.result_summary or record.raw_text
+            return FrozenHandoffPreview(task_id=record.task_id, summary=summary)
+
+        def phase4_acceptance_policy(actor, _preview):
+            decision = evaluate_action(
+                ActionContext(
+                    action="task.handoff.accept",
+                    actor=actor.actor,
+                    data_scope=DataScope.SESSION,
+                    risk=ActionRisk.READ_ONLY,
+                    user_initiated=True,
+                    confirmation_granted=True,
+                )
+            )
+            return actor.actor is Actor.OWNER and decision.outcome is PolicyOutcome.ALLOW
+
+        phase4_subsystem = create_phase4_subsystem(
+            task_lookup=phase4_task_lookup,
+            acceptance_policy=phase4_acceptance_policy,
+        )
+    except Exception:
+        phase4_subsystem = None
+        print("[!] Phase 4 device handoff is temporarily unavailable.", file=sys.stderr)
     productivity_runtime = None
     productivity_execution_coordinator = None
     email_draft_factory = None
@@ -218,6 +269,13 @@ def run_server(host: str, port: int):
         server_kwargs["reminder_factory"] = reminder_factory
     if reminder_registry is not None:
         server_kwargs["reminder_registry"] = reminder_registry
+    if phase4_subsystem is not None:
+        server_kwargs["phase1_runtime"] = phase1_runtime
+        server_kwargs["pairing_runtime"] = phase4_subsystem.pairing_runtime
+        server_kwargs["handoff_transport"] = phase4_subsystem.handoff_transport
+        server_kwargs["visual_transfer_runtime"] = (
+            phase4_subsystem.visual_transfer_runtime
+        )
     WebSocketServer(
         orchestrator,
         **server_kwargs,

@@ -36,7 +36,22 @@ from core.visual_transfer.contracts import (
     validate_transfer_id,
 )
 from core.visual_transfer.buffer import VisualTransferBuffer
+from core.visual_transfer.runtime import VisualTransferRuntime
 from core.visual_transfer.service import VisualTransferService
+from core.visual_transfer.transport import (
+    MESSAGE_COMPLETE,
+    MESSAGE_ERROR,
+    MESSAGE_READY,
+    MESSAGE_UPDATE,
+    begin_result_to_ready,
+    build_declaration,
+    result_to_complete,
+    result_to_error,
+    result_to_update,
+    state_to_update_status,
+    unavailable_error,
+    validate_control_fields,
+)
 from core.visual_transfer.validator import VisualTransferValidator
 
 __all__ = [
@@ -45,6 +60,10 @@ __all__ = [
     "HANDOFF_ID_PATTERN",
     "MAX_DIMENSION",
     "MAX_ENCODED_BYTES",
+    "MESSAGE_COMPLETE",
+    "MESSAGE_ERROR",
+    "MESSAGE_READY",
+    "MESSAGE_UPDATE",
     "MIN_DIMENSION",
     "TRANSFER_ID_PATTERN",
     "TRANSFER_TTL_SECONDS",
@@ -56,10 +75,19 @@ __all__ = [
     "VisualTransferErrorCode",
     "VisualTransferOutcomeStatus",
     "VisualTransferResult",
+    "VisualTransferRuntime",
     "VisualTransferService",
     "VisualTransferState",
     "VisualTransferValidator",
+    "begin_result_to_ready",
+    "build_declaration",
+    "result_to_complete",
+    "result_to_error",
+    "result_to_update",
+    "state_to_update_status",
+    "unavailable_error",
     "validate_actor_scope",
+    "validate_control_fields",
     "validate_handoff_id",
     "validate_transfer_id",
 ]

@@ -10,6 +10,9 @@ from core.pairing.contracts import (
     PairingErrorCode,
     PairingOutcomeStatus,
     PairingPrepareOutcome,
+    PairingChallenge,
+    DeviceSessionRecord,
+    DeviceMutationOutcome,
 )
 from core.pairing.device_store import DeviceSessionStore
 
@@ -112,6 +115,22 @@ class PairingService:
                 error=PairingErrorCode.INVALID_INPUT,
             )
         return self._challenge_store.cancel(challenge_id)
+
+    def _get_challenge(self, challenge_id: str) -> PairingChallenge | None:
+        """Return one bounded challenge snapshot for runtime correlation."""
+        return self._challenge_store.get_challenge(challenge_id)
+
+    def _get_device(self, device_id: str) -> DeviceSessionRecord | None:
+        """Return one device-session snapshot without exposing store internals."""
+        return self._device_store.get_record(device_id)
+
+    def _revoke_device(self, device_id: str) -> DeviceMutationOutcome:
+        """Revoke one server-generated device identifier."""
+        return self._device_store.revoke(device_id)
+
+    def _mark_device_stale(self, device_id: str) -> DeviceMutationOutcome:
+        """Mark one issued device stale for runtime disconnect cleanup."""
+        return self._device_store.mark_stale(device_id)
 
     def expire_due(self) -> tuple[int, int]:
         return (
