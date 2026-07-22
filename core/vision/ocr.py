@@ -127,6 +127,18 @@ class BoundedTesseractRunner:
         if not path.parts or not str(path) or not path.is_absolute():
             raise OcrAdapterError()
         self._executable_path = path
+        self._lock = threading.Lock()
+        self._active_process: subprocess.Popen[bytes] | None = None
+
+    def cancel(self) -> None:
+        """Terminate the single active local OCR process, if any."""
+        with self._lock:
+            process = self._active_process
+        if process is not None:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def __call__(
         self,
@@ -148,17 +160,21 @@ class BoundedTesseractRunner:
         except (OSError, ValueError):
             return CommandResult(returncode=1, stdout=b"")
 
-        try:
-            proc = subprocess.Popen(
-                list(argv),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                shell=False,
-                env={},
-            )
-        except (OSError, subprocess.SubprocessError):
-            return CommandResult(returncode=1, stdout=b"")
+        with self._lock:
+            if self._active_process is not None:
+                return CommandResult(returncode=1, stdout=b"")
+            try:
+                proc = subprocess.Popen(
+                    list(argv),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    env={},
+                )
+            except (OSError, subprocess.SubprocessError):
+                return CommandResult(returncode=1, stdout=b"")
+            self._active_process = proc
 
         killed = threading.Event()
 
@@ -223,6 +239,9 @@ class BoundedTesseractRunner:
             except Exception:
                 pass
             writer.join(timeout=1.0)
+            with self._lock:
+                if self._active_process is proc:
+                    self._active_process = None
 
 
 class LocalOcrAdapter:
@@ -292,6 +311,15 @@ class LocalOcrAdapter:
             return OcrResult(status=OcrStatus.SUCCESS, text=text)
         except ValueError:
             return OcrResult(status=OcrStatus.UNAVAILABLE)
+
+    def cancel(self) -> None:
+        """Request cancellation when the injected runner supports it."""
+        cancel = getattr(self._runner, "cancel", None)
+        if callable(cancel):
+            try:
+                cancel()
+            except Exception:
+                pass
 
     def __repr__(self) -> str:
         return "LocalOcrAdapter()"

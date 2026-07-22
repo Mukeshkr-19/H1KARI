@@ -307,15 +307,16 @@ class VisionRuntime:
             return self._error(request_id, "analysis_not_found", analysis_id)
         if outcome.code is not VisionOutcomeCode.CANCELLED:
             return self._error(request_id, "analysis_failed", analysis_id)
-        if (
-            record is not None
-            and record.capability is VisionCapability.DESCRIBE
-            and record.state is not VisionAnalysisState.CANCELLED
-        ):
-            analyzer_cancel = getattr(self._description_analyzer, "cancel", None)
-            if callable(analyzer_cancel):
+        if record is not None and record.state is VisionAnalysisState.ANALYZING:
+            adapter = (
+                self._ocr_adapter
+                if record.capability is VisionCapability.OCR
+                else self._description_analyzer
+            )
+            adapter_cancel = getattr(adapter, "cancel", None)
+            if callable(adapter_cancel):
                 try:
-                    analyzer_cancel()
+                    adapter_cancel()
                 except Exception:
                     pass
         message = self._message(

@@ -1,5 +1,6 @@
 """Contracts for optional local OpenAI-compatible routing gateways."""
 
+import json
 from unittest.mock import Mock
 
 import core.router as router_module
@@ -116,9 +117,12 @@ def test_gateway_request_is_openai_compatible_and_text_only(monkeypatch):
     router = AIRouter()
     response = Mock()
     response.status_code = 200
-    response.json.return_value = {
-        "choices": [{"message": {"content": "safe response"}}]
-    }
+    response.headers = {}
+    response.iter_content.return_value = [
+        json.dumps(
+            {"choices": [{"message": {"content": "safe response"}}]}
+        ).encode("utf-8")
+    ]
     post = Mock(return_value=response)
     monkeypatch.setattr(router_module.requests, "post", post)
 
@@ -141,6 +145,27 @@ def test_gateway_request_is_openai_compatible_and_text_only(monkeypatch):
         "temperature",
     }
     assert "image" not in repr(call.kwargs["json"]).casefold()
+    assert call.kwargs["stream"] is True
+
+
+def test_gateway_rejects_oversized_response_before_json_parse(monkeypatch):
+    _clear_gateway_env(monkeypatch)
+    monkeypatch.setenv("NINEROUTER_API_KEY", "nine-local-key")
+    router = AIRouter()
+    response = Mock(status_code=200)
+    response.headers = {"Content-Length": str(1_048_577)}
+    response.iter_content.side_effect = AssertionError("body must not be read")
+    monkeypatch.setattr(router_module.requests, "post", Mock(return_value=response))
+
+    assert (
+        router._call_direct_api(
+            "9router",
+            "free-forever",
+            [{"role": "user", "content": "hello"}],
+        )
+        is None
+    )
+    response.iter_content.assert_not_called()
 
 
 def test_gateway_error_does_not_log_response_content(monkeypatch, capsys):
@@ -160,3 +185,27 @@ def test_gateway_error_does_not_log_response_content(monkeypatch, capsys):
         is None
     )
     assert "private upstream response content" not in capsys.readouterr().out
+
+
+def test_gateway_exception_does_not_log_exception_content(monkeypatch, capsys):
+    _clear_gateway_env(monkeypatch)
+    monkeypatch.setenv("OMNIROUTE_API_KEY", "omni-local-key")
+    monkeypatch.setattr(router_module, "is_quiet", lambda: False)
+    monkeypatch.setattr(
+        router_module.requests,
+        "post",
+        Mock(side_effect=RuntimeError("private upstream exception content")),
+    )
+    router = AIRouter()
+
+    assert (
+        router._call_direct_api(
+            "omniroute",
+            "auto",
+            [{"role": "user", "content": "hello"}],
+        )
+        is None
+    )
+    output = capsys.readouterr().out
+    assert "private upstream exception content" not in output
+    assert "local gateway request failed" in output

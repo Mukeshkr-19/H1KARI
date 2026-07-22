@@ -41,11 +41,11 @@ class FailingConnection(MockWebSocket):
 
 
 class TestServerPairingSafety(unittest.TestCase):
-    def test_pairing_code_is_random_six_character_hex(self):
+    def test_pairing_code_is_random_ten_character_hex(self):
         codes = {WebSocketServer(MagicMock()).pairing_code for _ in range(20)}
 
         self.assertEqual(len(codes), 20)
-        self.assertTrue(all(re.fullmatch(r"[0-9A-F]{6}", code) for code in codes))
+        self.assertTrue(all(re.fullmatch(r"[0-9A-F]{10}", code) for code in codes))
 
     def test_qr_page_does_not_disclose_pairing_code(self):
         server = WebSocketServer(MagicMock())
@@ -186,6 +186,68 @@ class TestServerPairingSafety(unittest.TestCase):
         )
         self.assertEqual(websocket.sent[-1]["type"], "pair_locked")
         self.assertNotIn(str(id(websocket)), server._paired_client_ids)
+
+    def test_failed_pairing_attempts_survive_reconnect_from_same_source(self):
+        server = WebSocketServer(MagicMock())
+        server.pairing_code = "ABC123"
+        first = MockWebSocket()
+        second = MockWebSocket()
+
+        for _ in range(MAX_PAIRING_ATTEMPTS):
+            asyncio.run(
+                server._handle_message(
+                    first,
+                    json.dumps({"type": "pair", "code": "WRONG0"}),
+                )
+            )
+        asyncio.run(
+            server._handle_message(
+                second,
+                json.dumps({"type": "pair", "code": "ABC123"}),
+            )
+        )
+
+        self.assertEqual(second.sent[-1]["type"], "pair_locked")
+        self.assertNotIn(str(id(second)), server._paired_client_ids)
+
+    def test_legacy_pairing_lockout_expires_after_bounded_window(self):
+        server = WebSocketServer(MagicMock())
+        server.pairing_code = "ABC123"
+        now = [100.0]
+        server._pair_clock = lambda: now[0]
+        first = MockWebSocket()
+        second = MockWebSocket()
+
+        for _ in range(MAX_PAIRING_ATTEMPTS):
+            asyncio.run(
+                server._handle_message(
+                    first,
+                    json.dumps({"type": "pair", "code": "WRONG0"}),
+                )
+            )
+        now[0] += 301
+        asyncio.run(
+            server._handle_message(
+                second,
+                json.dumps({"type": "pair", "code": "ABC123"}),
+            )
+        )
+
+        self.assertEqual(second.sent[-1]["type"], "paired")
+
+    def test_nonstandard_constants_and_duplicate_json_keys_are_rejected(self):
+        server = WebSocketServer(MagicMock())
+
+        for raw in (
+            '{"type":"ping","value":NaN}',
+            '{"type":"ping","type":"pair","code":"ABC123"}',
+        ):
+            websocket = MockWebSocket()
+            asyncio.run(server._handle_message(websocket, raw))
+            self.assertEqual(
+                websocket.sent,
+                [{"type": "error", "message": "Invalid JSON"}],
+            )
 
     def test_successful_pair_allows_message_and_records_max_device_type(self):
         orchestrator = MagicMock()

@@ -34,7 +34,7 @@ def _digest_code(*, digest_key: bytes, code: str) -> str:
 
 
 def _default_code_factory() -> str:
-    return secrets.token_hex(3).upper()
+    return secrets.token_hex(5).upper()
 
 
 @dataclass

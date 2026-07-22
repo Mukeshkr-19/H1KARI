@@ -38,8 +38,8 @@ def _production_device_id() -> str:
 
 
 def _production_secret_code() -> str:
-    """Return a cryptographically random six-character uppercase hex code."""
-    return secrets.token_hex(3).upper()
+    """Return a cryptographically random ten-character uppercase hex code."""
+    return secrets.token_hex(5).upper()
 
 
 def _production_digest_key() -> bytes:

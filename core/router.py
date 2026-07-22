@@ -5,6 +5,7 @@ Smart fallback chain with usage tracking
 """
 
 import os
+import json
 import time
 import random
 import hashlib
@@ -216,6 +217,35 @@ FALLBACK_CHAIN = [
 
 _LOCAL_OPENAI_GATEWAYS = frozenset({"omniroute", "9router"})
 _MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_MAX_HTTP_RESPONSE_BYTES = 1_048_576
+_HTTP_READ_CHUNK_BYTES = 8192
+
+
+def _bounded_json_response(response) -> Optional[dict]:
+    """Decode one bounded JSON object without retaining an oversized body."""
+    try:
+        content_length = response.headers.get("Content-Length")
+        if content_length is not None and int(content_length) > _MAX_HTTP_RESPONSE_BYTES:
+            return None
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        for chunk in response.iter_content(chunk_size=_HTTP_READ_CHUNK_BYTES):
+            if not chunk:
+                continue
+            if not isinstance(chunk, bytes):
+                return None
+            total += len(chunk)
+            if total > _MAX_HTTP_RESPONSE_BYTES:
+                return None
+            chunks.append(chunk)
+        decoded = json.loads(b"".join(chunks).decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, dict) else None
 
 
 def _local_gateway_base_url(provider: str) -> Optional[str]:
@@ -498,8 +528,8 @@ class AIRouter:
                 if content:
                     return content.strip()
             return None
-        except Exception as e:
-            _router_log(f"[ROUTER] LiteLLM error for {provider}/{model}: {e}")
+        except Exception:
+            _router_log("[ROUTER] LiteLLM request failed")
             return None
 
     def _call_google_direct(
@@ -548,9 +578,11 @@ class AIRouter:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         try:
-            response = requests.post(url, json=payload, timeout=60)
+            response = requests.post(url, json=payload, timeout=60, stream=True)
             if response.status_code == 200:
-                result = response.json()
+                result = _bounded_json_response(response)
+                if result is None:
+                    return None
                 if "candidates" in result and result["candidates"]:
                     parts = result["candidates"][0].get("content", {}).get("parts") or []
                     if parts and "text" in parts[0]:
@@ -558,12 +590,10 @@ class AIRouter:
             elif response.status_code == 429:
                 _router_log("[ROUTER] Google rate limited (429)")
             else:
-                _router_log(
-                    f"[ROUTER] Google HTTP {response.status_code}: {response.text[:200]}"
-                )
+                _router_log(f"[ROUTER] Google HTTP {response.status_code}")
             return None
-        except Exception as e:
-            _router_log(f"[ROUTER] Google REST error: {e}")
+        except Exception:
+            _router_log("[ROUTER] Google REST request failed")
             return None
 
     def _call_direct_api(
@@ -609,9 +639,17 @@ class AIRouter:
         }
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=30,
+                stream=True,
+            )
             if response.status_code == 200:
-                result = response.json()
+                result = _bounded_json_response(response)
+                if result is None:
+                    return None
                 if "choices" in result and result["choices"]:
                     return result["choices"][0]["message"]["content"].strip()
             elif response.status_code == 429:
@@ -626,8 +664,8 @@ class AIRouter:
         except requests.exceptions.Timeout:
             _router_log(f"[ROUTER] Timeout on {provider}")
             return None
-        except Exception as e:
-            _router_log(f"[ROUTER] Request error on {provider}: {e}")
+        except Exception:
+            _router_log("[ROUTER] local gateway request failed")
             return None
 
     def _call_cohere(
@@ -652,12 +690,15 @@ class AIRouter:
                     "Content-Type": "application/json",
                 },
                 timeout=30,
+                stream=True,
             )
             if response.status_code == 200:
-                return response.json()["text"].strip()
+                result = _bounded_json_response(response)
+                if result is not None and isinstance(result.get("text"), str):
+                    return result["text"].strip()
             return None
-        except Exception as e:
-            _router_log(f"[ROUTER] Cohere error: {e}")
+        except Exception:
+            _router_log("[ROUTER] Cohere request failed")
             return None
 
     def _call_ollama(
@@ -675,9 +716,11 @@ class AIRouter:
                     "num_predict": max_tokens,
                 },
             }
-            response = requests.post(url, json=payload, timeout=120)
+            response = requests.post(url, json=payload, timeout=120, stream=True)
             if response.status_code == 200:
-                result = response.json()
+                result = _bounded_json_response(response)
+                if result is None:
+                    return None
                 if "message" in result:
                     msg = result["message"]
                     # Handle Gemma 4 thinking mode
@@ -693,15 +736,13 @@ class AIRouter:
                     return content.strip() if content else None
                 return None
             else:
-                _router_log(
-                    f"[ROUTER] Ollama error: {response.status_code} - {response.text[:200]}"
-                )
+                _router_log(f"[ROUTER] Ollama error: {response.status_code}")
             return None
         except requests.exceptions.ConnectionError:
             _router_log("[ROUTER] Ollama not running. Start with: ollama run gemma4:e4b")
             return None
-        except Exception as e:
-            _router_log(f"[ROUTER] Ollama error: {e}")
+        except Exception:
+            _router_log("[ROUTER] Ollama request failed")
             return None
 
     def generate(

@@ -23,8 +23,8 @@ def test_phase4_pairing_panel_accessibility():
     assert 'tabIndex={-1}' in content
     assert 'htmlFor="pairing-challenge-code-input"' in content
     assert '"pairing-code-hint pairing-device-label-desc"' in content
-    assert 'pattern="[0-9A-F]{6}"' in content
-    assert 'maxLength={6}' in content
+    assert 'pattern="[0-9A-F]{6,10}"' in content
+    assert 'maxLength={10}' in content
     # Privacy check: Confirm entered challenge code variable is NOT placed inside role="status" text
     status_block = content.split('role="status"')[1].split("</div>")[0]
     assert "{code}" not in status_block

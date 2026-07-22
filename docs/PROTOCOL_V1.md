@@ -45,7 +45,8 @@ Pairing client messages are:
 
 - `pairing_prepare` with one canonical `request_id`.
 - `pairing_confirm` with the correlated `request_id`, an opaque `challenge_id`, and
-  exactly six uppercase hexadecimal characters in `code`.
+  six to ten uppercase hexadecimal characters in `code`. Production challenges
+  use ten characters; the shorter form remains accepted for v1 compatibility.
 - `pairing_cancel` with the correlated `request_id` and `challenge_id`.
 - `pairing_revoke` with the correlated `request_id` and opaque `device_id`; the
   transport adapter must authorize revocation as a local-owner operation.

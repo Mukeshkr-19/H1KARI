@@ -538,7 +538,7 @@ export function encodePairingPrepare(requestId: string) {
 
 export function encodePairingConfirm(requestId: string, challengeId: string, code: string) {
   if (!isValidCanonicalId(requestId) || !isValidCanonicalId(challengeId)) return null;
-  if (typeof code !== "string" || !/^[0-9A-F]{6}$/.test(code)) return null;
+  if (typeof code !== "string" || !/^[0-9A-F]{6,10}$/.test(code)) return null;
   return {
     type: "pairing_confirm",
     request_id: requestId,

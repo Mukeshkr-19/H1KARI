@@ -18,8 +18,10 @@ device an owner and does not transfer grants, approvals, or execution tickets.
 - Image bytes are held only in bounded memory and are removed on success,
   failure, cancellation, expiry, or disconnect. Hashes are receipts, never
   authorization.
-- OCR is explicit, cancellable, local-only, and confidence-aware. Observation
-  content is absent from logs, audit metadata, errors, and live status regions.
+- OCR is explicit, cancellable through the active local worker, local-only, and
+  bounded by a hard worker timeout. OCR does not fabricate confidence; uncertainty is shown whenever an
+  analyzer supplies measured confidence. Observation content is absent from
+  logs, audit metadata, errors, and live status regions.
 - Browser camera access occurs only after the user starts an accepted-handoff
   analysis and then presses **Start camera**. Permission requests can be
   cancelled, activity is visible, audio is disabled, and tracks are stopped on

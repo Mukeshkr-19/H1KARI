@@ -125,7 +125,9 @@ def test_validate_device_id(value: str, valid: bool) -> None:
         ("ABC123", True),
         ("abc123", False),
         ("ABC12", False),
-        ("ABC1234", False),
+        ("ABC1234", True),
+        ("ABC123DEF4", True),
+        ("ABC123DEF45", False),
         ("GHIJKL", False),
     ],
 )

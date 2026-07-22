@@ -69,6 +69,13 @@ class HandoffTransportAdapter:
 
         return self._validate_or_fallback(result, request_id)
 
+    def expire_due(self) -> int:
+        """Expire handoffs through the same bounded runtime boundary."""
+        try:
+            return self._runtime.expire_due()
+        except Exception:
+            return 0
+
     def _validate_or_fallback(self, message: dict, request_id: str) -> dict:
         if isinstance(message, dict) and validate_server_message(message) is None:
             return message

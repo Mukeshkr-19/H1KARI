@@ -3284,8 +3284,8 @@ export default function Home() {
               autoComplete="one-time-code"
               value={pairingCode}
               onChange={(e) => setPairingCode(e.target.value.toUpperCase())}
-              placeholder="ABC123"
-              maxLength={6}
+              placeholder="ABC123DEF4"
+              maxLength={10}
               className="w-full bg-[#1a1a2e] border border-gray-700 rounded-xl px-4 py-3 text-white text-center text-2xl tracking-[0.5em] placeholder-gray-600 focus:outline-none focus:border-purple-500 transition"
             />
           </div>

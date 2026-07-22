@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+from unittest.mock import MagicMock
 
 from core.action_policy import Actor
 from core.handoff import FrozenHandoffPreview
@@ -98,6 +99,28 @@ def _server(tmp_path, policy_calls: list):
     )
     subsystem.vision_runtime._ocr_adapter = _FakeOcrAdapter()
     return server, subsystem
+
+
+def test_server_sweeps_every_phase4_runtime_and_isolates_failures() -> None:
+    pairing = MagicMock()
+    handoff = MagicMock()
+    transfer = MagicMock()
+    vision = MagicMock()
+    handoff.expire_due.side_effect = RuntimeError("private failure")
+    server = WebSocketServer(
+        object(),
+        pairing_runtime=pairing,
+        handoff_transport=handoff,
+        visual_transfer_runtime=transfer,
+        vision_runtime=vision,
+    )
+
+    asyncio.run(server._expire_phase4_state())
+
+    pairing.expire_due.assert_called_once_with()
+    handoff.expire_due.assert_called_once_with()
+    transfer.expire_due.assert_called_once_with()
+    vision.expire_due.assert_called_once_with()
 
 
 class _FakeOcrAdapter:

@@ -69,6 +69,33 @@ def test_build_memory_first_context_without_brain_v2(monkeypatch):
     assert "semantic" in ctx or "Brain" in ctx
 
 
+def test_guest_never_loads_legacy_neural_prompt_when_brain_v2_is_disabled(
+    monkeypatch,
+):
+    monkeypatch.setenv("HIKARI_DISABLE_BRAIN_V2", "1")
+    from core.orchestrator import HIKARI_Orchestrator
+
+    orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+    orch.brain_v2 = None
+    orch.brain = MagicMock()
+    orch.brain.build_prompt_context.return_value = "private owner context"
+    orch.speaker = type(
+        "S",
+        (),
+        {
+            "current_speaker": "Guest B",
+            "primary_user": "Owner A",
+            "last_contact_kind": None,
+            "is_guest_speaker": lambda self: True,
+        },
+    )()
+    orch.planner = None
+    orch.neural_memory_enabled = True
+
+    assert orch._build_memory_first_context("hello") == ""
+    orch.brain.build_prompt_context.assert_not_called()
+
+
 def test_is_positive_brain_v2_recall_answer():
     assert is_positive_brain_v2_recall_answer("From reviewed memory: I live in City A.")
     assert is_positive_brain_v2_recall_answer("I live in City A.")

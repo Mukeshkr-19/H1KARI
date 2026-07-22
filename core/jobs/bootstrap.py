@@ -12,6 +12,7 @@ from pathlib import Path
 from core.jobs.audit_store import ScheduledJobAuditStore
 from core.jobs.action_store import ScheduledActionStore
 from core.jobs.coordinator import ScheduledReadCoordinator
+from core.jobs.contracts import ScheduledJob
 from core.jobs.creation import JobCreationService
 from core.jobs.lifecycle import JobLifecycleController
 from core.jobs.runner import ScheduledJobRunner
@@ -105,12 +106,31 @@ class ScheduledJobSubsystem:
     def create_runner(
         self, execute_callable: Callable[[object], object]
     ) -> ScheduledJobRunner:
+        def delete_terminal_action(job: object) -> None:
+            if not isinstance(job, ScheduledJob):
+                raise TypeError("job must be a ScheduledJob")
+            envelope = self.action_store.get(
+                job.job_id,
+                actor_id=job.actor_id,
+                session_id=job.session_id,
+            )
+            if envelope is not None:
+                deleted = self.action_store.delete(
+                    job.job_id,
+                    actor_id=job.actor_id,
+                    session_id=job.session_id,
+                    expected_revision=envelope.revision,
+                )
+                if not deleted:
+                    raise RuntimeError("terminal action cleanup failed")
+
         return ScheduledJobRunner(
             self.store,
             self.audit_store,
             self.clock,
             execute_callable,
             self.event_id_factory,
+            terminal_callback=delete_terminal_action,
         )
 
 

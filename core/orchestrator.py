@@ -370,6 +370,7 @@ class HIKARI_Orchestrator:
         elif (
             not self._brain_v2_authority_enabled()
             and self.neural_memory_enabled
+            and not self._is_active_guest_speaker()
         ):
             try:
                 neural_prompt = self._get_legacy_brain().build_prompt_context(user_input)

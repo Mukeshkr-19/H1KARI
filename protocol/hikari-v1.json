@@ -15,14 +15,14 @@
       "optional": {"device_type": {"type": "string", "max_length": 64}}
     },
     "message": {
-      "required": {"text": {"type": "string", "max_length": 20000}},
+      "required": {"text": {"type": "string", "min_length": 1, "max_length": 20000, "not_whitespace_only": true}},
       "optional": {}
     },
     "voice": {
       "required": {},
       "at_least_one": ["text", "listening"],
       "optional": {
-        "text": {"type": "string", "max_length": 20000},
+        "text": {"type": "string", "min_length": 1, "max_length": 20000, "not_whitespace_only": true},
         "listening": {"type": "boolean"}
       }
     },
@@ -80,7 +80,7 @@
       "required": {
         "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
         "challenge_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
-        "code": {"type": "string", "min_length": 6, "max_length": 6, "pattern": "^[0-9A-F]{6}$"}
+        "code": {"type": "string", "min_length": 6, "max_length": 10, "pattern": "^[0-9A-F]{6,10}$"}
       },
       "optional": {}
     },
@@ -220,7 +220,7 @@
     "productivity_research_prepare": {
       "required": {
         "request_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
-        "query": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "forbid_unicode_format": true}
+        "query": {"type": "string", "min_length": 1, "max_length": 2000, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
       },
       "optional": {
         "domains": {
@@ -228,7 +228,7 @@
           "min_items": 1,
           "max_items": 16,
           "unique": true,
-          "items": {"type": "string", "min_length": 1, "max_length": 253, "forbid_controls": true, "forbid_unicode_format": true}
+          "items": {"type": "string", "min_length": 1, "max_length": 253, "forbid_controls": true, "forbid_unicode_format": true, "not_whitespace_only": true}
         },
         "max_results": {"type": "integer", "minimum": 1, "maximum": 20}
       }

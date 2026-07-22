@@ -214,8 +214,8 @@ def test_phase4_server_messages_reject_secrets_content_and_raw_errors(
     assert validate_server_message({**message, field: value}) is not None
 
 
-@pytest.mark.parametrize("code", ["01A2F", "01A2FFF", "01a2ff", "01A2FG"])
-def test_pairing_code_is_exactly_six_uppercase_hex_characters(code: str):
+@pytest.mark.parametrize("code", ["01A2F", "01A2FFABCDE", "01a2ff", "01A2FG"])
+def test_pairing_code_is_six_to_ten_uppercase_hex_characters(code: str):
     message = {**VALID_CLIENT_MESSAGES[1], "code": code}
     assert validate_client_message(message) is not None
 

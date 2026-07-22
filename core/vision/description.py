@@ -193,6 +193,18 @@ class BoundedLocalDescriptionRunner:
         if not path.parts or not str(path) or not path.is_absolute():
             raise DescriptionAdapterError()
         self._executable_path = path
+        self._lock = threading.Lock()
+        self._active_process: subprocess.Popen[bytes] | None = None
+
+    def cancel(self) -> None:
+        """Terminate the single active local description process, if any."""
+        with self._lock:
+            process = self._active_process
+        if process is not None:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def __call__(
         self,
@@ -220,17 +232,21 @@ class BoundedLocalDescriptionRunner:
         except (OSError, ValueError):
             return DescriptionAnalyzerResult(status=DescriptionStatus.UNAVAILABLE)
 
-        try:
-            proc = subprocess.Popen(
-                list(argv),
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                shell=False,
-                env={},
-            )
-        except (OSError, subprocess.SubprocessError):
-            return DescriptionAnalyzerResult(status=DescriptionStatus.UNAVAILABLE)
+        with self._lock:
+            if self._active_process is not None:
+                return DescriptionAnalyzerResult(status=DescriptionStatus.UNAVAILABLE)
+            try:
+                proc = subprocess.Popen(
+                    list(argv),
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    shell=False,
+                    env={},
+                )
+            except (OSError, subprocess.SubprocessError):
+                return DescriptionAnalyzerResult(status=DescriptionStatus.UNAVAILABLE)
+            self._active_process = proc
 
         killed = threading.Event()
 
@@ -308,6 +324,9 @@ class BoundedLocalDescriptionRunner:
             except Exception:
                 pass
             writer.join(timeout=1.0)
+            with self._lock:
+                if self._active_process is proc:
+                    self._active_process = None
 
     def __repr__(self) -> str:
         return "BoundedLocalDescriptionRunner()"

@@ -58,6 +58,7 @@ transition_table: dict[JobState, frozenset[JobState]] = {
     JobState.INTERRUPTED: frozenset(
         {
             JobState.INTERRUPTED,
+            JobState.PAUSED,
             JobState.SCHEDULED,
             JobState.FAILED,
             JobState.CANCELLED,

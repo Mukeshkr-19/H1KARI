@@ -10,10 +10,16 @@ from core.vision.ocr import OcrResult, OcrStatus
 
 
 class _Ocr:
+    def __init__(self) -> None:
+        self.cancel_count = 0
+
     def analyze(self, image_bytes: bytes, *, mime_type: str) -> OcrResult:
         assert image_bytes == b"image"
         assert mime_type == "image/png"
         return OcrResult(status=OcrStatus.SUCCESS, text="measured text")
+
+    def cancel(self) -> None:
+        self.cancel_count += 1
 
 
 class _Description:
@@ -41,14 +47,14 @@ def _actor(session_id: str = "session-1") -> ActorContext:
     )
 
 
-def _runtime(*, accepted=True, description_analyzer=None) -> VisionRuntime:
+def _runtime(*, accepted=True, description_analyzer=None, ocr_adapter=None) -> VisionRuntime:
     service = VisionAnalysisService(
         clock=lambda: 1000.0,
         analysis_id_factory=lambda: "analysis-1",
     )
     return VisionRuntime(
         service=service,
-        ocr_adapter=_Ocr(),
+        ocr_adapter=ocr_adapter or _Ocr(),
         description_analyzer=description_analyzer,
         handoff_accepted=lambda session_id, handoff_id: (
             accepted and session_id == "session-1" and handoff_id == "handoff-1"
@@ -141,6 +147,8 @@ def test_description_cancel_is_scoped_to_the_exact_owner_analysis() -> None:
     runtime = _runtime(description_analyzer=analyzer)
     actor = _actor()
     runtime.prepare(actor, "request-1", "handoff-1", "describe")
+    runtime.attach_transfer(actor, "analysis-1", "handoff-1", "transfer-1")
+    runtime._service.begin_analysis(actor, "analysis-1")
 
     cross_session = runtime.cancel(
         _actor("session-2"), "cancel-1", "analysis-1"
@@ -153,13 +161,17 @@ def test_description_cancel_is_scoped_to_the_exact_owner_analysis() -> None:
     assert analyzer.cancel_count == 1
 
 
-def test_ocr_cancel_does_not_interrupt_description_runner() -> None:
+def test_ocr_cancel_stops_only_the_active_ocr_runner() -> None:
     analyzer = _Description()
-    runtime = _runtime(description_analyzer=analyzer)
+    ocr = _Ocr()
+    runtime = _runtime(description_analyzer=analyzer, ocr_adapter=ocr)
     actor = _actor()
     runtime.prepare(actor, "request-1", "handoff-1", "ocr")
+    runtime.attach_transfer(actor, "analysis-1", "handoff-1", "transfer-1")
+    runtime._service.begin_analysis(actor, "analysis-1")
 
     assert runtime.cancel(actor, "cancel-1", "analysis-1")["state"] == (
         "cancelled"
     )
+    assert ocr.cancel_count == 1
     assert analyzer.cancel_count == 0

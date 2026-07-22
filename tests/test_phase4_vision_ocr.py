@@ -78,6 +78,18 @@ def test_jpeg_success(fake_runner, valid_jpeg):
     assert result.text == "hello"
 
 
+def test_adapter_cancel_delegates_without_running_ocr(fake_runner):
+    runner = fake_runner(CommandResult(returncode=0, stdout=b"hello"))
+    runner.cancelled = 0
+    runner.cancel = lambda: setattr(runner, "cancelled", runner.cancelled + 1)
+    adapter = _adapter(runner=runner)
+
+    adapter.cancel()
+
+    assert runner.cancelled == 1
+    assert runner.calls == []
+
+
 def test_empty_ocr_output_returns_success(fake_runner, valid_png):
     runner = fake_runner(CommandResult(returncode=0, stdout=b""))
     adapter = _adapter(runner=runner)

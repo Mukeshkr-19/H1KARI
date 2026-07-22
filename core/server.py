@@ -14,6 +14,7 @@ import hmac
 import ipaddress
 import re
 import secrets
+import time
 from typing import Optional, Dict, Any, Set
 from datetime import datetime
 from http import HTTPStatus
@@ -103,7 +104,32 @@ except ImportError:
 
 
 MAX_PAIRING_ATTEMPTS = 5
+PAIRING_ATTEMPT_WINDOW_SECONDS = 300
 _PREPARE_REQUEST_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
+
+
+def _reject_json_constant(_value: str) -> None:
+    """Reject non-standard JSON constants without reflecting their value."""
+    raise ValueError("invalid JSON constant")
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict:
+    """Build one JSON object while rejecting ambiguous duplicate keys."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def _parse_client_json(message: str) -> object:
+    """Parse strict RFC-compatible JSON for the public WebSocket boundary."""
+    return json.loads(
+        message,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_unique_json_object,
+    )
 
 
 class WebSocketServer:
@@ -141,7 +167,8 @@ class WebSocketServer:
         self.port = port
         self.connected_clients: Set = set()
         self._paired_client_ids: Set[str] = set()
-        self._pair_attempts: Dict[str, int] = {}
+        self._pair_attempts: Dict[str, int | tuple[int, float]] = {}
+        self._pair_clock = time.monotonic
         self.device_info: Dict[str, Dict] = {}
         self._server = None
         self._running = False
@@ -181,14 +208,15 @@ class WebSocketServer:
         ] = {}
         self._vision_jobs: Dict[tuple[str, str], asyncio.Task] = {}
         self._scheduled_runner_task: asyncio.Task | None = None
+        self._phase4_sweeper_task: asyncio.Task | None = None
         self._scheduled_runner = None
 
     def _voice_companion_enabled(self) -> bool:
         return is_voice_companion_enabled()
 
     def _generate_pairing_code(self) -> str:
-        """Generate a cryptographically random 6-character pairing code."""
-        return secrets.token_hex(3).upper()
+        """Generate a cryptographically random 10-character pairing code."""
+        return secrets.token_hex(5).upper()
 
     def start(self):
         """Start the WebSocket server"""
@@ -219,6 +247,15 @@ class WebSocketServer:
                     )
                 )
                 self._scheduled_runner_task = None
+            if self._phase4_sweeper_task is not None:
+                self._phase4_sweeper_task.cancel()
+                self._loop.run_until_complete(
+                    asyncio.gather(
+                        self._phase4_sweeper_task,
+                        return_exceptions=True,
+                    )
+                )
+                self._phase4_sweeper_task = None
             if self._server is not None:
                 self._server.close()
                 self._loop.run_until_complete(self._server.wait_closed())
@@ -243,7 +280,47 @@ class WebSocketServer:
             except Exception:
                 self._scheduled_runner = None
                 self._scheduled_runner_task = None
+        if any(
+            runtime is not None
+            for runtime in (
+                self._pairing_runtime,
+                self._handoff_transport,
+                self._visual_transfer_runtime,
+                self._vision_runtime,
+            )
+        ):
+            self._phase4_sweeper_task = asyncio.create_task(
+                self._phase4_sweeper_loop()
+            )
         return self._server
+
+    async def _expire_phase4_state(self) -> None:
+        """Expire bounded Phase 4 state without coupling subsystem failures."""
+        runtimes = (
+            self._pairing_runtime,
+            self._handoff_transport,
+            self._visual_transfer_runtime,
+            self._vision_runtime,
+        )
+        for runtime in runtimes:
+            expire_due = getattr(runtime, "expire_due", None)
+            if not callable(expire_due):
+                continue
+            try:
+                await asyncio.to_thread(expire_due)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                continue
+
+    async def _phase4_sweeper_loop(self) -> None:
+        """Run periodic expiry while the WebSocket server is active."""
+        while self._running:
+            await self._expire_phase4_state()
+            try:
+                await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                return
 
     async def _scheduled_runner_loop(self) -> None:
         """Run bounded scheduled reads while the server event loop is active."""
@@ -322,6 +399,34 @@ class WebSocketServer:
             session_id=connection_token,
         )
 
+    @staticmethod
+    def _pair_rate_key(websocket) -> str:
+        """Return a reconnect-stable source key for legacy pairing attempts."""
+        remote = getattr(websocket, "remote_address", None)
+        host = remote[0] if isinstance(remote, (tuple, list)) and remote else remote
+        try:
+            address = ipaddress.ip_address(str(host))
+            mapped = getattr(address, "ipv4_mapped", None)
+            if mapped is not None:
+                address = mapped
+            return f"source:{address.compressed}"
+        except ValueError:
+            return "source:unknown"
+
+    def _pair_attempt_count(self, rate_key: str) -> int:
+        """Return attempts in the active window, expiring stale lockouts."""
+        now = self._pair_clock()
+        entry = self._pair_attempts.get(rate_key)
+        if isinstance(entry, tuple):
+            attempts, started_at = entry
+            if now - started_at < PAIRING_ATTEMPT_WINDOW_SECONDS:
+                return attempts
+            self._pair_attempts.pop(rate_key, None)
+            return 0
+        if isinstance(entry, int):
+            return entry
+        return 0
+
     async def _handle_connection(self, websocket):
         """Handle a new WebSocket connection"""
         client_id = id(websocket)
@@ -358,6 +463,10 @@ class WebSocketServer:
         except Exception:
             print("[WS] Client error")
         finally:
+            try:
+                cleanup_actor = self._derive_actor_context(websocket).actor_context
+            except Exception:
+                cleanup_actor = None
             if self._email_draft_registry is not None:
                 try:
                     actor = self._derive_actor_context(websocket).actor_context
@@ -396,12 +505,6 @@ class WebSocketServer:
                     self._visual_transfer_runtime.clear_session(actor.session_id)
                 except Exception:
                     pass
-            if self._vision_runtime is not None:
-                try:
-                    actor = self._derive_actor_context(websocket).actor_context
-                    self._vision_runtime.clear_session(actor)
-                except Exception:
-                    pass
             self.connected_clients.discard(websocket)
             client_key = str(id(websocket))
             for key, job in list(self._document_jobs.items()):
@@ -437,8 +540,24 @@ class WebSocketServer:
             self._phase4_transfer_analyses.pop(client_key, None)
             for key, job in list(self._vision_jobs.items()):
                 if key[0] == client_key:
+                    if self._vision_runtime is not None:
+                        try:
+                            if cleanup_actor is not None:
+                                await asyncio.to_thread(
+                                    self._vision_runtime.cancel_bound,
+                                    cleanup_actor,
+                                    key[1],
+                                )
+                        except Exception:
+                            pass
                     job.cancel()
                     self._vision_jobs.pop(key, None)
+            if self._vision_runtime is not None:
+                try:
+                    if cleanup_actor is not None:
+                        self._vision_runtime.clear_session(cleanup_actor)
+                except Exception:
+                    pass
             for handoff_id, origin_key in list(self._phase4_handoff_origins.items()):
                 if origin_key == client_key:
                     self._phase4_handoff_origins.pop(handoff_id, None)
@@ -1023,7 +1142,18 @@ class WebSocketServer:
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
         try:
-            data = json.loads(message)
+            try:
+                data = _parse_client_json(message)
+            except (json.JSONDecodeError, ValueError):
+                await websocket.send(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "message": "Invalid JSON",
+                        }
+                    )
+                )
+                return
             if not isinstance(data, dict):
                 await websocket.send(
                     json.dumps({"type": "error", "message": "Invalid message payload"})
@@ -1075,7 +1205,8 @@ class WebSocketServer:
                         )
                     )
                     return
-                attempts = self._pair_attempts.get(client_id, 0)
+                rate_key = self._pair_rate_key(websocket)
+                attempts = self._pair_attempt_count(rate_key)
                 if attempts >= MAX_PAIRING_ATTEMPTS:
                     await websocket.send(
                         json.dumps(
@@ -1090,7 +1221,7 @@ class WebSocketServer:
                 code = str(data.get("code", ""))
                 if hmac.compare_digest(code, self.pairing_code):
                     self._paired_client_ids.add(client_id)
-                    self._pair_attempts.pop(client_id, None)
+                    self._pair_attempts.pop(rate_key, None)
                     info = self.device_info.setdefault(
                         client_id,
                         {"connected_at": datetime.now().isoformat(), "type": "unknown"},
@@ -1107,7 +1238,13 @@ class WebSocketServer:
                     )
                 else:
                     attempts += 1
-                    self._pair_attempts[client_id] = attempts
+                    previous = self._pair_attempts.get(rate_key)
+                    started_at = (
+                        previous[1]
+                        if isinstance(previous, tuple)
+                        else self._pair_clock()
+                    )
+                    self._pair_attempts[rate_key] = (attempts, started_at)
                     response_type = (
                         "pair_locked"
                         if attempts >= MAX_PAIRING_ATTEMPTS
@@ -1627,15 +1764,6 @@ class WebSocketServer:
                     json.dumps({"type": "error", "message": "Unknown message type"})
                 )
 
-        except json.JSONDecodeError:
-            await websocket.send(
-                json.dumps(
-                    {
-                        "type": "error",
-                        "message": "Invalid JSON",
-                    }
-                )
-            )
         except Exception:
             print("[WS] Request failed")
             await websocket.send(
@@ -2374,6 +2502,8 @@ class WebSocketServer:
             DeliveryRuntimeCode.UNCHANGED,
         }:
             return ExecutionResult(ExecutionStatus.SUCCESS)
+        if delivered_result.code is DeliveryRuntimeCode.SUPPRESSED:
+            return ExecutionResult(ExecutionStatus.SUPPRESSED)
         return ExecutionResult(ExecutionStatus.FAILED)
 
     async def _deliver_scheduled_result(self, job, result: object) -> bool:
@@ -2537,7 +2667,7 @@ class WebSocketServer:
                 <div class="orb"></div>
                 <h2>Connect to HIKARI</h2>
                 <p style="color:#666;margin-top:10px;">Enter the pairing code shown on your computer</p>
-                <input type="text" id="pairing-code" placeholder="000000" maxlength="6" autocomplete="off">
+                <input type="text" id="pairing-code" placeholder="0000000000" maxlength="10" autocomplete="off">
                 <button onclick="pair()">Connect</button>
             </div>
 
@@ -2587,7 +2717,7 @@ class WebSocketServer:
 
                 function pair() {
                     const code = pairingCode.value.trim();
-                    if (code.length !== 6) return;
+                    if (!/^[0-9A-F]{6,10}$/.test(code)) return;
 
                     connect();
                     ws.onopen = () => {
@@ -2675,6 +2805,11 @@ class WebSocketServer:
                 self._loop.call_soon_threadsafe(self._scheduled_runner_task.cancel)
             else:
                 self._scheduled_runner_task.cancel()
+        if self._phase4_sweeper_task is not None:
+            if self._loop is not None and self._loop.is_running():
+                self._loop.call_soon_threadsafe(self._phase4_sweeper_task.cancel)
+            else:
+                self._phase4_sweeper_task.cancel()
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
         print("[WS] Server stopped")

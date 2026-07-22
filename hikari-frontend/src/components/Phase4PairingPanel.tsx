@@ -15,7 +15,7 @@ import {
   type PairingState,
 } from "../utils/phase4/pairing";
 
-const PAIRING_CODE_PATTERN = /^[0-9A-F]{6}$/;
+const PAIRING_CODE_PATTERN = /^[0-9A-F]{6,10}$/;
 
 export interface Phase4PairingPanelProps {
   readonly state: PairingState;
@@ -125,15 +125,15 @@ export function Phase4PairingPanel({
           value={code}
           onChange={(e) => setCode(e.target.value)}
           disabled={isPending || isTerminal || state.status !== "challenge"}
-          maxLength={6}
-          pattern="[0-9A-F]{6}"
+          maxLength={10}
+          pattern="[0-9A-F]{6,10}"
           autoComplete="one-time-code"
           aria-describedby={state.deviceLabel ? "pairing-code-hint pairing-device-label-desc" : "pairing-code-hint"}
           className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 font-mono tracking-wider uppercase"
           placeholder="ENTER CODE"
         />
         <p id="pairing-code-hint" className="text-xs text-gray-400 mt-1">
-          Enter 6-character uppercase code.
+          Enter the 6–10 character uppercase code shown by HIKARI.
         </p>
       </div>
 

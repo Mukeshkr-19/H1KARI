@@ -39,6 +39,7 @@ class ExecutionStatus(StrEnum):
     """Fixed structural execution outcome."""
 
     SUCCESS = "success"
+    SUPPRESSED = "suppressed"
     FAILED = "failed"
 
 
@@ -161,6 +162,7 @@ class ScheduledJobRunner:
         max_backoff_seconds: int = _DEFAULT_MAX_BACKOFF_SECONDS,
         next_quiet_eligible_factory: Callable[[datetime, QuietHours], datetime]
         | None = None,
+        terminal_callback: Callable[[ScheduledJob], None] | None = None,
     ) -> None:
         if not isinstance(store, ScheduledJobStore):
             raise TypeError("store must be a ScheduledJobStore")
@@ -177,6 +179,8 @@ class ScheduledJobRunner:
             and not callable(next_quiet_eligible_factory)
         ):
             raise TypeError("next_quiet_eligible_factory must be callable")
+        if terminal_callback is not None and not callable(terminal_callback):
+            raise TypeError("terminal_callback must be callable")
         if (
             isinstance(base_backoff_seconds, bool)
             or not isinstance(base_backoff_seconds, int)
@@ -199,6 +203,16 @@ class ScheduledJobRunner:
         self._base_backoff_seconds = base_backoff_seconds
         self._max_backoff_seconds = max_backoff_seconds
         self._next_quiet_eligible_factory = next_quiet_eligible_factory
+        self._terminal_callback = terminal_callback
+
+    def _notify_terminal(self, job: ScheduledJob) -> None:
+        """Run bounded post-audit cleanup without changing terminal state."""
+        if self._terminal_callback is None:
+            return
+        try:
+            self._terminal_callback(job)
+        except Exception:
+            raise JobRunnerError("terminal cleanup failed") from None
 
     def _now(self) -> datetime:
         try:
@@ -351,15 +365,58 @@ class ScheduledJobRunner:
         except Exception:
             return
 
-    def _resolve_execution(self, job: ScheduledJob) -> bool:
-        """Return True only for an explicit successful ``ExecutionResult``."""
+    def _resolve_execution(self, job: ScheduledJob) -> ExecutionStatus:
+        """Return only an explicit, structurally validated execution status."""
         try:
             result = self._execute_callable(job)
         except Exception:
-            return False
-        if isinstance(result, ExecutionResult) and result.status is ExecutionStatus.SUCCESS:
-            return True
-        return False
+            return ExecutionStatus.FAILED
+        if isinstance(result, ExecutionResult):
+            return result.status
+        return ExecutionStatus.FAILED
+
+    def _outcome_after_cas_miss(
+        self,
+        job: ScheduledJob,
+        *,
+        retried: bool = False,
+        suppressed: bool = False,
+    ) -> JobRunOutcome:
+        """Reflect persisted scoped state after a stale or lost CAS."""
+        try:
+            current = self._store.get(
+                job.job_id,
+                actor_id=job.actor_id,
+                session_id=job.session_id,
+            )
+        except Exception:
+            current = None
+        return JobRunOutcome(
+            previous_state=JobState.RUNNING,
+            new_state=current.state if current is not None else JobState.RUNNING,
+            attempt_count=(
+                current.attempt_count if current is not None else job.attempt_count
+            ),
+            retried=retried,
+            suppressed=suppressed,
+        )
+
+    def _pause_unaudited_interrupted(
+        self, job: ScheduledJob, *, now: datetime
+    ) -> None:
+        """Best-effort exact-CAS pause after an interrupted audit failure."""
+        try:
+            self._store.transition(
+                job.job_id,
+                expected_state=JobState.INTERRUPTED,
+                new_state=JobState.PAUSED,
+                expected_updated_at=job.updated_at,
+                updated_at=now,
+                actor_id=job.actor_id,
+                session_id=job.session_id,
+            )
+        except Exception:
+            return
 
     def _refresh_running(self, job: ScheduledJob) -> ScheduledJob | None:
         """Reload the exact claimed job after an execution-side CAS update.
@@ -472,9 +529,12 @@ class ScheduledJobRunner:
         if job.quiet_hours is not None and is_quiet(now, job.quiet_hours):
             return self._quiet_reschedule(job, now=now)
 
-        succeeded = self._resolve_execution(job)
+        execution_status = self._resolve_execution(job)
 
-        if succeeded:
+        if execution_status is ExecutionStatus.SUPPRESSED:
+            return self._quiet_reschedule(job, now=self._now())
+
+        if execution_status is ExecutionStatus.SUCCESS:
             current = self._refresh_running(job)
             if current is None:
                 return JobRunOutcome(
@@ -501,6 +561,9 @@ class ScheduledJobRunner:
                     reason=AuditReasonCode.STATE_TRANSITION,
                     occurred_at=terminal_now,
                 )
+            if completed is None:
+                return self._outcome_after_cas_miss(current)
+            self._notify_terminal(completed)
             return JobRunOutcome(
                 previous_state=JobState.RUNNING,
                 new_state=JobState.COMPLETED,
@@ -581,6 +644,11 @@ class ScheduledJobRunner:
                 except JobRunnerError:
                     self._pause_unaudited_schedule(rescheduled, now=now)
                     raise
+            if rescheduled is None:
+                return self._outcome_after_cas_miss(
+                    bumped_attempt,
+                    retried=False,
+                )
             return JobRunOutcome(
                 previous_state=JobState.RUNNING,
                 new_state=JobState.SCHEDULED,
@@ -604,6 +672,9 @@ class ScheduledJobRunner:
                 reason=AuditReasonCode.RETRY_EXHAUSTED,
                 occurred_at=now,
             )
+        if failed is None:
+            return self._outcome_after_cas_miss(job)
+        self._notify_terminal(failed)
         return JobRunOutcome(
             previous_state=JobState.RUNNING,
             new_state=JobState.FAILED,
@@ -667,6 +738,7 @@ class ScheduledJobRunner:
         except Exception:
             raise JobRunnerError("startup recovery failed") from None
         interrupted_jobs: list[ScheduledJob] = []
+        recovery_failed = False
         for job in running:
             interrupted = self._transition(
                 job,
@@ -676,13 +748,18 @@ class ScheduledJobRunner:
             )
             if interrupted is None:
                 continue
-            self._append_event(
-                job=interrupted,
-                previous_state=JobState.RUNNING,
-                new_state=JobState.INTERRUPTED,
-                reason=AuditReasonCode.STATE_TRANSITION,
-                occurred_at=now,
-            )
+            try:
+                self._append_event(
+                    job=interrupted,
+                    previous_state=JobState.RUNNING,
+                    new_state=JobState.INTERRUPTED,
+                    reason=AuditReasonCode.STATE_TRANSITION,
+                    occurred_at=now,
+                )
+            except JobRunnerError:
+                self._pause_unaudited_interrupted(interrupted, now=now)
+                recovery_failed = True
+                continue
             interrupted_jobs.append(interrupted)
         try:
             existing = self._store.list_state(
@@ -714,18 +791,10 @@ class ScheduledJobRunner:
                     occurred_at=now,
                 )
             except JobRunnerError:
-                try:
-                    self._store.transition(
-                        scheduled.job_id,
-                        expected_state=JobState.SCHEDULED,
-                        new_state=JobState.PAUSED,
-                        expected_updated_at=scheduled.updated_at,
-                        updated_at=now,
-                        actor_id=scheduled.actor_id,
-                        session_id=scheduled.session_id,
-                    )
-                except Exception:
-                    pass
-                raise
+                self._pause_unaudited_schedule(scheduled, now=now)
+                recovery_failed = True
+                continue
             recovered += 1
+        if recovery_failed:
+            raise JobRunnerError("startup recovery failed")
         return recovered

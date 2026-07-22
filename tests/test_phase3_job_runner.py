@@ -1,14 +1,16 @@
 """Deterministic tests for the bounded Phase 3 scheduled-job runner.
 
 These tests cover only ``core.jobs.runner``. They use temporary databases and
-injected clocks/execution callables; no timers, threads, subprocess, network,
-provider, notification, or external execution is exercised.
+injected clocks/execution callables; the concurrency regression uses bounded
+threads, while no timers, subprocess, network, provider, notification, or
+external execution is exercised.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Barrier, Lock, Thread
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -41,6 +43,10 @@ def _success(_job: ScheduledJob) -> ExecutionResult:
 
 def _failed(_job: ScheduledJob) -> ExecutionResult:
     return ExecutionResult(ExecutionStatus.FAILED)
+
+
+def _suppressed(_job: ScheduledJob) -> ExecutionResult:
+    return ExecutionResult(ExecutionStatus.SUPPRESSED)
 
 
 @pytest.fixture
@@ -229,6 +235,88 @@ def test_success_terminalizes_current_revision_after_delivery_fingerprint_cas(
     assert persisted.state is JobState.COMPLETED
     assert persisted.last_delivery_fingerprint == "sha256.delivery"
     assert persisted.updated_at == completed_at
+
+
+def test_success_cas_miss_reports_persisted_state(
+    store: ScheduledJobStore,
+    audit_store: ScheduledJobAuditStore,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    store.add(_make_job(next_run_at=_aware(2026, 7, 18, 8, 30)))
+    runner = ScheduledJobRunner(
+        store, audit_store, lambda: now, _success, event_id_factory
+    )
+    original_transition = runner._transition
+
+    def _racing_transition(job, *, expected_state, new_state, now):
+        if new_state is JobState.COMPLETED:
+            cancelled = store.transition(
+                job.job_id,
+                expected_state=JobState.RUNNING,
+                new_state=JobState.CANCELLED,
+                expected_updated_at=job.updated_at,
+                updated_at=now,
+                actor_id=job.actor_id,
+                session_id=job.session_id,
+            )
+            assert cancelled is not None
+        return original_transition(
+            job,
+            expected_state=expected_state,
+            new_state=new_state,
+            now=now,
+        )
+
+    runner._transition = _racing_transition
+    outcome = runner.run_once(limit=1)[0]
+    persisted = store.get("job-1", actor_id="actor-1", session_id="session-1")
+
+    assert persisted is not None
+    assert persisted.state is JobState.CANCELLED
+    assert outcome.new_state is JobState.CANCELLED
+
+
+def test_delivery_suppression_reschedules_without_consuming_retry(
+    store: ScheduledJobStore,
+    audit_store: ScheduledJobAuditStore,
+    event_id_factory,
+) -> None:
+    before_quiet = _aware(2026, 7, 18, 8, 59)
+    during_quiet = _aware(2026, 7, 18, 9, 0)
+    after_quiet = _aware(2026, 7, 18, 10, 0)
+    quiet = QuietHours(
+        timezone_name="UTC",
+        start_minute=9 * 60,
+        end_minute=10 * 60,
+    )
+    store.add(
+        _make_job(
+            next_run_at=_aware(2026, 7, 18, 8, 30),
+            quiet_hours=quiet,
+            max_attempts=3,
+        )
+    )
+    clock_values = iter((before_quiet, during_quiet))
+    runner = ScheduledJobRunner(
+        store,
+        audit_store,
+        lambda: next(clock_values),
+        _suppressed,
+        event_id_factory,
+        next_quiet_eligible_factory=lambda _now, _quiet: after_quiet,
+    )
+
+    outcome = runner.run_once(limit=1)[0]
+    persisted = store.get("job-1", actor_id="actor-1", session_id="session-1")
+
+    assert outcome.new_state is JobState.SCHEDULED
+    assert outcome.suppressed is True
+    assert outcome.retried is False
+    assert persisted is not None
+    assert persisted.state is JobState.SCHEDULED
+    assert persisted.next_run_at == after_quiet
+    assert persisted.attempt_count == 0
 
 
 def test_run_once_appends_audit_events(
@@ -676,9 +764,14 @@ def test_run_once_concurrent_claim_executes_once(
     )
 
     executed: list[str] = []
+    outcomes: list[tuple[JobRunOutcome, ...]] = []
+    failures: list[BaseException] = []
+    start = Barrier(3)
+    lock = Lock()
 
     def _exec(job: ScheduledJob) -> ExecutionResult:
-        executed.append(job.job_id)
+        with lock:
+            executed.append(job.job_id)
         return ExecutionResult(ExecutionStatus.SUCCESS)
 
     runner_a = ScheduledJobRunner(
@@ -687,12 +780,56 @@ def test_run_once_concurrent_claim_executes_once(
     runner_b = ScheduledJobRunner(
         store, audit_store, lambda: now, _exec, event_id_factory
     )
-    outcomes_a = runner_a.run_once(limit=1)
-    outcomes_b = runner_b.run_once(limit=1)
-    total_executed = len(executed)
-    total_outcomes = len(outcomes_a) + len(outcomes_b)
-    assert total_executed == 1
-    assert total_outcomes == 1
+    def run(runner: ScheduledJobRunner) -> None:
+        start.wait()
+        try:
+            result = runner.run_once(limit=1)
+            with lock:
+                outcomes.append(result)
+        except BaseException as error:
+            with lock:
+                failures.append(error)
+
+    threads = [Thread(target=run, args=(runner,)) for runner in (runner_a, runner_b)]
+    for thread in threads:
+        thread.start()
+    start.wait()
+    for thread in threads:
+        thread.join(timeout=5)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert failures == []
+    assert len(executed) == 1
+    assert sum(len(result) for result in outcomes) == 1
+
+
+def test_terminal_callback_runs_only_after_audited_terminal_state(
+    store: ScheduledJobStore,
+    audit_store: ScheduledJobAuditStore,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    store.add(
+        _make_job(
+            next_run_at=_aware(2026, 7, 18, 8, 30),
+            created_at=_aware(2026, 7, 18, 8, 0),
+            updated_at=_aware(2026, 7, 18, 8, 0),
+        )
+    )
+    terminal: list[JobState] = []
+    runner = ScheduledJobRunner(
+        store,
+        audit_store,
+        lambda: now,
+        _success,
+        event_id_factory,
+        terminal_callback=lambda job: terminal.append(job.state),
+    )
+
+    outcome = runner.run_once(limit=1)
+
+    assert outcome[0].new_state is JobState.COMPLETED
+    assert terminal == [JobState.COMPLETED]
 
 
 def test_claim_audit_failure_leaves_no_running_job(
@@ -821,6 +958,35 @@ def test_recover_startup_reschedules_running_and_interrupted_jobs(
         (JobState.RUNNING, JobState.INTERRUPTED),
         (JobState.INTERRUPTED, JobState.SCHEDULED),
     ]
+
+
+def test_recover_startup_pauses_every_running_job_when_audit_fails(
+    store: ScheduledJobStore,
+    audit_store: ScheduledJobAuditStore,
+    event_id_factory,
+) -> None:
+    now = _aware(2026, 7, 18, 9, 0)
+    store.add(_make_job(job_id="running-one", state=JobState.RUNNING))
+    store.add(_make_job(job_id="running-two", state=JobState.RUNNING))
+    runner = ScheduledJobRunner(
+        store, audit_store, lambda: now, _success, event_id_factory
+    )
+
+    def _failed_append(_event) -> None:
+        raise RuntimeError("private failure")
+
+    audit_store.append = _failed_append
+    with pytest.raises(JobRunnerError, match="startup recovery failed"):
+        runner.recover_startup()
+
+    for job_id in ("running-one", "running-two"):
+        persisted = store.get(
+            job_id,
+            actor_id="actor-1",
+            session_id="session-1",
+        )
+        assert persisted is not None
+        assert persisted.state is JobState.PAUSED
 
 
 def test_recover_startup_rejects_invalid_limits(

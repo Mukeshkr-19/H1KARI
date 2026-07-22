@@ -31,7 +31,7 @@ from core.protocol import validate_server_message
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CHALLENGE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 DEVICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]+$")
-CODE_PATTERN = re.compile(r"^[0-9A-F]{6}$")
+CODE_PATTERN = re.compile(r"^[0-9A-F]{10}$")
 
 
 class _Clock:
