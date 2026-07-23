@@ -1653,11 +1653,19 @@ Adapt your responses to be:
             "provider or local gateway and try again."
         )
 
-    def run_voice_loop(self):
-        """Run the menu-bar voice loop using the existing daemon service."""
-        from services.hikari_service import HIKARI_Daemon
+    def run_voice_loop(self, backend: Optional[str] = None) -> int:
+        """Run the bounded foreground voice loop."""
+        from core.runtime_setup import get_voice_backend_name
+        from core.voice import run_voice_session
 
-        HIKARI_Daemon().run()
+        selected = backend or get_voice_backend_name()
+        if selected is None:
+            print(
+                "[VOICE] Choose a backend explicitly with "
+                "--voice-backend openai-whisper, faster-whisper, or google-speech."
+            )
+            return 2
+        return run_voice_session(self, backend=selected)
 
     def _check_health(self, text: str):
         """Check for health indicators"""

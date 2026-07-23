@@ -217,6 +217,78 @@ class VoiceSystem:
         }
 
 
+def _backend_readiness(backend: str) -> tuple[bool, str]:
+    """Return bounded readiness for an explicitly selected speech backend."""
+
+    from core.voice_status import collect_voice_status
+
+    status = collect_voice_status()
+    packages = status["packages"]
+    if not packages["speech_recognition"] or not packages["pyaudio"]:
+        return False, "Microphone support is not installed."
+    if backend == "google-speech":
+        return True, "Microphone audio will be sent to Google Speech Recognition."
+    model_key = {
+        "openai-whisper": "openai_whisper_base",
+        "faster-whisper": "faster_whisper_base",
+    }.get(backend)
+    if model_key is None:
+        return False, "The selected voice backend is unsupported."
+    if not status["models"][model_key]["offline_ready"]:
+        return (
+            False,
+            "The selected local speech model is not provisioned. "
+            "HIKARI will not download it automatically.",
+        )
+    return True, "Speech recognition remains on this Mac."
+
+
+def run_voice_session(
+    orchestrator,
+    *,
+    backend: str,
+    voice_system: Optional[VoiceSystem] = None,
+) -> int:
+    """Run an explicit foreground voice session without persisting audio.
+
+    Tests inject ``voice_system`` so no microphone, model, network, or speech
+    synthesizer is touched.
+    """
+
+    if voice_system is None:
+        ready, disclosure = _backend_readiness(backend)
+        print(f"[VOICE] {disclosure}")
+        if not ready:
+            return 2
+        voice_system = VoiceSystem(backend=backend)
+
+    print("[VOICE] Foreground voice mode. Say 'exit' to stop.")
+    try:
+        voice_system.warmup()
+        while True:
+            text = voice_system.listen()
+            if not text:
+                continue
+            normalized = text.strip()
+            if not normalized:
+                continue
+            print(f"\nYou: {normalized}")
+            if normalized.casefold() in {"exit", "quit", "goodbye", "stop listening"}:
+                print("\nHIKARI: Goodbye.")
+                return 0
+            response = orchestrator.process_input(normalized, source="voice")
+            if response:
+                print(f"\nHIKARI: {response}\n")
+                voice_system.speak(response)
+    except KeyboardInterrupt:
+        print("\nHIKARI: Voice mode stopped.")
+        return 0
+    finally:
+        finalize = getattr(orchestrator, "finalize_session", None)
+        if callable(finalize):
+            finalize()
+
+
 class ClapDetector:
     """Detects clap patterns for silent activation"""
 

@@ -60,6 +60,14 @@ def run_daemon():
     from services.hikari_service import HIKARI_Daemon
     HIKARI_Daemon().run()
 
+
+def run_voice(backend: str | None) -> int:
+    """Run explicit foreground voice mode through the bounded voice adapter."""
+    print_banner()
+    from core.orchestrator import get_orchestrator
+
+    return get_orchestrator().run_voice_loop(backend)
+
 def run_tray():
     """Run as system tray icon"""
     print("[*] Starting HIKARI in system tray mode...")
@@ -286,6 +294,13 @@ def run_interactive():
     """Run in interactive text mode"""
     print_banner()
 
+    # Importing readline enables native terminal line editing and in-session
+    # history for input().  HIKARI deliberately never writes that history to disk.
+    try:
+        import readline  # noqa: F401
+    except ImportError:
+        pass
+
     from core.orchestrator import get_orchestrator
 
     orchestrator = get_orchestrator()
@@ -470,6 +485,11 @@ def main():
         "--text",
         action="store_true",
         help="Run interactive text mode. This is the default.",
+    )
+    runtime_modes.add_argument(
+        "--voice",
+        action="store_true",
+        help="Run explicit foreground microphone mode.",
     )
     runtime_modes.add_argument(
         "--daemon",
@@ -820,8 +840,10 @@ def main():
     init_requested = args.init or args.init_plan
     if init_requested and args.startup_mode is None:
         parser.error("--init and --init-plan require --startup-mode")
-    if not init_requested and (args.startup_mode or args.voice_backend):
-        parser.error("--startup-mode and --voice-backend require --init or --init-plan")
+    if not init_requested and args.startup_mode:
+        parser.error("--startup-mode requires --init or --init-plan")
+    if args.voice_backend and not (init_requested or args.voice):
+        parser.error("--voice-backend requires --voice, --init, or --init-plan")
     if args.backup_destination and not args.runtime_backup:
         parser.error("--backup-destination requires --runtime-backup")
     if args.startup_mode == "voice" and args.voice_backend is None:
@@ -850,7 +872,7 @@ def main():
     other_action_requested = any(
         bool(getattr(args, name))
         for name in (
-            "text", "daemon", "tray", "server", "install", "install_cli",
+            "text", "voice", "daemon", "tray", "server", "install", "install_cli",
             "uninstall_cli", "doctor", "doctor_full", "memory_status",
             "voice_status", "init", "init_plan", "runtime_backup",
             "migration_plan", "rollback_init", "brain_v2_status",
@@ -1129,6 +1151,9 @@ def main():
     if args.server:
         run_server(args.host, args.port)
         return
+
+    if args.voice:
+        raise SystemExit(run_voice(args.voice_backend))
 
     if args.daemon:
         run_daemon()
