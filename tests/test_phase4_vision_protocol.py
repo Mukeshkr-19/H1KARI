@@ -840,10 +840,12 @@ def test_protocol_json_visual_transfer_begin_has_optional_analysis_id():
     assert spec["pattern"] == "^[a-z0-9][a-z0-9_.-]{0,79}$"
 
 
-def test_protocol_json_vision_prepare_has_no_optional_fields():
+def test_protocol_json_vision_prepare_has_only_optional_processing_mode():
     data = json.loads(PROTOCOL_PATH.read_text(encoding="utf-8"))
     spec = data["client_to_server"]["vision_analysis_prepare"]
-    assert spec["optional"] == {}
+    assert spec["optional"] == {
+        "mode": {"type": "string", "enum": ["cloud", "private_local"]}
+    }
     assert set(spec["required"]) == {"request_id", "handoff_id", "capability"}
 
 

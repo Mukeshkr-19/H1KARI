@@ -777,8 +777,10 @@ def test_no_storage_filesystem_persistence_telemetry_or_cloud_egress() -> None:
         # JSON is used only for deterministic digests or the explicit, read-only
         # local-model provisioning manifest. Filesystem writes remain forbidden
         # by the dedicated vision privacy contracts.
-        if path.name in {"contracts.py", "mlx_worker.py"}:
+        if path.name in {"contracts.py", "mlx_worker.py", "cloud.py"}:
             forbidden.discard("json")
+        if path.name == "cloud.py":
+            forbidden.discard("urllib")
         assert imports.isdisjoint(forbidden), f"{path.name}: {imports & forbidden}"
 
 

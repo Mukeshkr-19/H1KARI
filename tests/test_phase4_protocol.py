@@ -89,6 +89,19 @@ VALID_CLIENT_MESSAGES = (
 )
 
 
+def test_vision_prepare_accepts_only_explicit_processing_modes() -> None:
+    base = {
+        "type": "vision_analysis_prepare",
+        "request_id": REQUEST_ID,
+        "handoff_id": HANDOFF_ID,
+        "capability": "describe",
+    }
+    assert validate_client_message(base) is None
+    assert validate_client_message({**base, "mode": "cloud"}) is None
+    assert validate_client_message({**base, "mode": "private_local"}) is None
+    assert validate_client_message({**base, "mode": "automatic"}) is not None
+
+
 VALID_SERVER_MESSAGES = (
     {
         "type": "pairing_challenge",

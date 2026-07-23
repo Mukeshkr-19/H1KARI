@@ -64,11 +64,12 @@ test("vision messages parse with exact correlation and optional confidence", () 
 });
 
 test("vision encoders and visual binding use exact fields", () => {
-  assert.deepEqual(encodeVisionAnalysisPrepare("vision-1", "handoff-1", "ocr"), {
+  assert.deepEqual(encodeVisionAnalysisPrepare("vision-1", "handoff-1", "ocr", "cloud"), {
     type: "vision_analysis_prepare",
     request_id: "vision-1",
     handoff_id: "handoff-1",
     capability: "ocr",
+    mode: "cloud",
   });
   assert.deepEqual(encodeVisionAnalysisCancel("cancel-1", "analysis-1"), {
     type: "vision_analysis_cancel",

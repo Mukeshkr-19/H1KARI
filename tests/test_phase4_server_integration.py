@@ -378,6 +378,38 @@ def test_vision_requires_pairing_and_exact_accepted_handoff_transfer(tmp_path) -
     asyncio.run(scenario())
 
 
+def test_server_passes_explicit_cloud_mode_and_defaults_omission_to_private_local(
+    tmp_path,
+) -> None:
+    server, _ = _server(tmp_path, [])
+    runtime = MagicMock()
+    runtime.prepare.return_value = {
+        "type": "vision_analysis_error",
+        "request_id": "vision-1",
+        "code": "capability_unavailable",
+    }
+    server._vision_runtime = runtime
+    guest = _WebSocket("10.0.0.2")
+    server._connection_tokens[str(id(guest))] = "guest-session"
+
+    asyncio.run(server._handle_vision_control(guest, {
+        "type": "vision_analysis_prepare",
+        "request_id": "vision-1",
+        "handoff_id": "handoff-1",
+        "capability": "describe",
+        "mode": "cloud",
+    }))
+    assert runtime.prepare.call_args.args[-1] == "cloud"
+
+    asyncio.run(server._handle_vision_control(guest, {
+        "type": "vision_analysis_prepare",
+        "request_id": "vision-2",
+        "handoff_id": "handoff-1",
+        "capability": "describe",
+    }))
+    assert runtime.prepare.call_args.args[-1] == "private_local"
+
+
 def test_disconnect_marks_device_stale_and_clears_connection_state(tmp_path) -> None:
     server, subsystem = _server(tmp_path, [])
     socket = _QueuedWebSocket(

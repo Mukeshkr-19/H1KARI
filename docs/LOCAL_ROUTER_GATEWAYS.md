@@ -46,6 +46,7 @@ OMNIROUTE_BASE_URL=http://127.0.0.1:20128/v1
 OMNIROUTE_FAST_MODEL=auto/fast
 OMNIROUTE_BALANCED_MODEL=auto
 OMNIROUTE_SMART_MODEL=auto/smart
+OMNIROUTE_VISION_MODEL=provider/exact-image-capable-model-or-combo
 ```
 
 9Router routes through a user-created combo. The defaults assume a combo named
@@ -58,6 +59,7 @@ NINEROUTER_BASE_URL=http://127.0.0.1:20129/v1
 NINEROUTER_FAST_MODEL=free-forever
 NINEROUTER_BALANCED_MODEL=free-forever
 NINEROUTER_SMART_MODEL=free-forever
+NINEROUTER_VISION_MODEL=exact-image-capable-combo
 ```
 
 Unsetting a gateway key disables it in H1KARI. No reachability probe or network
@@ -70,6 +72,22 @@ gateway normally forwards message text to an upstream provider. That is cloud
 egress unless the gateway selects a truly local model. H1KARI therefore treats
 each gateway as a provider destination for approval and audit purposes.
 
-This integration carries the router's existing text message shape only. It is
-not connected to Phase 4 camera frames, visual-transfer bytes, OCR buffers, or
-image-description inputs. Image bytes never enter this JSON request path.
+Text routing never carries Phase 4 images. Cloud Vision uses a separate bounded
+adapter only after the user selects **Cloud Vision**, acknowledges the visible
+egress disclosure, starts an accepted-handoff analysis, and explicitly captures
+or selects one validated image. Older clients that omit the processing mode
+remain private-local and cannot trigger cloud egress.
+
+The vision adapter requires the separate `*_VISION_MODEL` setting. It never
+reuses `auto`, `auto/smart`, or `free-forever`, because those routes may resolve
+to a text-only model. OmniRoute is tried first when both exact routes are
+configured. 9Router is used only when its operator has created and named an
+image-capable combo. No reachability or capability probe runs during import,
+construction, CLI, doctor, or server startup.
+
+The validated image is encoded only inside the bounded loopback gateway request;
+it never enters the HIKARI WebSocket JSON protocol, logs, audit metadata, or
+persistent state. The gateway normally forwards it upstream, so the visible
+disclosure applies to every configured route. Upstream retention, training,
+quota, and privacy policies remain the operator's responsibility. Unsetting the
+vision model variables disables cloud vision without affecting text routing.

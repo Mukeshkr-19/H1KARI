@@ -1,6 +1,6 @@
 # Phase 4 Completion Evidence
 
-Phase 4 establishes a bounded, local-first path for pairing a remote guest,
+Phase 4 establishes a bounded, privacy-explicit path for pairing a remote guest,
 offering a task reference to the desktop owner, transferring one image, and
 running an explicitly requested vision analysis. It does not make a paired
 device an owner and does not transfer grants, approvals, or execution tickets.
@@ -18,23 +18,30 @@ device an owner and does not transfer grants, approvals, or execution tickets.
 - Image bytes are held only in bounded memory and are removed on success,
   failure, cancellation, expiry, or disconnect. Hashes are receipts, never
   authorization.
-- OCR is explicit, cancellable through the active local worker, local-only, and
-  bounded by a hard worker timeout. OCR does not fabricate confidence; uncertainty is shown whenever an
+- Private-local OCR is explicit, cancellable through the active local worker,
+  and bounded by a hard worker timeout. Cloud OCR uses the same explicit,
+  acknowledged gateway boundary as cloud description. Neither mode fabricates
+  confidence; uncertainty is shown whenever an
   analyzer supplies measured confidence. Observation content is absent from
   logs, audit metadata, errors, and live status regions.
 - Browser camera access occurs only after the user starts an accepted-handoff
   analysis and then presses **Start camera**. Permission requests can be
   cancelled, activity is visible, audio is disabled, and tracks are stopped on
   capture, cancellation, failure, stale completion, or unmount.
+- Cloud Vision is a separately acknowledged mode. It sends one already validated
+  image through an explicitly configured loopback OmniRoute route, then an
+  explicitly configured image-capable 9Router combo if available. No text alias,
+  automatic model selection, hidden provider field, or startup probe is reused.
+  Omitting the protocol mode remains private-local for backward safety.
 
-## Optional description capability
+## Optional private-local description capability
 
 The selected candidate is Qwen3-VL-4B-Instruct using a reviewed, pinned 4-bit
 MLX conversion. No model or runtime is bundled or downloaded. Optional activation
 requires an absolute local directory and a verified exact-file manifest. MLX is
 imported only inside a disposable spawn worker with a hard timeout, cancellation,
-offline flags, bounded decoding and no fabricated confidence. Without verified
-provisioning, `describe` returns `capability_unavailable` before camera capture.
+offline flags, bounded decoding and no fabricated confidence. In Private Local,
+missing verified provisioning returns `capability_unavailable` before camera capture.
 The frontend keeps the capability selectable so a provisioned installation works
 without a separate build.
 
@@ -43,8 +50,9 @@ without a separate build.
 - no silent or continuous capture
 - no screen capture or legacy desktop-awareness integration
 - no microphone capture
-- no image bytes, base64, data URLs, filenames, or paths in JSON
-- no automatic upload, provider call, model download, or cloud egress
+- no image bytes, base64, data URLs, filenames, or paths in HIKARI WebSocket JSON
+- no automatic upload, provider call, model download, or cloud egress; Cloud
+  Vision requires a visible disclosure, explicit acknowledgement, and Start action
 - no portable mobile authority
 - no Phase 5 learning/care experiences or Phase 6 hardware control
 

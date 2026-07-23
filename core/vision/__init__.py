@@ -16,6 +16,7 @@ from core.vision.contracts import (
     VisionObservation,
     VisionObservationKind,
     VisionOutcomeCode,
+    VisionProcessingMode,
     VisionServiceOutcome,
     validate_analysis_id,
     validate_canonical_id,
@@ -24,7 +25,15 @@ from core.vision.contracts import (
     validate_transfer_id,
 )
 from core.vision.service import VisionAnalysisService
-from core.vision.runtime import DescriptionAnalyzer, VisionRuntime
+from core.vision.runtime import CloudVisionAnalyzer, DescriptionAnalyzer, VisionRuntime
+from core.vision.cloud import (
+    BoundedGatewayRequestRunner,
+    CloudVisionConfigurationError,
+    GatewayVisionAdapter,
+    GatewayVisionConfig,
+    GatewayVisionRouter,
+    create_optional_gateway_vision_router_from_environment,
+)
 from core.vision.description import (
     BoundedLocalDescriptionRunner,
     DescriptionAdapterError,
@@ -54,6 +63,13 @@ __all__ = (
     "VisionAnalysisRequest",
     "VisionAnalysisService",
     "DescriptionAnalyzer",
+    "CloudVisionAnalyzer",
+    "BoundedGatewayRequestRunner",
+    "CloudVisionConfigurationError",
+    "GatewayVisionAdapter",
+    "GatewayVisionConfig",
+    "GatewayVisionRouter",
+    "create_optional_gateway_vision_router_from_environment",
     "BoundedLocalDescriptionRunner",
     "DescriptionAdapterError",
     "DescriptionAnalyzerResult",
@@ -71,6 +87,7 @@ __all__ = (
     "VisionObservation",
     "VisionObservationKind",
     "VisionOutcomeCode",
+    "VisionProcessingMode",
     "VisionServiceOutcome",
     "validate_analysis_id",
     "validate_canonical_id",

@@ -37,7 +37,11 @@ def test_capability_and_actions_use_labelled_native_keyboard_controls() -> None:
     source = _component()
     assert "<fieldset" in source
     assert "<legend" in source
-    assert source.count('type="radio"') == 2
+    assert source.count('type="radio"') == 4
+    assert 'name="vision-capability"' in source
+    assert 'name="vision-processing-mode"' in source
+    assert 'type="checkbox"' in source
+    assert "vision-cloud-disclosure" in source
     assert 'value="ocr"' in source
     assert 'value="describe"' in source
     assert "OCR (Text Extraction)" in source

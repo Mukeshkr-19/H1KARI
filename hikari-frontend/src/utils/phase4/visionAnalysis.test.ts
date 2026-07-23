@@ -122,6 +122,7 @@ test("reduceVisionAnalysis happy path lifecycle", () => {
     type: "PREPARE_REQUESTED",
     requestId: "req-001",
     capability: "ocr",
+    mode: "cloud",
   });
   assert.equal(state.status, "preparing");
   assert.equal(state.requestId, "req-001");
@@ -166,6 +167,7 @@ test("stale or missing correlation is ignored with identical previous state refe
     type: "PREPARE_REQUESTED",
     requestId: "req-001",
     capability: "ocr",
+    mode: "cloud",
   });
 
   // Stale READY_RECEIVED with wrong requestId
@@ -183,6 +185,7 @@ test("cancel flow requires correlated server acknowledgement", () => {
     type: "PREPARE_REQUESTED",
     requestId: "req-001",
     capability: "describe",
+    mode: "private_local",
   });
 
   // Request cancel
@@ -212,6 +215,7 @@ test("terminal states reject later mutations except RESET", () => {
     type: "PREPARE_REQUESTED",
     requestId: "req-001",
     capability: "ocr",
+    mode: "cloud",
   });
   state = reduceVisionAnalysis(state, {
     type: "SAFE_ERROR",
@@ -226,6 +230,7 @@ test("terminal states reject later mutations except RESET", () => {
     type: "PREPARE_REQUESTED",
     requestId: "req-002",
     capability: "describe",
+    mode: "private_local",
   });
   assert.strictEqual(mutated, state);
 

@@ -25,10 +25,12 @@ from core.visual_transfer import (
     VisualTransferService,
 )
 from core.vision import (
+    CloudVisionAnalyzer,
     DescriptionAnalyzer,
     VisionAnalysisService,
     VisionRuntime,
     create_optional_mlx_description_adapter_from_environment,
+    create_optional_gateway_vision_router_from_environment,
 )
 from core.vision.ocr import LocalOcrAdapter
 
@@ -90,6 +92,7 @@ def create_phase4_subsystem(
     analysis_id_factory: Callable[[], str] | None = None,
     ocr_executable_path: Path | str | None = None,
     description_analyzer: DescriptionAnalyzer | None = None,
+    cloud_vision_analyzer: CloudVisionAnalyzer | None = None,
     challenge_id_factory: Callable[[], str] | None = None,
     device_id_factory: Callable[[], str] | None = None,
     secret_code_factory: Callable[[], str] | None = None,
@@ -144,6 +147,11 @@ def create_phase4_subsystem(
             selected_description_analyzer = (
                 create_optional_mlx_description_adapter_from_environment()
             )
+        selected_cloud_vision_analyzer = cloud_vision_analyzer
+        if selected_cloud_vision_analyzer is None:
+            selected_cloud_vision_analyzer = (
+                create_optional_gateway_vision_router_from_environment()
+            )
         pairing_runtime = create_pairing_runtime(
             db_path=pairing_db_path,
             clock=clock_fn,
@@ -165,6 +173,7 @@ def create_phase4_subsystem(
                 service=vision_service,
                 ocr_adapter=ocr_adapter,
                 description_analyzer=selected_description_analyzer,
+                cloud_vision_analyzer=selected_cloud_vision_analyzer,
                 handoff_accepted=handoff_service.is_accepted_for_session,
             ),
         )

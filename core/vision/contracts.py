@@ -31,6 +31,17 @@ class VisionCapability(str, Enum):
     DESCRIBE = "describe"
 
 
+class VisionProcessingMode(str, Enum):
+    """Explicit image-processing destination selected by the user.
+
+    ``PRIVATE_LOCAL`` is the compatibility default so an older client can never
+    begin cloud egress merely because the server was upgraded.
+    """
+
+    PRIVATE_LOCAL = "private_local"
+    CLOUD = "cloud"
+
+
 class VisionAnalysisState(str, Enum):
     AWAITING_IMAGE = "awaiting_image"
     ANALYZING = "analyzing"
@@ -157,15 +168,21 @@ class VisionAnalysisRequest:
     request_id: str
     handoff_id: str
     capability: VisionCapability
+    mode: VisionProcessingMode = VisionProcessingMode.PRIVATE_LOCAL
 
     def __post_init__(self) -> None:
         validate_request_id(self.request_id)
         validate_handoff_id(self.handoff_id)
         if not isinstance(self.capability, VisionCapability):
             raise ContractValidationError("capability is invalid")
+        if not isinstance(self.mode, VisionProcessingMode):
+            raise ContractValidationError("mode is invalid")
 
     def __repr__(self) -> str:
-        return f"VisionAnalysisRequest(capability={self.capability.value!r})"
+        return (
+            f"VisionAnalysisRequest(capability={self.capability.value!r}, "
+            f"mode={self.mode.value!r})"
+        )
 
     def __str__(self) -> str:
         return self.__repr__()
@@ -219,6 +236,7 @@ class VisionAnalysisRecord:
     created_at: float
     expires_at: float
     updated_at: float
+    mode: VisionProcessingMode = VisionProcessingMode.PRIVATE_LOCAL
     transfer_id: Optional[str] = None
     observations: Tuple[VisionObservation, ...] = ()
 
@@ -232,6 +250,8 @@ class VisionAnalysisRecord:
         validate_handoff_id(self.handoff_id)
         if not isinstance(self.capability, VisionCapability):
             raise ContractValidationError("capability is invalid")
+        if not isinstance(self.mode, VisionProcessingMode):
+            raise ContractValidationError("mode is invalid")
         if not isinstance(self.state, VisionAnalysisState):
             raise ContractValidationError("state is invalid")
         created_at = _validate_finite_timestamp("created_at", self.created_at)
@@ -272,6 +292,7 @@ class VisionAnalysisRecord:
         return (
             f"VisionAnalysisRecord(state={self.state.value!r}, "
             f"capability={self.capability.value!r}, "
+            f"mode={self.mode.value!r}, "
             f"observation_count={len(self.observations)})"
         )
 

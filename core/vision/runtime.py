@@ -19,6 +19,7 @@ from core.vision.contracts import (
     VisionObservation,
     VisionObservationKind,
     VisionOutcomeCode,
+    VisionProcessingMode,
 )
 from core.vision.ocr import LocalOcrAdapter, OcrStatus
 from core.vision.service import VisionAnalysisService
@@ -27,6 +28,16 @@ from core.vision.service import VisionAnalysisService
 class DescriptionAnalyzer(Protocol):
     def __call__(
         self, image_bytes: bytes, *, mime_type: str
+    ) -> tuple[VisionObservation, ...]: ...
+
+
+class CloudVisionAnalyzer(Protocol):
+    def __call__(
+        self,
+        image_bytes: bytes,
+        *,
+        mime_type: str,
+        capability: VisionCapability,
     ) -> tuple[VisionObservation, ...]: ...
 
 
@@ -39,15 +50,19 @@ class VisionRuntime:
         service: VisionAnalysisService,
         ocr_adapter: LocalOcrAdapter | None = None,
         description_analyzer: DescriptionAnalyzer | None = None,
+        cloud_vision_analyzer: CloudVisionAnalyzer | None = None,
         handoff_accepted: Callable[[str, str], bool] | None = None,
     ) -> None:
         if not isinstance(service, VisionAnalysisService):
             raise TypeError("vision service is required")
         if description_analyzer is not None and not callable(description_analyzer):
             raise TypeError("description analyzer must be callable")
+        if cloud_vision_analyzer is not None and not callable(cloud_vision_analyzer):
+            raise TypeError("cloud vision analyzer must be callable")
         self._service = service
         self._ocr_adapter = ocr_adapter
         self._description_analyzer = description_analyzer
+        self._cloud_vision_analyzer = cloud_vision_analyzer
         self._handoff_accepted = handoff_accepted
 
     def __repr__(self) -> str:
@@ -103,18 +118,34 @@ class VisionRuntime:
         request_id: str,
         handoff_id: str,
         capability: object,
+        mode: object = VisionProcessingMode.PRIVATE_LOCAL,
     ) -> dict:
         try:
             parsed_capability = VisionCapability(capability)
         except (TypeError, ValueError):
             return self._error(request_id, "invalid_request")
-        if (
-            parsed_capability is VisionCapability.OCR
-            and self._ocr_adapter is None
-        ) or (
-            parsed_capability is VisionCapability.DESCRIBE
-            and self._description_analyzer is None
-        ):
+        try:
+            parsed_mode = VisionProcessingMode(mode)
+        except (TypeError, ValueError):
+            return self._error(request_id, "invalid_request")
+        local_unavailable = (
+            parsed_mode is VisionProcessingMode.PRIVATE_LOCAL
+            and (
+                (
+                    parsed_capability is VisionCapability.OCR
+                    and self._ocr_adapter is None
+                )
+                or (
+                    parsed_capability is VisionCapability.DESCRIBE
+                    and self._description_analyzer is None
+                )
+            )
+        )
+        cloud_unavailable = (
+            parsed_mode is VisionProcessingMode.CLOUD
+            and self._cloud_vision_analyzer is None
+        )
+        if local_unavailable or cloud_unavailable:
             return self._error(request_id, "capability_unavailable")
         if self._handoff_accepted is None:
             return self._error(request_id, "unavailable")
@@ -125,7 +156,11 @@ class VisionRuntime:
             return self._error(request_id, "unavailable")
         try:
             outcome = self._service.prepare(
-                actor, request_id, handoff_id, parsed_capability
+                actor,
+                request_id,
+                handoff_id,
+                parsed_capability,
+                parsed_mode,
             )
         except Exception:
             return self._error(request_id, "unavailable")
@@ -226,7 +261,17 @@ class VisionRuntime:
             }
         )
         try:
-            if record.capability is VisionCapability.OCR:
+            if record.mode is VisionProcessingMode.CLOUD:
+                if self._cloud_vision_analyzer is None:
+                    raise LookupError
+                observations = tuple(
+                    self._cloud_vision_analyzer(
+                        image_bytes,
+                        mime_type=mime_type,
+                        capability=record.capability,
+                    )
+                )
+            elif record.capability is VisionCapability.OCR:
                 if self._ocr_adapter is None:
                     raise LookupError
                 result = self._ocr_adapter.analyze(image_bytes, mime_type=mime_type)
@@ -308,11 +353,14 @@ class VisionRuntime:
         if outcome.code is not VisionOutcomeCode.CANCELLED:
             return self._error(request_id, "analysis_failed", analysis_id)
         if record is not None and record.state is VisionAnalysisState.ANALYZING:
-            adapter = (
-                self._ocr_adapter
-                if record.capability is VisionCapability.OCR
-                else self._description_analyzer
-            )
+            if record.mode is VisionProcessingMode.CLOUD:
+                adapter = self._cloud_vision_analyzer
+            else:
+                adapter = (
+                    self._ocr_adapter
+                    if record.capability is VisionCapability.OCR
+                    else self._description_analyzer
+                )
             adapter_cancel = getattr(adapter, "cancel", None)
             if callable(adapter_cancel):
                 try:
@@ -378,4 +426,4 @@ class VisionRuntime:
             return 0
 
 
-__all__ = ("DescriptionAnalyzer", "VisionRuntime")
+__all__ = ("CloudVisionAnalyzer", "DescriptionAnalyzer", "VisionRuntime")

@@ -612,10 +612,16 @@ export function encodeVisualTransferBegin(
   };
 }
 
-export function encodeVisionAnalysisPrepare(requestId: string, handoffId: string, capability: "ocr" | "describe") {
+export function encodeVisionAnalysisPrepare(
+  requestId: string,
+  handoffId: string,
+  capability: "ocr" | "describe",
+  mode: "cloud" | "private_local",
+) {
   if (!isValidCanonicalId(requestId) || !isValidCanonicalId(handoffId)) return null;
   if (capability !== "ocr" && capability !== "describe") return null;
-  return { type: "vision_analysis_prepare", request_id: requestId, handoff_id: handoffId, capability };
+  if (mode !== "cloud" && mode !== "private_local") return null;
+  return { type: "vision_analysis_prepare", request_id: requestId, handoff_id: handoffId, capability, mode };
 }
 
 export function encodeVisionAnalysisCancel(requestId: string, analysisId: string) {

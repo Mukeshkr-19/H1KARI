@@ -24,6 +24,7 @@ from core.vision.contracts import (
     VisionCapability,
     VisionObservation,
     VisionOutcomeCode,
+    VisionProcessingMode,
     VisionServiceOutcome,
     validate_analysis_id,
     validate_handoff_id,
@@ -145,6 +146,7 @@ class VisionAnalysisService:
         request_id: str,
         handoff_id: str,
         capability: VisionCapability,
+        mode: VisionProcessingMode = VisionProcessingMode.PRIVATE_LOCAL,
     ) -> VisionServiceOutcome:
         """Create or reuse an awaiting-image analysis for one request."""
         scoped = self._validate_actor(actor)
@@ -156,6 +158,7 @@ class VisionAnalysisService:
                 request_id=request_id,
                 handoff_id=handoff_id,
                 capability=capability,
+                mode=mode,
             )
         except ContractValidationError:
             return VisionServiceOutcome(code=VisionOutcomeCode.INVALID_REQUEST)
@@ -182,6 +185,7 @@ class VisionAnalysisService:
                     if (
                         existing.handoff_id == request.handoff_id
                         and existing.capability is request.capability
+                        and existing.mode is request.mode
                     ):
                         return self._outcome_for_record(existing)
                     return VisionServiceOutcome(
@@ -211,6 +215,7 @@ class VisionAnalysisService:
                 session_id=scoped.session_id,
                 handoff_id=request.handoff_id,
                 capability=request.capability,
+                mode=request.mode,
                 state=VisionAnalysisState.AWAITING_IMAGE,
                 created_at=now,
                 expires_at=now + ANALYSIS_TTL_SECONDS,

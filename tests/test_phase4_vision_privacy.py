@@ -140,7 +140,8 @@ def test_vision_modules_have_no_capture_network_provider_or_persistence_boundary
         tree = _tree(path)
         imports = _import_roots(tree)
         calls = _called_names(tree)
-        assert imports.isdisjoint(FORBIDDEN_IMPORT_ROOTS), path.name
+        if path.name != "cloud.py":
+            assert imports.isdisjoint(FORBIDDEN_IMPORT_ROOTS), path.name
         assert "tempfile" not in imports, path.name
         allowed_effects = {"send"} if path.name == "mlx_worker.py" else set()
         allowed_reads = (
@@ -154,6 +155,10 @@ def test_vision_modules_have_no_capture_network_provider_or_persistence_boundary
             assert calls.isdisjoint(
                 {"write_bytes", "write_text", "NamedTemporaryFile", "mkstemp"}
             )
+        if path.name == "cloud.py":
+            assert "http" in imports
+            assert calls.isdisjoint(FORBIDDEN_PERSISTENCE_CALLS)
+            assert calls.isdisjoint({"print", "upload", "urlopen"})
 
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):

@@ -169,7 +169,9 @@
         "handoff_id": {"type": "string", "max_length": 80, "pattern": "^[a-z0-9][a-z0-9_.-]{0,79}$"},
         "capability": {"type": "string", "enum": ["ocr", "describe"]}
       },
-      "optional": {}
+      "optional": {
+        "mode": {"type": "string", "enum": ["cloud", "private_local"]}
+      }
     },
     "vision_analysis_cancel": {
       "required": {

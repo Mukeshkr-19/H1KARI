@@ -15,12 +15,16 @@ import {
   type VisionAnalysisErrorCode,
   type VisionAnalysisState,
   type VisionCapability,
+  type VisionProcessingMode,
 } from "../utils/phase4/visionAnalysis";
 
 export interface VisionAnalysisPanelProps {
   readonly state: VisionAnalysisState;
   readonly onCapabilityChange?: (capability: VisionCapability) => void;
-  readonly onStartAnalysis?: (capability: VisionCapability) => void;
+  readonly onStartAnalysis?: (
+    capability: VisionCapability,
+    mode: VisionProcessingMode,
+  ) => void;
   readonly onCancelAnalysis?: () => void;
   readonly headingRef?: React.RefObject<HTMLHeadingElement | null>;
 }
@@ -86,6 +90,10 @@ export function VisionAnalysisPanel({
   const [selectedCapability, setSelectedCapability] = useState<VisionCapability>(
     state.capability || "ocr",
   );
+  const [selectedMode, setSelectedMode] = useState<VisionProcessingMode>(
+    state.mode || "cloud",
+  );
+  const [cloudAcknowledged, setCloudAcknowledged] = useState(false);
   const isPending = isVisionAnalysisPending(state.status);
 
   const handleCapabilityChange = useCallback(
@@ -99,10 +107,20 @@ export function VisionAnalysisPanel({
   );
 
   const handleStart = useCallback(() => {
-    if (onStartAnalysis && !isPending) {
-      onStartAnalysis(selectedCapability);
+    if (
+      onStartAnalysis &&
+      !isPending &&
+      (selectedMode !== "cloud" || cloudAcknowledged)
+    ) {
+      onStartAnalysis(selectedCapability, selectedMode);
     }
-  }, [onStartAnalysis, isPending, selectedCapability]);
+  }, [
+    onStartAnalysis,
+    isPending,
+    selectedCapability,
+    selectedMode,
+    cloudAcknowledged,
+  ]);
 
   const handleCancel = useCallback(() => {
     if (onCancelAnalysis && isPending && !state.cancelPending) {
@@ -154,16 +172,79 @@ export function VisionAnalysisPanel({
           </label>
         </div>
         <p id="vision-description-unavailable" className="mt-2 text-xs text-gray-400">
-          Image description requires an explicitly provisioned local engine. If it is
-          unavailable, analysis stops before camera capture.
+          {selectedMode === "cloud"
+            ? "Cloud description requires an explicitly configured image-capable gateway route."
+            : "Private Local description requires an explicitly provisioned local engine."}
+          {" "}If the selected mode is unavailable, analysis stops before camera capture.
         </p>
+      </fieldset>
+
+      <fieldset className="mb-4 border-none p-0 m-0">
+        <legend className="text-sm font-medium text-gray-200 mb-2">
+          Image Processing
+        </legend>
+        <div className="space-y-2">
+          <label className="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+            <input
+              type="radio"
+              name="vision-processing-mode"
+              value="cloud"
+              checked={selectedMode === "cloud"}
+              onChange={() => {
+                setSelectedMode("cloud");
+                setCloudAcknowledged(false);
+              }}
+              disabled={isPending}
+            />
+            <span>Cloud Vision</span>
+          </label>
+          <label className="flex items-center space-x-2 text-sm text-gray-300 cursor-pointer">
+            <input
+              type="radio"
+              name="vision-processing-mode"
+              value="private_local"
+              checked={selectedMode === "private_local"}
+              onChange={() => {
+                setSelectedMode("private_local");
+                setCloudAcknowledged(false);
+              }}
+              disabled={isPending}
+            />
+            <span>Private Local</span>
+          </label>
+        </div>
+        {selectedMode === "cloud" ? (
+          <label className="mt-3 flex items-start gap-2 text-xs text-yellow-200">
+            <input
+              type="checkbox"
+              checked={cloudAcknowledged}
+              onChange={(event) => setCloudAcknowledged(event.target.checked)}
+              disabled={isPending}
+              aria-describedby="vision-cloud-disclosure"
+            />
+            <span id="vision-cloud-disclosure">
+              I understand this image will be sent through my configured cloud
+              vision gateways and processed by an upstream provider. If the first
+              configured route is unavailable, another configured route may be tried.
+            </span>
+          </label>
+        ) : (
+          <p className="mt-2 text-xs text-green-300">
+            Private Local keeps image analysis on this computer and requires an
+            explicitly provisioned local engine.
+          </p>
+        )}
       </fieldset>
 
       <div className="flex space-x-3 mb-3">
         <button
           type="button"
           onClick={handleStart}
-          disabled={isPending || state.status === "completed"}
+          disabled={
+            isPending ||
+            state.status === "completed" ||
+            (selectedMode === "cloud" && !cloudAcknowledged)
+          }
           className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Start Analysis

@@ -2677,7 +2677,10 @@ export default function Home() {
     }
   }, []);
 
-  const startVisionAnalysisAction = useCallback((capability: VisionCapability) => {
+  const startVisionAnalysisAction = useCallback((
+    capability: VisionCapability,
+    mode: "cloud" | "private_local",
+  ) => {
     const handoffId = handoffStateRef.current.handoffId;
     if (
       handoffStateRef.current.status !== "accepted" ||
@@ -2690,12 +2693,13 @@ export default function Home() {
       setVisionAnalysisState(reset);
     }
     const requestId = createCanonicalRequestId("vis");
-    const encoded = encodeVisionAnalysisPrepare(requestId, handoffId, capability);
+    const encoded = encodeVisionAnalysisPrepare(requestId, handoffId, capability, mode);
     if (!encoded || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     const next = reduceVisionAnalysis(visionAnalysisStateRef.current, {
       type: "PREPARE_REQUESTED",
       requestId,
       capability,
+      mode,
       handoffId,
     });
     visionAnalysisStateRef.current = next;

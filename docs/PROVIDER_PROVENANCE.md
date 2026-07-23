@@ -4,17 +4,18 @@ Status: Phase 0 data-flow and disable-path record
 
 Reviewed: 2026-07-14
 
-`core/router.py` is the only runtime provider configuration authority. A provider
-is available only when its named environment key exists; Ollama is the local
-fallback. Removing a key disables that hosted provider without changing memory or
-task storage.
+`core/router.py` is the text-generation provider configuration authority.
+`core/vision/cloud.py` separately owns explicit Phase 4 image-analysis gateway
+configuration. A provider is available only when its named environment key
+exists; cloud vision additionally requires an exact `*_VISION_MODEL`. Removing a
+key disables that hosted provider without changing memory or task storage.
 
 ## Model providers
 
 | Provider | Configured model identity | Data sent | Retention/training evidence | Disable and rollback |
 |---|---|---|---|---|
-| OmniRoute local gateway | `auto/fast`, `auto`, `auto/smart` | text message history and generation settings pass through the loopback gateway, then onward to the upstream provider it selects | [OmniRoute](https://github.com/diegosouzapw/OmniRoute) is local-first routing software; upstream provider retention, training, quotas, and terms still apply to every routed request | unset `OMNIROUTE_API_KEY` or stop the local gateway; HIKARI accepts only a loopback HTTP `/v1` endpoint |
-| 9Router local gateway | local combo `free-forever` by default, overridable per quality | text message history and generation settings pass through the loopback gateway, then onward to the upstream provider selected by the configured combo | [9Router](https://github.com/decolua/9router) is local routing software; upstream provider retention, training, quotas, and terms still apply to every routed request | unset `NINEROUTER_API_KEY` or stop the local gateway; HIKARI accepts only a loopback HTTP `/v1` endpoint |
+| OmniRoute local gateway | text aliases plus optional exact `OMNIROUTE_VISION_MODEL` | text requests use the text router; one bounded image and fixed instruction pass through loopback and then upstream only after explicit Cloud Vision acknowledgement | [OmniRoute](https://github.com/diegosouzapw/OmniRoute) is local-first routing software; upstream provider retention, training, quotas, and terms still apply to every routed request | unset `OMNIROUTE_VISION_MODEL` to disable image egress, or unset `OMNIROUTE_API_KEY`/stop the gateway to disable all use; only loopback HTTP `/v1` is accepted |
+| 9Router local gateway | text combo `free-forever` plus optional exact `NINEROUTER_VISION_MODEL` combo | text requests use the text router; one bounded image and fixed instruction pass through loopback and then upstream only after explicit Cloud Vision acknowledgement | [9Router](https://github.com/decolua/9router) is local routing software; upstream provider retention, training, quotas, and terms still apply; the configured combo must independently guarantee image input | unset `NINEROUTER_VISION_MODEL` to disable image egress, or unset `NINEROUTER_API_KEY`/stop the gateway to disable all use; only loopback HTTP `/v1` is accepted |
 | Google Gemini Developer API | `gemini-2.5-flash` | system instructions, context, user text, generation settings | [paid-service data controls and limited abuse logging](https://ai.google.dev/gemini-api/docs/zdr); free and paid terms differ | unset `GOOGLE_AI_STUDIO_KEY`; select another configured provider |
 | GroqCloud | `llama-3.3-70b-versatile` | message history and generation settings | [inference is not retained by default; reliability/abuse logs may be retained up to 30 days; ZDR is available](https://console.groq.com/docs/your-data) | unset `GROQ_API_KEY` |
 | OpenRouter | `meta-llama/llama-3.3-70b-instruct:free`, `deepseek/deepseek-r1:free` | message history and generation settings, then onward to a selected upstream | [prompt logging is opt-in, metadata is retained, and upstream policies vary](https://openrouter.ai/docs/guides/privacy/data-collection); H1KARI does not currently request per-call ZDR | unset `OPENROUTER_API_KEY`; do not send private content until a later policy wrapper enforces endpoint constraints |

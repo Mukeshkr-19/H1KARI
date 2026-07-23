@@ -96,8 +96,10 @@ unchanged v1 behavior).
 bounded capability (`ocr` or `describe`) against an image that still travels the
 authenticated bounded binary-transfer path. The current JSON protocol carries no
 image bytes: `bytes`, `data`, `base64`, `data_url`, filenames, filesystem paths, and
-URLs are unknown fields and fail validation. No OCR execution, provider selection,
-upload, or external action occurs at prepare time.
+URLs are unknown fields and fail validation. No OCR execution, provider request,
+upload, or external action occurs at prepare time. Its optional `mode` is
+`cloud` or `private_local`; omission is defined as `private_local` so older
+clients cannot begin cloud egress after a server upgrade.
 
 The analysis must be bound to the same accepted handoff/session that produced the
 transfer. Remote devices remain guests; desktop permissions are freshly evaluated
@@ -119,9 +121,11 @@ suppressed.
 
 Client messages:
 
-- `vision_analysis_prepare` carries exactly `request_id` (canonical ID, max 80),
+- `vision_analysis_prepare` requires exactly `request_id` (canonical ID, max 80),
   `handoff_id` (canonical ID, max 80), and `capability` (enum: `ocr`, `describe`).
-  No optional fields.
+  Optional `mode` is `cloud` or `private_local`. Only explicit `cloud` permits
+  the server to send the later validated image through a configured loopback
+  gateway; omission remains private-local.
 - `vision_analysis_cancel` carries exactly `request_id` and `analysis_id` (canonical
   ID, max 80). No optional fields.
 - `vision_analysis_status` carries exactly `request_id` and `analysis_id` (canonical

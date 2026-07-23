@@ -910,6 +910,7 @@ class WebSocketServer:
                         request_id,
                         data["handoff_id"],
                         data["capability"],
+                        data.get("mode", "private_local"),
                     )
                 elif data["type"] == "vision_analysis_cancel":
                     analysis_id = data["analysis_id"]

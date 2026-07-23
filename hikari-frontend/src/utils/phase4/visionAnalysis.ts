@@ -16,6 +16,7 @@ export type VisionAnalysisStatus =
   | "failed";
 
 export type VisionCapability = "ocr" | "describe";
+export type VisionProcessingMode = "cloud" | "private_local";
 
 export type ObservationKind = "text" | "description";
 
@@ -59,6 +60,7 @@ export interface VisionObservation {
 export interface VisionAnalysisState {
   readonly status: VisionAnalysisStatus;
   readonly capability: VisionCapability;
+  readonly mode: VisionProcessingMode;
   readonly requestId: string | null;
   readonly analysisId: string | null;
   readonly transferId: string | null;
@@ -73,6 +75,7 @@ export type VisionAnalysisAction =
       type: "PREPARE_REQUESTED";
       requestId: string;
       capability: VisionCapability;
+      mode: VisionProcessingMode;
       transferId?: string;
       handoffId?: string;
     }
@@ -217,6 +220,7 @@ export function createInitialVisionAnalysisState(): VisionAnalysisState {
   return Object.freeze({
     status: "idle",
     capability: "ocr",
+    mode: "cloud",
     requestId: null,
     analysisId: null,
     transferId: null,
@@ -256,9 +260,13 @@ export function reduceVisionAnalysis(
       if (action.capability !== "ocr" && action.capability !== "describe") {
         return state;
       }
+      if (action.mode !== "cloud" && action.mode !== "private_local") {
+        return state;
+      }
       return Object.freeze({
         status: "preparing",
         capability: action.capability,
+        mode: action.mode,
         requestId: action.requestId,
         analysisId: null,
         transferId: action.transferId ?? null,

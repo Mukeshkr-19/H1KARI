@@ -75,8 +75,10 @@ child process:
 - is terminated on cancellation or after the 30-second hard deadline.
 
 No temporary image, OCR output, description, model path, worker output, or raw
-exception is written to logs or persistent application state. There is no cloud
-fallback and no connection to OmniRoute or 9Router.
+exception is written to logs or persistent application state. Private Local
+never falls back to cloud and has no connection to OmniRoute or 9Router. Cloud
+Vision is a separate explicitly acknowledged mode documented in
+`docs/LOCAL_ROUTER_GATEWAYS.md`.
 
 ## Product behavior
 
