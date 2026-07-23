@@ -41,6 +41,7 @@ from core.brain_statements import (
 from core.action_policy import Actor, ActorContext, validate_actor_context
 from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
+from core.time_queries import answer_time_query
 
 if TYPE_CHECKING:
     from core.brain import HikariBrain
@@ -873,8 +874,13 @@ class HIKARI_Orchestrator:
         if self._is_ai_runtime_question(lowered):
             return self._get_ai_runtime_summary()
 
-        if re.search(r"\b(?:what(?:'s| is)\s+)?(?:the\s+)?time\b", lowered):
-            return f"The local time is {datetime.now().strftime('%-I:%M %p')}."
+        time_reply = answer_time_query(
+            lowered,
+            previous_was_time=getattr(self, "_last_special_intent", None) == "time",
+        )
+        if time_reply is not None:
+            self._last_special_intent = "time"
+            return time_reply
 
         if re.search(r"\b(?:today(?:'s)?\s+date|what(?:'s| is)\s+(?:today|the date)|date)\b", lowered):
             return f"Today is {datetime.now().strftime('%A, %B %-d, %Y')}."
@@ -1569,7 +1575,10 @@ Adapt your responses to be:
 - Formal level: {self.personality.traits['formality']:.0%} formal
 - Verbose level: {self.personality.traits['verbosity']:.0%} detailed
 - Humorous: {'yes' if self.personality.traits['humor'] > 0.5 else 'no'}
-- Always helpful and friendly"""
+- Always helpful and friendly
+- Treat the latest user message as controlling. Use older conversation context
+  only to interpret follow-ups, and honor corrections instead of repeating the
+  previous topic."""
 
         # Get AI response
         try:
