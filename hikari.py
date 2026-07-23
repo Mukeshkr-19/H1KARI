@@ -286,13 +286,9 @@ def run_interactive():
     """Run in interactive text mode"""
     print_banner()
 
-    from core.cli_status import get_startup_panel
     from core.orchestrator import get_orchestrator
 
     orchestrator = get_orchestrator()
-
-    print(get_startup_panel())
-    print()
 
     print("Ready. Type a message, or 'exit' to quit.\n")
 

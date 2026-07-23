@@ -179,6 +179,39 @@ class TestAiRuntimeStatus(unittest.TestCase):
             self.assertIn("Model: gemini-2.5-flash", answer)
             self.assertIn("groq/llama-3.3-70b-versatile", answer)
 
+    def test_missing_provider_failure_is_actionable_and_content_free(self):
+        from core.orchestrator import HIKARI_Orchestrator
+
+        class FakeRouter:
+            def get_routing_display(self):
+                return {"provider": "ollama"}
+
+        orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+        orch.router = FakeRouter()
+
+        answer = orch._get_ai_unavailable_message()
+        self.assertIn("No AI provider is available", answer)
+        self.assertIn("OmniRoute", answer)
+        self.assertIn("9Router", answer)
+        self.assertNotIn("trouble thinking", answer)
+
+    def test_configured_provider_failure_does_not_reflect_raw_errors(self):
+        from core.orchestrator import HIKARI_Orchestrator
+
+        class FakeRouter:
+            def get_routing_display(self):
+                return {"provider": "omniroute"}
+
+        orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+        orch.router = FakeRouter()
+
+        answer = orch._get_ai_unavailable_message()
+        self.assertEqual(
+            answer,
+            "The configured AI provider is temporarily unavailable. Check the "
+            "provider or local gateway and try again.",
+        )
+
 
 class TestUserSummaryCommand(unittest.TestCase):
     def test_what_do_u_know_about_me_is_local_summary(self):

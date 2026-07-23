@@ -1580,10 +1580,28 @@ Adapt your responses to be:
                 max_tokens=500,
                 temperature=0.7
             )
-            return response if response else "I'm having trouble thinking right now."
+            return response if response else self._get_ai_unavailable_message()
         except Exception as e:
             debug(f"[AI] Error: {e}")
-            return "I'm having trouble thinking right now. Try again in a moment."
+            return self._get_ai_unavailable_message()
+
+    def _get_ai_unavailable_message(self) -> str:
+        """Explain a missing or failed model route without reflecting errors."""
+        try:
+            info = self.router.get_routing_display()
+        except Exception:
+            info = {}
+        provider = info.get("provider")
+        if not provider or provider == "ollama":
+            return (
+                "No AI provider is available. Start and configure OmniRoute or "
+                "9Router, configure a supported hosted provider, or start Ollama "
+                "with an installed model."
+            )
+        return (
+            "The configured AI provider is temporarily unavailable. Check the "
+            "provider or local gateway and try again."
+        )
 
     def run_voice_loop(self):
         """Run the menu-bar voice loop using the existing daemon service."""

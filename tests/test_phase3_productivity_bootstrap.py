@@ -177,6 +177,7 @@ def test_non_server_status_commands_do_not_create_productivity_state(tmp_path: P
 def test_interactive_mode_does_not_bootstrap_productivity(
     tmp_path: Path,
     monkeypatch,
+    capsys,
 ):
     state_home = tmp_path / "private-home"
     monkeypatch.setenv("HIKARI_HOME", str(state_home))
@@ -186,16 +187,16 @@ def test_interactive_mode_does_not_bootstrap_productivity(
         "core.orchestrator",
         SimpleNamespace(get_orchestrator=lambda: fake_orchestrator),
     )
-    monkeypatch.setitem(
-        sys.modules,
-        "core.cli_status",
-        SimpleNamespace(get_startup_panel=lambda: "ready"),
-    )
     monkeypatch.setattr(builtins, "input", MagicMock(side_effect=EOFError))
 
     hikari.run_interactive()
 
     assert not (state_home / "policy" / PRODUCTIVITY_DB_NAME).exists()
+    output = capsys.readouterr().out
+    assert "Version   " not in output
+    assert "Provider  " not in output
+    assert "Fallback  " not in output
+    assert "Mode      text chat" not in output
 
 
 def test_server_constructs_and_injects_productivity_runtime(monkeypatch):

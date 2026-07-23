@@ -107,10 +107,6 @@ def test_text_mode_exit_calls_finalize_session(monkeypatch):
 
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(inputs))
     monkeypatch.setattr("hikari.print_banner", lambda: None)
-    monkeypatch.setattr(
-        "core.cli_status.get_startup_panel",
-        lambda: "panel",
-    )
     monkeypatch.setattr("core.orchestrator.get_orchestrator", lambda: orch)
     orch.process_input.return_value = "Hi"
 
