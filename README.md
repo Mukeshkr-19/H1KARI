@@ -121,9 +121,19 @@ After CLI install, `hikari` and `Hikari` work from any terminal folder:
 hikari --help
 hikari --doctor
 hikari --text
+hikari --new
+hikari --sessions
+hikari --session chat_0123456789abcdef01234567
 hikari --server --host 127.0.0.1 --port 9876
 hikari --text --verbose
 ```
+
+Local text and foreground voice chats share private, resumable sessions. The
+complete transcript stays under the private HIKARI runtime directory; only a
+bounded recent/relevant window is sent to the configured model. Inside text
+mode, type `/help` for new, resume, rename, archive, restore, and confirmed
+deletion commands. Brain v2 remains the reviewed authority for durable personal
+memory; a saved chat is context, not permission or accepted truth.
 
 Repo-local commands still work too:
 

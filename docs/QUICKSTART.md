@@ -56,9 +56,18 @@ After CLI install, this works from any terminal folder:
 hikari --help
 hikari --doctor
 hikari --text
+hikari --new
+hikari --sessions
+hikari --session chat_0123456789abcdef01234567
 hikari --server --host 127.0.0.1 --port 9876
 hikari --text --verbose
 ```
+
+`hikari` resumes the latest active local-owner conversation by default.
+Use `hikari --new` for a clean chat, `hikari --sessions` to list saved chats,
+or `hikari --session SESSION_ID` to resume one explicitly. Text and foreground
+voice use the same selected session. Chat transcripts are private runtime data,
+never repository files, and do not become Brain v2 authority automatically.
 
 Repo-local commands still work:
 

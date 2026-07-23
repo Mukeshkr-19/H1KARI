@@ -308,6 +308,25 @@ class ConversationContextEngine:
         with self._lock:
             self._sessions.pop(scope, None)
 
+    def restore_pairs(
+        self,
+        scope: ConversationScope,
+        pairs: Sequence[Tuple[str, str]],
+    ) -> None:
+        """Replace one in-memory scope from a validated private transcript."""
+        if isinstance(pairs, (str, bytes)) or not isinstance(pairs, Sequence):
+            return
+        self.clear(scope)
+        for pair in pairs[-(_MAX_SESSION_PAIRS + _MAX_ARCHIVE_PAIRS) :]:
+            if (
+                not isinstance(pair, Sequence)
+                or isinstance(pair, (str, bytes))
+                or len(pair) != 2
+            ):
+                self.clear(scope)
+                return
+            self.record_turn(scope, pair[0], pair[1])
+
     def clear_actor_session(self, actor_id: str, session_id: str) -> None:
         with self._lock:
             doomed = [

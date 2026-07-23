@@ -61,12 +61,175 @@ def run_daemon():
     HIKARI_Daemon().run()
 
 
-def run_voice(backend: str | None) -> int:
+def _format_conversation_sessions(records) -> str:
+    if not records:
+        return "No saved conversations."
+    lines = ["Saved conversations:"]
+    for record in records:
+        state = "archived" if record.archived else "active"
+        lines.append(
+            f"- {record.session_id}  {record.title}  "
+            f"({record.turn_count} turns, {state})"
+        )
+    return "\n".join(lines)
+
+
+def _prepare_local_conversation(orchestrator, *, session_id=None, new_session=False):
+    from core.conversation_sessions import (
+        ConversationSessionError,
+        create_conversation_session_store,
+    )
+
+    if not callable(getattr(orchestrator, "configure_conversation_session", None)):
+        return None, None, 0
+    try:
+        store = create_conversation_session_store()
+        if new_session:
+            record = store.create(owner_id="local-owner")
+        elif session_id:
+            record = store.get(owner_id="local-owner", session_id=session_id)
+            if record is None or record.archived:
+                raise ConversationSessionError("conversation not found")
+        else:
+            record = store.latest(owner_id="local-owner")
+            if record is None:
+                record = store.create(owner_id="local-owner")
+        restored = orchestrator.configure_conversation_session(store, record.session_id)
+        return store, record, restored
+    except ConversationSessionError:
+        if session_id:
+            raise SystemExit("Conversation session is unavailable.") from None
+        print(
+            "[!] Saved chat sessions are temporarily unavailable; using a temporary chat.",
+            file=sys.stderr,
+        )
+        return None, None, 0
+
+
+def _switch_after_removal(orchestrator, store):
+    record = store.latest(owner_id="local-owner")
+    if record is None:
+        record = store.create(owner_id="local-owner")
+    restored = orchestrator.configure_conversation_session(store, record.session_id)
+    return record, restored
+
+
+def _handle_conversation_command(command, orchestrator, store):
+    """Handle local slash commands; return (handled, possibly-new store)."""
+    from core.conversation_sessions import ConversationSessionError
+
+    text = command.strip()
+    if not text.startswith("/"):
+        return False, store
+    name, _, argument = text.partition(" ")
+    name = name.casefold()
+    argument = argument.strip()
+    if name in {"/help", "/session-help"}:
+        print(
+            "\nChat commands:\n"
+            "  /sessions [all]       List saved conversations\n"
+            "  /new [title]           Start a new conversation\n"
+            "  /resume SESSION_ID     Resume an active conversation\n"
+            "  /rename TITLE          Rename the current conversation\n"
+            "  /archive               Archive the current conversation\n"
+            "  /unarchive SESSION_ID  Restore an archived conversation\n"
+            "  /delete SESSION_ID DELETE  Permanently delete a conversation\n"
+        )
+        return True, store
+    if store is None:
+        print("\nHIKARI: Saved chat sessions are unavailable.\n")
+        return True, store
+    try:
+        if name == "/sessions":
+            records = store.list_sessions(
+                owner_id="local-owner",
+                include_archived=argument.casefold() == "all",
+                limit=50,
+            )
+            print(f"\n{_format_conversation_sessions(records)}\n")
+            return True, store
+        if name == "/new":
+            title = argument or "New conversation"
+            record = store.create(owner_id="local-owner", title=title)
+            orchestrator.configure_conversation_session(store, record.session_id)
+            print(f"\nHIKARI: Started {record.title} ({record.session_id}).\n")
+            return True, store
+        if name == "/resume":
+            record = store.get(owner_id="local-owner", session_id=argument)
+            if record is None or record.archived:
+                raise ConversationSessionError("conversation not found")
+            restored = orchestrator.configure_conversation_session(store, record.session_id)
+            print(
+                f"\nHIKARI: Resumed {record.title} "
+                f"({restored} recent turns restored).\n"
+            )
+            return True, store
+        if name == "/rename":
+            if not argument:
+                raise ConversationSessionError("title is required")
+            active = orchestrator.active_conversation_session_id()
+            if not store.rename(
+                owner_id="local-owner", session_id=active, title=argument
+            ):
+                raise ConversationSessionError("conversation not found")
+            print("\nHIKARI: Conversation renamed.\n")
+            return True, store
+        if name == "/archive":
+            active = orchestrator.active_conversation_session_id()
+            if not store.archive(owner_id="local-owner", session_id=active):
+                raise ConversationSessionError("conversation not found")
+            record, restored = _switch_after_removal(orchestrator, store)
+            print(
+                f"\nHIKARI: Conversation archived. Resumed {record.title} "
+                f"({restored} recent turns restored).\n"
+            )
+            return True, store
+        if name == "/unarchive":
+            if not store.unarchive(owner_id="local-owner", session_id=argument):
+                raise ConversationSessionError("conversation not found")
+            record = store.get(owner_id="local-owner", session_id=argument)
+            orchestrator.configure_conversation_session(store, argument)
+            print(f"\nHIKARI: Restored {record.title}.\n")
+            return True, store
+        if name == "/delete":
+            pieces = argument.split()
+            if len(pieces) != 2 or pieces[1] != "DELETE":
+                print(
+                    "\nHIKARI: Use /delete SESSION_ID DELETE to confirm permanent deletion.\n"
+                )
+                return True, store
+            target = pieces[0]
+            current = orchestrator.active_conversation_session_id()
+            if not store.delete(owner_id="local-owner", session_id=target):
+                raise ConversationSessionError("conversation not found")
+            if target == current:
+                record, restored = _switch_after_removal(orchestrator, store)
+                print(
+                    f"\nHIKARI: Conversation deleted. Resumed {record.title} "
+                    f"({restored} recent turns restored).\n"
+                )
+            else:
+                print("\nHIKARI: Conversation deleted.\n")
+            return True, store
+    except ConversationSessionError:
+        print("\nHIKARI: That conversation operation could not be completed.\n")
+        return True, store
+    print("\nHIKARI: Unknown chat command. Type /help for available commands.\n")
+    return True, store
+
+
+def run_voice(backend: str | None, *, session_id=None, new_session=False) -> int:
     """Run explicit foreground voice mode through the bounded voice adapter."""
     print_banner()
     from core.orchestrator import get_orchestrator
 
-    return get_orchestrator().run_voice_loop(backend)
+    orchestrator = get_orchestrator()
+    _prepare_local_conversation(
+        orchestrator,
+        session_id=session_id,
+        new_session=new_session,
+    )
+    return orchestrator.run_voice_loop(backend)
 
 def run_tray():
     """Run as system tray icon"""
@@ -290,7 +453,7 @@ def run_server(host: str, port: int):
         **server_kwargs,
     ).start()
 
-def run_interactive():
+def run_interactive(*, session_id=None, new_session=False):
     """Run in interactive text mode"""
     print_banner()
 
@@ -305,7 +468,18 @@ def run_interactive():
 
     orchestrator = get_orchestrator()
 
+    session_store, session_record, restored = _prepare_local_conversation(
+        orchestrator,
+        session_id=session_id,
+        new_session=new_session,
+    )
+
     print("Ready. Type a message, or 'exit' to quit.\n")
+    if session_record is not None:
+        print(
+            f"Chat: {session_record.title} ({session_record.session_id})"
+            f" — {restored} recent turns restored. Type /help for chat commands.\n"
+        )
 
     while True:
         try:
@@ -317,6 +491,14 @@ def run_interactive():
                 orchestrator.finalize_session()
                 print("\nHIKARI: Goodbye.")
                 break
+
+            handled, session_store = _handle_conversation_command(
+                user_input,
+                orchestrator,
+                session_store,
+            )
+            if handled:
+                continue
 
             response = orchestrator.process_input(user_input, source="text")
             if response:
@@ -597,6 +779,24 @@ def main():
         choices=("openai-whisper", "faster-whisper", "google-speech"),
         help="Required for voice startup; records download and audio-egress disclosure.",
     )
+    session_selection = parser.add_mutually_exclusive_group()
+    session_selection.add_argument(
+        "--new",
+        "--new-session",
+        dest="new_session",
+        action="store_true",
+        help="Start text or foreground voice mode in a new saved conversation.",
+    )
+    session_selection.add_argument(
+        "--session",
+        metavar="SESSION_ID",
+        help="Resume an existing saved conversation in text or foreground voice mode.",
+    )
+    parser.add_argument(
+        "--sessions",
+        action="store_true",
+        help="List saved local-owner conversations without starting HIKARI.",
+    )
     parser.add_argument(
         "--brain-v2-status",
         action="store_true",
@@ -844,6 +1044,20 @@ def main():
         parser.error("--startup-mode requires --init or --init-plan")
     if args.voice_backend and not (init_requested or args.voice):
         parser.error("--voice-backend requires --voice, --init, or --init-plan")
+    if (args.new_session or args.session) and any(
+        (
+            args.daemon,
+            args.tray,
+            args.server,
+            args.install,
+            args.install_cli,
+            args.uninstall_cli,
+            args.doctor,
+            args.doctor_full,
+            args.sessions,
+        )
+    ):
+        parser.error("--new and --session are available only in text or foreground voice mode")
     if args.backup_destination and not args.runtime_backup:
         parser.error("--backup-destination requires --runtime-backup")
     if args.startup_mode == "voice" and args.voice_backend is None:
@@ -875,6 +1089,7 @@ def main():
             "text", "voice", "daemon", "tray", "server", "install", "install_cli",
             "uninstall_cli", "doctor", "doctor_full", "memory_status",
             "voice_status", "init", "init_plan", "runtime_backup",
+            "sessions",
             "migration_plan", "rollback_init", "brain_v2_status",
             "brain_v2_pending", "brain_v2_show", "brain_v2_accept",
             "brain_v2_accept_no_promote", "brain_v2_reject",
@@ -1134,6 +1349,29 @@ def main():
 
         raise SystemExit(run_doctor(full=args.doctor_full))
 
+    if args.sessions:
+        from core.conversation_sessions import (
+            ConversationSessionError,
+            create_conversation_session_store,
+        )
+        from core.runtime_paths import hikari_home
+
+        try:
+            session_db = hikari_home() / "conversations" / "sessions.db"
+            if not session_db.is_file():
+                print("No saved conversations.")
+                return
+            store = create_conversation_session_store(db_path=session_db)
+            records = store.list_sessions(
+                owner_id="local-owner",
+                include_archived=True,
+                limit=100,
+            )
+            print(_format_conversation_sessions(records))
+            return
+        except ConversationSessionError:
+            raise SystemExit("Saved conversation listing is unavailable.") from None
+
     if args.install:
         install_service()
         return
@@ -1153,13 +1391,24 @@ def main():
         return
 
     if args.voice:
+        if args.session or args.new_session:
+            raise SystemExit(
+                run_voice(
+                    args.voice_backend,
+                    session_id=args.session,
+                    new_session=args.new_session,
+                )
+            )
         raise SystemExit(run_voice(args.voice_backend))
 
     if args.daemon:
         run_daemon()
         return
 
-    run_interactive()
+    if args.session or args.new_session:
+        run_interactive(session_id=args.session, new_session=args.new_session)
+    else:
+        run_interactive()
 
 if __name__ == "__main__":
     main()

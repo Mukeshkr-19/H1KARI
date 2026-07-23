@@ -114,6 +114,8 @@ class HIKARI_Orchestrator:
         self._owner_session_current_location: Optional[tuple[str, str]] = None
         self._pending_memory_choice: Optional[PendingMemoryChoice] = None
         self.conversation_context = ConversationContextEngine()
+        self.conversation_session_store = None
+        self._local_conversation_session_id = "local"
         self._conversation_actor_context: ContextVar[Optional[ActorContext]] = ContextVar(
             "hikari_conversation_actor_context", default=None
         )
@@ -242,7 +244,10 @@ class HIKARI_Orchestrator:
     def finalize_session(self) -> None:
         """Public hook to flush Brain v2 consolidation (e.g. text chat exit)."""
         try:
-            self._conversation_engine().clear_actor_session("local-owner", "local")
+            self._conversation_engine().clear_actor_session(
+                "local-owner",
+                str(getattr(self, "_local_conversation_session_id", "local")),
+            )
         except Exception as e:
             debug(f"[CONTEXT] Session clear failed: {e}")
         try:
@@ -432,9 +437,66 @@ class HIKARI_Orchestrator:
         return ActorContext(
             actor_id="local-owner",
             actor=Actor.OWNER,
-            session_id="local",
+            session_id=str(getattr(self, "_local_conversation_session_id", "local")),
             source=source,
         )
+
+    def configure_conversation_session(self, store, session_id: str) -> int:
+        """Bind local text and voice to one owner session and restore its context."""
+        from core.conversation_sessions import (
+            ConversationSessionStore,
+            hydrate_session_turns,
+            validate_session_id,
+        )
+
+        if not isinstance(store, ConversationSessionStore):
+            raise TypeError("store must be a ConversationSessionStore")
+        resolved = validate_session_id(session_id)
+        record = store.get(owner_id="local-owner", session_id=resolved)
+        if record is None or record.archived:
+            raise ValueError("conversation session is unavailable")
+        previous = str(getattr(self, "_local_conversation_session_id", "local"))
+        self._conversation_engine().clear_actor_session("local-owner", previous)
+        self.conversation_session_store = store
+        self._local_conversation_session_id = resolved
+        scope = self._conversation_scope(self._default_local_owner_context("text"))
+        turns = store.load_turns(owner_id="local-owner", session_id=resolved)
+        pairs = hydrate_session_turns(turns)
+        self._conversation_engine().restore_pairs(scope, pairs)
+        return len(pairs)
+
+    def active_conversation_session_id(self) -> str:
+        return str(getattr(self, "_local_conversation_session_id", "local"))
+
+    def _persist_conversation_turn(
+        self,
+        context: ActorContext,
+        scope: ConversationScope,
+        user_text: str,
+        assistant_text: str,
+        source: str,
+    ) -> None:
+        store = getattr(self, "conversation_session_store", None)
+        active_id = str(getattr(self, "_local_conversation_session_id", "local"))
+        if (
+            store is None
+            or context.actor is not Actor.OWNER
+            or scope.guest
+            or context.actor_id != "local-owner"
+            or context.session_id != active_id
+            or active_id == "local"
+        ):
+            return
+        try:
+            store.append_turn(
+                owner_id="local-owner",
+                session_id=active_id,
+                user_text=user_text,
+                assistant_text=assistant_text,
+                source=source,
+            )
+        except Exception as exc:
+            debug(f"[CONTEXT] Session persistence failed: {type(exc).__name__}")
 
     def _conversation_engine(self) -> ConversationContextEngine:
         engine = getattr(self, "conversation_context", None)
@@ -485,7 +547,48 @@ class HIKARI_Orchestrator:
         scope = self._active_conversation_scope()
         if scope is None:
             return ConversationContextPacket()
-        return self._conversation_engine().compose(scope, user_input)
+        packet = self._conversation_engine().compose(scope, user_input)
+        store = getattr(self, "conversation_session_store", None)
+        active_id = str(getattr(self, "_local_conversation_session_id", "local"))
+        if (
+            store is None
+            or scope.guest
+            or scope.actor_id != "local-owner"
+            or scope.session_id != active_id
+            or active_id == "local"
+        ):
+            return packet
+        try:
+            older = store.search_relevant_turns(
+                owner_id="local-owner",
+                session_id=active_id,
+                query=user_input,
+                limit=4,
+            )
+        except Exception as exc:
+            debug(f"[CONTEXT] Historical lookup failed: {type(exc).__name__}")
+            return packet
+        if not older:
+            return packet
+        historical = []
+        used = sum(len(item.get("content", "")) for item in packet.messages)
+        for turn in older:
+            for role, content in (
+                ("user", turn.user_text),
+                ("assistant", turn.assistant_text),
+            ):
+                remaining = 24_000 - used
+                if remaining <= 0:
+                    break
+                bounded = content[:remaining]
+                if bounded:
+                    historical.append({"role": role, "content": bounded})
+                    used += len(bounded)
+        return ConversationContextPacket(
+            messages=tuple((*historical, *packet.messages)),
+            digest=packet.digest,
+            covered_through=packet.covered_through,
+        )
 
     def _note_conversation_tool(self, kind: str, **slots: str) -> None:
         scope = self._active_conversation_scope()
@@ -527,6 +630,13 @@ class HIKARI_Orchestrator:
             if response:
                 scope = self._conversation_scope(effective_context)
                 self._conversation_engine().record_turn(scope, normalized, response)
+                self._persist_conversation_turn(
+                    effective_context,
+                    scope,
+                    normalized,
+                    response,
+                    source,
+                )
                 is_exit = normalized.casefold().strip() in {
                     "exit",
                     "quit",
