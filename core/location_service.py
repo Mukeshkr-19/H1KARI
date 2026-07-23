@@ -267,14 +267,47 @@ class LocationService:
         )
 
 
-def extract_weather_location(text: str) -> Optional[str]:
-    """Extract a bounded place phrase from a weather question."""
+_WEATHER_WORD = r"(?:weather|waether|wheather)"
+
+
+def extract_weather_location(
+    text: str,
+    *,
+    previous_was_weather: bool = False,
+    previous_location: Optional[str] = None,
+) -> Optional[str]:
+    """Extract a bounded place phrase from a weather question or follow-up.
+
+    A location-only correction is accepted only immediately after a weather
+    turn.  A bare location is accepted only when the prior turn explicitly
+    asked the user which location to check.
+    """
 
     raw = (text or "").strip()
-    if not re.search(r"\b(?:weather|temperature|forecast|raining|snowing)\b", raw, re.I):
+    mentions_weather = bool(
+        re.search(
+            rf"\b(?:{_WEATHER_WORD}|temperature|forecast|raining|snowing)\b",
+            raw,
+            re.I,
+        )
+    )
+    if not mentions_weather:
+        if not previous_was_weather:
+            return None
+        followup = re.fullmatch(
+            r"\s*(?:(?:no|nope|actually|and|what\s+about)\s*,?\s*)?"
+            r"(?:in|for|at)\s+(?P<place>.+?)\s*[?!.]*\s*",
+            raw,
+            re.I,
+        )
+        if followup:
+            return _valid_location_query(followup.group("place")) or ""
+        if previous_location == "":
+            place = re.sub(r"[?!.]+$", "", raw).strip()
+            return _valid_location_query(place) or ""
         return None
     if re.search(r"\btemperature\b", raw, re.I) and not re.search(
-        r"\b(?:weather|forecast|raining|snowing)\b|"
+        rf"\b(?:{_WEATHER_WORD}|forecast|raining|snowing)\b|"
         r"\btemperature\s+(?:in|for|at)\b|"
         r"^\s*(?:what(?:'s|\s+is)\s+(?:the\s+)?)?temperature\s*\??\s*$",
         raw,
@@ -285,8 +318,12 @@ def extract_weather_location(text: str) -> Optional[str]:
     if match:
         place = match.group("place")
     else:
-        match = re.search(r"\b(?:weather|forecast)\s+(?P<place>.+)$", raw, re.I)
+        match = re.search(
+            rf"\b(?:{_WEATHER_WORD}|forecast)\s+(?P<place>.+)$", raw, re.I
+        )
         if not match:
+            if previous_was_weather and previous_location:
+                return previous_location
             return ""
         place = match.group("place")
     place = re.sub(r"[?!.]+$", "", place).strip()
@@ -296,4 +333,11 @@ def extract_weather_location(text: str) -> Optional[str]:
         place,
         flags=re.I,
     ).strip()
+    if previous_was_weather and previous_location and place.casefold() in {
+        "there",
+        "here",
+        "it",
+        "that place",
+    }:
+        return previous_location
     return _valid_location_query(place) or ""

@@ -867,6 +867,12 @@ class HIKARI_Orchestrator:
     def _handle_special_commands(self, user_input: str) -> Optional[str]:
         """Handle special system commands"""
         lowered = user_input.lower().strip()
+        previous_special_intent = getattr(self, "_last_special_intent", None)
+        previous_weather_location = getattr(self, "_last_weather_location", None)
+
+        # Follow-up context is intentionally one turn wide.  Any unrelated
+        # request clears it before the general conversational model is used.
+        self._last_special_intent = None
 
         # Exit commands
         if any(w in lowered for w in ["exit", "quit", "goodbye", "bye"]):
@@ -881,7 +887,7 @@ class HIKARI_Orchestrator:
 
         time_reply = answer_time_query(
             lowered,
-            previous_was_time=getattr(self, "_last_special_intent", None) == "time",
+            previous_was_time=previous_special_intent == "time",
             resolve_timezone=self._resolve_time_location,
         )
         if time_reply is not None:
@@ -891,10 +897,17 @@ class HIKARI_Orchestrator:
         if re.search(r"\b(?:today(?:'s)?\s+date|what(?:'s| is)\s+(?:today|the date)|date)\b", lowered):
             return f"Today is {datetime.now().strftime('%A, %B %-d, %Y')}."
 
-        weather_location = extract_weather_location(lowered)
+        weather_location = extract_weather_location(
+            lowered,
+            previous_was_weather=previous_special_intent == "weather",
+            previous_location=previous_weather_location,
+        )
         if weather_location is not None:
+            self._last_special_intent = "weather"
             if not weather_location:
+                self._last_weather_location = ""
                 return "Which city, state, or country should I check the weather for?"
+            self._last_weather_location = weather_location
             try:
                 weather = self._location_service().current_weather(weather_location)
             except LocationServiceError:

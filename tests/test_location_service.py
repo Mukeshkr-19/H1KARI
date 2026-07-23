@@ -145,17 +145,28 @@ def test_query_bounds_and_controls_prevent_network_calls():
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    ("text", "previous_was_weather", "previous_location", "expected"),
     [
-        ("what is the weather in Buffalo?", "Buffalo"),
-        ("weather for Tirupati right now", "Tirupati"),
-        ("weather Spain", "Spain"),
-        ("what is the weather?", ""),
-        ("explain atmospheric temperature", None),
+        ("what is the weather in Buffalo?", False, None, "Buffalo"),
+        ("weather for Tirupati right now", False, None, "Tirupati"),
+        ("weather Spain", False, None, "Spain"),
+        ("what is the weather?", False, None, ""),
+        ("explain atmospheric temperature", False, None, None),
+        ("in Buffalo?", True, "Tirupati", "Buffalo"),
+        ("what about in Madrid?", True, "Buffalo", "Madrid"),
+        ("Buffalo", True, "", "Buffalo"),
+        ("about waether", True, "Buffalo", "Buffalo"),
+        ("thanks", True, "Buffalo", None),
     ],
 )
-def test_weather_location_extraction(text, expected):
-    assert extract_weather_location(text) == expected
+def test_weather_location_extraction(
+    text, previous_was_weather, previous_location, expected
+):
+    assert extract_weather_location(
+        text,
+        previous_was_weather=previous_was_weather,
+        previous_location=previous_location,
+    ) == expected
 
 
 def test_orchestrator_weather_path_uses_injected_service():
@@ -170,3 +181,42 @@ def test_orchestrator_weather_path_uses_injected_service():
     orch._public_location_service = FakeLocationService()
     answer = orch._handle_special_commands("weather in Buffalo")
     assert "Current weather in Buffalo, United States" in answer
+
+
+def test_orchestrator_weather_followups_keep_exact_live_location_context():
+    from core.orchestrator import HIKARI_Orchestrator
+
+    class FakeLocationService:
+        def __init__(self):
+            self.queries = []
+
+        def current_weather(self, query):
+            self.queries.append(query)
+            return CurrentWeather(f"{query}, Test", "clear", 20, 20, 50, 0, 10)
+
+    service = FakeLocationService()
+    orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+    orch._public_location_service = service
+
+    orch._handle_special_commands("weather in Tirupati")
+    buffalo = orch._handle_special_commands("in Buffalo?")
+    repeated = orch._handle_special_commands("about waether")
+
+    assert service.queries == ["tirupati", "buffalo", "buffalo"]
+    assert "buffalo, Test" in buffalo
+    assert "buffalo, Test" in repeated
+
+
+def test_weather_followup_context_is_cleared_by_unrelated_turn():
+    from core.orchestrator import HIKARI_Orchestrator
+
+    class FakeLocationService:
+        def current_weather(self, query):
+            return CurrentWeather(query, "clear", 20, 20, 50, 0, 10)
+
+    orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+    orch._public_location_service = FakeLocationService()
+
+    orch._handle_special_commands("weather in Tirupati")
+    assert orch._handle_special_commands("tell me a joke") is None
+    assert orch._handle_special_commands("in Buffalo?") is None
