@@ -89,7 +89,8 @@ def _get_configured_tts_backend() -> str:
             return backend
     except Exception:
         pass
-    return "macos-say"
+    selected = (os.getenv("HIKARI_TTS_BACKEND") or "").strip()
+    return selected or "macos-say"
 
 
 class VoiceSystem:

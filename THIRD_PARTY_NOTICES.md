@@ -55,9 +55,6 @@ Portions of the following tracked files are adapted from the JARVIS Voice AI
 Assistant project:
 
 - `core/task_planner.py`
-- `core/action_system.py`
-- `core/desktop_awareness.py`
-- `core/mac_integration.py`
 
 Upstream source: https://github.com/ethanplusai/jarvis
 

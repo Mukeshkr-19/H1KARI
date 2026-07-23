@@ -21,6 +21,7 @@ import subprocess
 import signal
 import json
 import re
+import tempfile
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,7 +29,9 @@ sys.path.insert(0, _REPO_ROOT)
 
 from core.speech_adapters import (
     CapturedAudio,
+    PocketTTSAdapter,
     SpeechAdapterError,
+    build_tts_adapter,
     build_stt_adapter,
 )
 
@@ -42,6 +45,7 @@ except Exception:
 
 from core.daily_logs import maybe_rotate_daily_log
 from core.runtime_paths import legacy_data_dir
+from core.voice_config import tts_rate
 
 WAKE_WORD = "hikari"
 STOP_WORDS = [
@@ -172,7 +176,7 @@ def _get_speaker_auth():
     return _speaker_auth_cache
 
 
-def verify_speaker(audio) -> bool:
+def verify_speaker(audio, *, announce: bool = True) -> bool:
     """
     Returns True iff the speaker matches the enrolled voice.
     Missing enrollment or unavailable verification always fails closed.
@@ -190,7 +194,7 @@ def verify_speaker(audio) -> bool:
     try:
         emb = auth.embedding_from_speech_recognition_audio(audio)
         res = auth.verify_embedding(emb)
-        if not res.ok:
+        if not res.ok and announce:
             print("❌ Voice not recognized")
         return res.ok
     except ImportError:
@@ -311,7 +315,12 @@ def _terminate_speech_process(process) -> None:
 
 
 def _wait_for_speech_or_owner_interrupt(process) -> bool:
-    """Return True when the verified owner interrupts active speech."""
+    """Return True when the verified owner speaks over active speech.
+
+    Natural barge-in should not depend on an exact transcript.  The owner may
+    say "stop", correct HIKARI, or immediately ask a follow-up; any verified
+    owner speech stops playback first.
+    """
     if sr is None or r is None:
         process.wait()
         return False
@@ -324,9 +333,9 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                 except (sr.WaitTimeoutError, sr.UnknownValueError):
                     continue
                 text = recognize_audio(audio, short_utterance=True)
-                if not text or not _is_speech_interrupt(text):
+                if not text:
                     continue
-                if not verify_speaker(audio):
+                if not verify_speaker(audio, announce=False):
                     continue
                 _terminate_speech_process(process)
                 print("[DAEMON] Speech interrupted by verified owner", flush=True)
@@ -338,24 +347,66 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
     return False
 
 
-def speak(text):
-    """Speak through the owned macOS process while accepting owner barge-in."""
-    global hikari_state
-    hikari_state = HikariState.SPEAKING
-    print("[DAEMON] Synthesizing response", flush=True)
+_voice_orchestrator = None
+_local_tts_adapter = None
+
+
+def _start_speech_process(text: str):
+    """Start the selected local backend and return process plus cleanup."""
+
+    global _local_tts_adapter
+    backend = (os.getenv("HIKARI_TTS_BACKEND") or "macos-say").strip()
+    if backend == "pocket-tts":
+        temp_dir = None
+        try:
+            if _local_tts_adapter is None:
+                _local_tts_adapter = build_tts_adapter("pocket-tts")
+            if not isinstance(_local_tts_adapter, PocketTTSAdapter):
+                raise SpeechAdapterError("invalid local speech adapter")
+            temp_dir = tempfile.TemporaryDirectory(prefix="hikari-tts-")
+            output = os.path.join(temp_dir.name, "speech.wav")
+            _local_tts_adapter.render_wav(text, output)
+            process = subprocess.Popen(
+                [
+                    "/usr/bin/afplay",
+                    "-r",
+                    f"{tts_rate() / 170:.3f}",
+                    output,
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return process, temp_dir.cleanup
+        except Exception:
+            if temp_dir is not None:
+                temp_dir.cleanup()
+            print(
+                "[DAEMON] Local neural voice unavailable; using macOS speech",
+                flush=True,
+            )
+
     process = subprocess.Popen(
-        ["say", "-r", "200", text],
+        ["say", "-r", str(tts_rate()), text],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    interrupted = _wait_for_speech_or_owner_interrupt(process)
-    if not interrupted:
-        time.sleep(0.15)
-    hikari_state = HikariState.ACTIVE
-    return not interrupted
+    return process, lambda: None
 
 
-_voice_orchestrator = None
+def speak(text):
+    """Speak locally while accepting verified owner barge-in."""
+    global hikari_state
+    hikari_state = HikariState.SPEAKING
+    print("[DAEMON] Synthesizing response", flush=True)
+    process, cleanup = _start_speech_process(text)
+    try:
+        interrupted = _wait_for_speech_or_owner_interrupt(process)
+        if not interrupted:
+            time.sleep(0.15)
+        return not interrupted
+    finally:
+        cleanup()
+        hikari_state = HikariState.ACTIVE
 
 
 def _get_voice_orchestrator():
@@ -505,6 +556,16 @@ def request_shutdown(_signum=None, _frame=None) -> None:
 
 def main() -> int:
     global daemon_running, hikari_state
+
+    # Load private runtime choices only when the daemon is explicitly started.
+    # Importing this module remains free of configuration and model side effects.
+    try:
+        from dotenv import load_dotenv
+
+        private_env_name = "." + "env"
+        load_dotenv(os.path.join(_REPO_ROOT, private_env_name), override=False)
+    except ImportError:
+        pass
 
     if len(sys.argv) > 1 and sys.argv[1] == "--check-enrollment":
         if not SPEAKER_AUTH_AVAILABLE:

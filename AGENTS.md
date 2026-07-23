@@ -15,8 +15,8 @@ H1KARI is a local-first personal AI assistant with Python backend services, mult
 ## Public Repo Structure
 
 - `hikari.py` - main CLI/server entrypoint
-- `agents/` - agent implementations: code, files, memory, research, system, voice
-- `core/` - orchestrator, server, router, memory, voice, Mac/browser integrations
+- `agents/` - agent implementations: code, files, memory, research, voice
+- `core/` - orchestrator, server, router, memory, policy, productivity, and voice
 - `core/neural_memory/` - SQLite neural-memory subsystem
 - `security/` - codename/auth helpers
 - `services/` - daemon/tray/always-on service entrypoints

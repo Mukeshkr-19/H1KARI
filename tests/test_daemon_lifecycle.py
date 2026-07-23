@@ -135,7 +135,7 @@ def test_verified_wake_phrase_enters_active_state(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "hikari",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
     speak = MagicMock()
     monkeypatch.setattr(daemon, "speak", speak)
 
@@ -155,7 +155,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "stop talking",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
 
     class SpeechProcess:
         def __init__(self):
@@ -186,6 +186,51 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     assert daemon.hikari_state == daemon.HikariState.ACTIVE
 
 
+def test_verified_owner_follow_up_also_interrupts_without_exact_stop_word(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.daemon_running = True
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "actually tell me the weather",
+    )
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
+
+    process = MagicMock()
+    process.poll.side_effect = [None, 0]
+
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is True
+    process.terminate.assert_called_once_with()
+
+
+def test_pocket_tts_process_uses_temporary_wav_and_cleans_it(monkeypatch, tmp_path):
+    monkeypatch.setenv("HIKARI_TTS_BACKEND", "pocket-tts")
+    monkeypatch.setenv("HIKARI_TTS_RATE", "170")
+
+    adapter = daemon.PocketTTSAdapter()
+
+    def render_wav(_text, output):
+        Path(output).write_bytes(b"RIFF-test")
+
+    monkeypatch.setattr(adapter, "render_wav", render_wav)
+    monkeypatch.setattr(daemon, "_local_tts_adapter", adapter)
+    process = MagicMock()
+    popen = MagicMock(return_value=process)
+    monkeypatch.setattr(daemon.subprocess, "Popen", popen)
+
+    returned, cleanup = daemon._start_speech_process("Hello, Sanjay.")
+
+    assert returned is process
+    argv = popen.call_args.args[0]
+    assert argv[:3] == ["/usr/bin/afplay", "-r", "1.000"]
+    output = Path(argv[3])
+    assert output.read_bytes() == b"RIFF-test"
+
+    cleanup()
+    assert not output.exists()
+
+
 def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
@@ -196,7 +241,7 @@ def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "stop",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: False)
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: False)
 
     class SpeechProcess:
         def __init__(self):

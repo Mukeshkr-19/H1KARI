@@ -115,6 +115,32 @@ Normal text mode hides internal startup and routing logs. Add `--verbose` only w
 
 Speaker enrollment stores local voice-auth data under ignored runtime paths. Do not push it.
 
+The daemon uses a comfortable 170-words-per-minute speaking rate by default.
+You can choose any bounded rate from 120 through 220 in the ignored private
+environment file:
+
+```text
+HIKARI_TTS_RATE=170
+```
+
+macOS `say` remains the zero-download fallback. For the optional free, local
+neural voice, install the isolated voice extra once and select Pocket TTS:
+
+```bash
+.venv/bin/python -m pip install -r requirements-voice-local.txt
+```
+
+```text
+HIKARI_TTS_BACKEND=pocket-tts
+HIKARI_TTS_VOICE=alba
+```
+
+Pocket TTS loads lazily on the first spoken response and may download its model
+weights on that first use. Model weights stay in the user's runtime cache and
+are not repository files. If Pocket TTS is unavailable, the daemon falls back
+to local macOS speech. Owner speaker enrollment is authentication data; it is
+never reused as an assistant voice-cloning sample.
+
 ## 6. Phone Connection
 
 Start server mode, then open:

@@ -9,11 +9,16 @@ private runtime data.
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
+import os
 import re
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 from typing import ClassVar, Optional, Protocol, runtime_checkable
 
+from core.voice_config import tts_rate, tts_voice_name
 from core.voice_status import FASTER_WHISPER_REVISION
 
 
@@ -336,8 +341,9 @@ class GoogleSpeechRecognitionSTTAdapter:
 class MacOSSayTTSAdapter:
     """macOS ``say`` TTS adapter using subprocess with an argv list."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, rate: Optional[int] = None) -> None:
         self._voice: Optional[str] = None
+        self._rate = tts_rate() if rate is None else max(120, min(220, int(rate)))
 
     def is_available(self) -> bool:
         return sys.platform == "darwin" and self._say_path() is not None
@@ -366,7 +372,7 @@ class MacOSSayTTSAdapter:
             raise SpeechBackendUnavailable("say executable not found")
         try:
             subprocess.run(
-                [say_path, clean],
+                [say_path, "-r", str(self._rate), clean],
                 shell=False,
                 check=True,
                 capture_output=True,
@@ -374,6 +380,82 @@ class MacOSSayTTSAdapter:
             )
         except subprocess.CalledProcessError as exc:
             raise SynthesisError(f"say failed with return code {exc.returncode}") from exc
+
+
+class PocketTTSAdapter:
+    """Optional free, local Pocket TTS adapter with lazy model loading.
+
+    Import and construction perform no model load, download, filesystem write,
+    or audio playback.  The separately installed ``pocket-tts`` distribution
+    loads only on the first explicit synthesis request.
+    """
+
+    def __init__(self, *, voice: Optional[str] = None) -> None:
+        self._voice = voice or tts_voice_name()
+        self._model = None
+        self._voice_state = None
+
+    def is_available(self) -> bool:
+        return (
+            sys.platform == "darwin"
+            and importlib.util.find_spec("pocket_tts") is not None
+            and Path("/usr/bin/afplay").is_file()
+        )
+
+    def _load(self):
+        if self._model is not None:
+            return self._model, self._voice_state
+        if not self.is_available():
+            raise SpeechBackendUnavailable("Pocket TTS is not installed")
+        try:
+            from pocket_tts import TTSModel
+
+            model = TTSModel.load_model()
+            voice_state = model.get_state_for_audio_prompt(self._voice)
+        except Exception as exc:
+            raise SpeechBackendUnavailable("Pocket TTS model is unavailable") from exc
+        self._model = model
+        self._voice_state = voice_state
+        return model, voice_state
+
+    def render_wav(self, text: str, output: str | os.PathLike[str]) -> None:
+        """Render one utterance to a caller-owned temporary WAV path."""
+
+        clean = re.sub(r"[^\w\s:,.!?']", "", text)
+        if not clean.strip():
+            raise SynthesisError("No speakable text after sanitization")
+        model, voice_state = self._load()
+        try:
+            import scipy.io.wavfile
+
+            audio = model.generate_audio(voice_state, clean)
+            if hasattr(audio, "detach"):
+                audio = audio.detach()
+            if hasattr(audio, "cpu"):
+                audio = audio.cpu()
+            if hasattr(audio, "numpy"):
+                audio = audio.numpy()
+            scipy.io.wavfile.write(str(output), model.sample_rate, audio)
+        except SpeechAdapterError:
+            raise
+        except Exception as exc:
+            raise SynthesisError("Pocket TTS synthesis failed") from exc
+
+    def synthesize(self, text: str) -> None:
+        try:
+            with tempfile.TemporaryDirectory(prefix="hikari-tts-") as temp_dir:
+                output = os.path.join(temp_dir, "speech.wav")
+                self.render_wav(text, output)
+                subprocess.run(
+                    ["/usr/bin/afplay", "-r", "1.0", output],
+                    shell=False,
+                    check=True,
+                    capture_output=True,
+                )
+        except subprocess.CalledProcessError as exc:
+            raise SynthesisError("Pocket TTS playback failed") from exc
+        except SpeechAdapterError:
+            raise
 
 
 def build_stt_adapter(backend_name: str, *, whisper_model: str = "base") -> STTAdapter:
@@ -398,11 +480,13 @@ def build_stt_adapter(backend_name: str, *, whisper_model: str = "base") -> STTA
 def build_tts_adapter(backend_name: str) -> TTSAdapter:
     """Build a TTS adapter for the named backend.
 
-    Currently only ``macos-say`` is supported.
+    Supported backends are ``macos-say`` and optional local ``pocket-tts``.
 
     Raises:
         SpeechBackendUnavailable: if the backend name is unknown.
     """
     if backend_name == "macos-say":
         return MacOSSayTTSAdapter()
+    if backend_name == "pocket-tts":
+        return PocketTTSAdapter()
     raise SpeechBackendUnavailable(f"unknown TTS backend: {backend_name}")

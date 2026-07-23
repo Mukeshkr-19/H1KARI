@@ -245,7 +245,7 @@ def test_macos_say_adapter_uses_argv_list(monkeypatch):
 
     assert len(captured) == 1
     args, kwargs = captured[0]
-    assert args == ["/usr/bin/say", "hello world"]
+    assert args == ["/usr/bin/say", "-r", "170", "hello world"]
     assert kwargs.get("shell") is False
 
 
@@ -310,6 +310,15 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
 def test_build_tts_adapter_macos_say():
     adapter = build_tts_adapter("macos-say")
     assert isinstance(adapter, MacOSSayTTSAdapter)
+
+
+def test_build_tts_adapter_pocket_tts_is_lazy():
+    from core.speech_adapters import PocketTTSAdapter
+
+    adapter = build_tts_adapter("pocket-tts")
+
+    assert isinstance(adapter, PocketTTSAdapter)
+    assert adapter._model is None
 
 
 def test_build_tts_adapter_unknown_raises():

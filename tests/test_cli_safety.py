@@ -36,20 +36,6 @@ class TestCommandIntent(unittest.TestCase):
         self.assertTrue(is_explicit_system_command("open Safari"))
 
 
-class TestSystemAgentSafety(unittest.TestCase):
-    def test_handle_call_me_baby_returns_none(self):
-        from agents.system import SystemAgent
-
-        agent = SystemAgent()
-        self.assertIsNone(agent.handle("call me baby"))
-
-    def test_can_handle_call_me_baby_low(self):
-        from agents.system import SystemAgent
-
-        agent = SystemAgent()
-        self.assertLess(agent.can_handle("call me baby"), 0.2)
-
-
 class TestMemoryAgentSafety(unittest.TestCase):
     def test_can_handle_call_me_baby_low(self):
         from agents.memory_agent import MemoryAgent

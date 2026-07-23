@@ -7,9 +7,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ADAPTED_PATHS = (
     "core/task_planner.py",
-    "core/action_system.py",
-    "core/desktop_awareness.py",
-    "core/mac_integration.py",
 )
 
 
