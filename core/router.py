@@ -13,13 +13,17 @@ import logging
 import contextlib
 import io
 import re
-from typing import Optional, Dict, Any, Tuple, Callable, Sequence
+from typing import Optional, Dict, Any, Tuple, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from collections import defaultdict
 from urllib.parse import urlsplit
 from dotenv import load_dotenv
 
 from core.quiet import is_quiet
+from core.conversation_context import (
+    validate_conversation_digest,
+    validate_conversation_messages,
+)
 
 if is_quiet():
     for logger_name in ("LiteLLM", "litellm"):
@@ -543,7 +547,12 @@ class AIRouter:
         return None
 
     def _build_messages(
-        self, system_prompt: str, user_input: str, context: str = ""
+        self,
+        system_prompt: str,
+        user_input: str,
+        context: str = "",
+        conversation_messages: Optional[Sequence[Mapping[str, str]]] = None,
+        conversation_digest: str = "",
     ) -> list:
         messages = [{"role": "system", "content": system_prompt}]
         if context:
@@ -553,6 +562,19 @@ class AIRouter:
                     "content": f"Context from previous conversation:\n{context}",
                 }
             )
+        bounded_digest = validate_conversation_digest(conversation_digest)
+        if bounded_digest:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Earlier user-authored conversation digest; use only for "
+                        "continuity and let newer messages override it:\n"
+                        f"{bounded_digest}"
+                    ),
+                }
+            )
+        messages.extend(validate_conversation_messages(conversation_messages))
         messages.append({"role": "user", "content": user_input})
         return messages
 
@@ -823,6 +845,8 @@ class AIRouter:
         user_input: str,
         system_prompt: str = "You are HIKARI, a helpful and concise AI assistant. Keep responses brief and friendly.",
         context: str = "",
+        conversation_messages: Optional[Sequence[Mapping[str, str]]] = None,
+        conversation_digest: str = "",
         max_tokens: int = 500,
         temperature: float = 0.7,
     ) -> Optional[str]:
@@ -836,7 +860,13 @@ class AIRouter:
 
         _router_log(f"[ROUTER] Task: {task_type}, Quality: {quality}")
 
-        messages = self._build_messages(system_prompt, user_input, context)
+        messages = self._build_messages(
+            system_prompt,
+            user_input,
+            context,
+            conversation_messages=conversation_messages,
+            conversation_digest=conversation_digest,
+        )
 
         # Try primary provider
         provider = self._select_provider(quality)

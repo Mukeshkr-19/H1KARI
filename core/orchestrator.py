@@ -7,6 +7,7 @@ import os
 import sys
 import time
 import asyncio
+from contextvars import ContextVar
 import re
 import threading
 from typing import TYPE_CHECKING, Optional, Dict, Any
@@ -41,6 +42,11 @@ from core.brain_statements import (
 from core.action_policy import Actor, ActorContext, validate_actor_context
 from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
+from core.conversation_context import (
+    ConversationContextEngine,
+    ConversationContextPacket,
+    ConversationScope,
+)
 from core.location_service import (
     LocationService,
     LocationServiceError,
@@ -107,6 +113,13 @@ class HIKARI_Orchestrator:
         self._brain_v2_session: Optional[str] = None
         self._owner_session_current_location: Optional[tuple[str, str]] = None
         self._pending_memory_choice: Optional[PendingMemoryChoice] = None
+        self.conversation_context = ConversationContextEngine()
+        self._conversation_actor_context: ContextVar[Optional[ActorContext]] = ContextVar(
+            "hikari_conversation_actor_context", default=None
+        )
+        self._brain_turn_recorded: ContextVar[bool] = ContextVar(
+            "hikari_brain_turn_recorded", default=False
+        )
         self.legacy_memory_enabled = os.getenv("HIKARI_ENABLE_LEGACY_MEMORY", "0") == "1"
 
         # Personality & emotions
@@ -229,6 +242,10 @@ class HIKARI_Orchestrator:
     def finalize_session(self) -> None:
         """Public hook to flush Brain v2 consolidation (e.g. text chat exit)."""
         try:
+            self._conversation_engine().clear_actor_session("local-owner", "local")
+        except Exception as e:
+            debug(f"[CONTEXT] Session clear failed: {e}")
+        try:
             self._finalize_brain_v2_session()
         except Exception as e:
             debug(f"[BRAIN_V2] finalize_session failed: {e}")
@@ -306,6 +323,7 @@ class HIKARI_Orchestrator:
     ) -> str:
         """Return assistant text after persisting the turn (session context for recall)."""
         self._record_brain_v2_turn(user_input, response, source, metadata=metadata)
+        self._brain_recorded_var().set(True)
         return response
 
     def _record_brain_v2_turn(
@@ -320,6 +338,7 @@ class HIKARI_Orchestrator:
             return
         if self._is_active_guest_speaker():
             return
+        self._brain_recorded_var().set(True)
         try:
             speaker = self.speaker.current_speaker or "user"
             meta: Dict[str, Any] = {"source": source, **(metadata or {})}
@@ -417,7 +436,116 @@ class HIKARI_Orchestrator:
             source=source,
         )
 
+    def _conversation_engine(self) -> ConversationContextEngine:
+        engine = getattr(self, "conversation_context", None)
+        if not isinstance(engine, ConversationContextEngine):
+            engine = ConversationContextEngine()
+            self.conversation_context = engine
+        return engine
+
+    def _conversation_actor_var(self) -> ContextVar[Optional[ActorContext]]:
+        variable = getattr(self, "_conversation_actor_context", None)
+        if not isinstance(variable, ContextVar):
+            variable = ContextVar("hikari_conversation_actor_context", default=None)
+            self._conversation_actor_context = variable
+        return variable
+
+    def _brain_recorded_var(self) -> ContextVar[bool]:
+        variable = getattr(self, "_brain_turn_recorded", None)
+        if not isinstance(variable, ContextVar):
+            variable = ContextVar("hikari_brain_turn_recorded", default=False)
+            self._brain_turn_recorded = variable
+        return variable
+
+    def _conversation_scope(self, context: ActorContext) -> ConversationScope:
+        remote_guest = context.actor is Actor.GUEST
+        local_guest = not remote_guest and self._is_active_guest_speaker()
+        if local_guest:
+            label = str(getattr(self.speaker, "current_speaker", "guest") or "guest")
+            speaker = f"guest:{label.casefold()[:64]}"
+        elif remote_guest:
+            speaker = "remote-guest"
+        else:
+            speaker = "owner"
+        return ConversationScope(
+            actor_id=context.actor_id,
+            session_id=context.session_id,
+            source="remote" if remote_guest else "local",
+            speaker=speaker,
+            guest=remote_guest or local_guest,
+        )
+
+    def _active_conversation_scope(self) -> Optional[ConversationScope]:
+        context = self._conversation_actor_var().get()
+        if context is None:
+            return None
+        return self._conversation_scope(context)
+
+    def _conversation_packet(self, user_input: str) -> ConversationContextPacket:
+        scope = self._active_conversation_scope()
+        if scope is None:
+            return ConversationContextPacket()
+        return self._conversation_engine().compose(scope, user_input)
+
+    def _note_conversation_tool(self, kind: str, **slots: str) -> None:
+        scope = self._active_conversation_scope()
+        if scope is not None:
+            self._conversation_engine().note_tool(scope, kind, slots)
+
+    def _latest_conversation_tool(self, kind: str):
+        scope = self._active_conversation_scope()
+        if scope is None:
+            return None
+        return self._conversation_engine().latest_tool(scope, kind)
+
     def process_input(
+        self,
+        user_input: str,
+        source: str = "text",
+        *,
+        context: Optional[ActorContext] = None,
+    ) -> Optional[str]:
+        """Process one turn and retain bounded context for every response path."""
+        normalized = self._normalize_user_input_text(user_input)
+        if not normalized:
+            return None
+        effective_context = context or self._default_local_owner_context(source)
+        valid, _reason = validate_actor_context(effective_context)
+        if not valid or effective_context.actor is Actor.UNKNOWN:
+            return "I cannot complete this request."
+
+        actor_var = self._conversation_actor_var()
+        recorded_var = self._brain_recorded_var()
+        actor_token = actor_var.set(effective_context)
+        recorded_token = recorded_var.set(False)
+        try:
+            response = self._process_input_core(
+                normalized,
+                source=source,
+                context=effective_context,
+            )
+            if response:
+                scope = self._conversation_scope(effective_context)
+                self._conversation_engine().record_turn(scope, normalized, response)
+                is_exit = normalized.casefold().strip() in {
+                    "exit",
+                    "quit",
+                    "goodbye",
+                    "bye",
+                }
+                if (
+                    not is_exit
+                    and effective_context.actor is Actor.OWNER
+                    and not scope.guest
+                    and not recorded_var.get()
+                ):
+                    self._record_brain_v2_turn(normalized, response, source)
+            return response
+        finally:
+            recorded_var.reset(recorded_token)
+            actor_var.reset(actor_token)
+
+    def _process_input_core(
         self,
         user_input: str,
         source: str = "text",
@@ -461,6 +589,11 @@ class HIKARI_Orchestrator:
             self.speaker.note_guest_relation_from_input(user_input)
             reset_check = getattr(self.speaker, "consume_speaker_reset", None)
             speaker_reset = reset_check() is True if callable(reset_check) else False
+            if speaker_reset:
+                self._conversation_engine().clear_guest_scopes(
+                    context.actor_id,
+                    context.session_id,
+                )
             if speaker_reset and self._brain_v2_runtime_ready():
                 try:
                     self.brain_v2.working.clear()
@@ -869,9 +1002,13 @@ class HIKARI_Orchestrator:
         lowered = user_input.lower().strip()
         previous_special_intent = getattr(self, "_last_special_intent", None)
         previous_weather_location = getattr(self, "_last_weather_location", None)
+        weather_frame = self._latest_conversation_tool("weather")
+        if previous_special_intent is None and weather_frame is not None:
+            previous_special_intent = "weather"
+            previous_weather_location = weather_frame.slot("location")
 
-        # Follow-up context is intentionally one turn wide.  Any unrelated
-        # request clears it before the general conversational model is used.
+        # Clear the legacy one-turn fast path. The scoped conversation frame
+        # above retains bounded tool continuity without using global authority.
         self._last_special_intent = None
 
         # Exit commands
@@ -892,6 +1029,7 @@ class HIKARI_Orchestrator:
         )
         if time_reply is not None:
             self._last_special_intent = "time"
+            self._note_conversation_tool("time")
             return time_reply
 
         if re.search(r"\b(?:today(?:'s)?\s+date|what(?:'s| is)\s+(?:today|the date)|date)\b", lowered):
@@ -917,6 +1055,7 @@ class HIKARI_Orchestrator:
                 )
             if weather is None:
                 return "I couldn't find that location. Try a city, state, or country name."
+            self._note_conversation_tool("weather", location=weather_location)
             return weather.to_text()
 
         if "news" in lowered or "headline" in lowered:
@@ -1604,6 +1743,8 @@ class HIKARI_Orchestrator:
         if memory_context:
             context += f"{memory_context}\n\n"
 
+        conversation_packet = self._conversation_packet(user_input)
+
         # Add emotion context
         if emotion != "neutral" and emotion_score > 0.4:
             context += f"User is feeling {emotion}. "
@@ -1627,6 +1768,8 @@ Adapt your responses to be:
                 user_input=user_input,
                 system_prompt=system_prompt,
                 context=context,
+                conversation_messages=conversation_packet.messages,
+                conversation_digest=conversation_packet.digest,
                 max_tokens=500,
                 temperature=0.7
             )
