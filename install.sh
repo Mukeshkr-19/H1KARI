@@ -50,6 +50,24 @@ chmod +x "$REPO_ROOT/scripts/install-hikari-login-agent.sh" \
 "$REPO_ROOT/scripts/install-hikari-cli.sh"
 
 echo ""
+echo "HIKARI voice wake mode requires a local owner voice enrollment."
+if [[ -t 0 && -t 1 ]]; then
+  read -r -p "Enroll your voice now? [y/N] " ENROLL_VOICE
+  case "$ENROLL_VOICE" in
+    y|Y|yes|YES|Yes)
+      "$REPO_ROOT/.venv/bin/python" "$REPO_ROOT/hikari.py" --enroll-voice || {
+        echo "Voice enrollment did not complete. Retry with: hikari --enroll-voice" >&2
+      }
+      ;;
+    *)
+      echo "Skipped. Wake-word mode stays locked until you run: hikari --enroll-voice"
+      ;;
+  esac
+else
+  echo "Non-interactive install: run 'hikari --enroll-voice' before wake-word mode."
+fi
+
+echo ""
 echo "=== Done ==="
 echo "Activate the environment:"
 echo "  source .venv/bin/activate"

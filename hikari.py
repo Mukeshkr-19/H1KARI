@@ -4,7 +4,7 @@ HIKARI v3 - Main Entry Point
 
 Usage:
     python3 hikari.py                 # Interactive text mode
-    python3 hikari.py --daemon        # Always listening (no wake word needed)
+    python3 hikari.py --daemon        # Owner-locked HIKARI wake-word mode
     python3 hikari.py --tray          # System tray icon mode
     python3 hikari.py --install       # Install as login item (starts on boot)
     python3 hikari.py --install-cli   # Install hikari/Hikari shell commands
@@ -52,13 +52,20 @@ def print_banner():
     print(f"{banner}\n")
 
 def run_daemon():
-    """Run as always-listening service (no wake word needed)"""
-    print("[*] Starting HIKARI in background mode...")
-    print("[*] Just speak and I'll respond - no wake word needed!")
-    print("[*] Say 'exit' to stop listening\n")
+    """Run the owner-locked, wake-word voice daemon."""
+    from services.hikari_daemon import main as daemon_main
 
-    from services.hikari_service import HIKARI_Daemon
-    HIKARI_Daemon().run()
+    return daemon_main()
+
+
+def run_voice_enrollment():
+    """Explicitly capture and store a local owner voice embedding."""
+    from services.hikari_daemon import enroll_voice, initialize_audio_backends
+
+    if not initialize_audio_backends():
+        print("Voice enrollment requires microphone support.", file=sys.stderr)
+        return 1
+    return 0 if enroll_voice() else 1
 
 
 def _format_conversation_sessions(records) -> str:
@@ -513,37 +520,13 @@ def run_interactive(*, session_id=None, new_session=False):
             break
 
 def install_service():
-    """Install HIKARI as login item (runs on Mac startup)"""
-    python_path = subprocess.run(["which", "python3"], capture_output=True, text=True).stdout.strip()
-
-    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.hikari.ai</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>{python_path}</string>
-        <string>{os.path.abspath(__file__)}</string>
-        <string>--daemon</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-</dict>
-</plist>"""
-
-    plist_path = os.path.expanduser("~/Library/LaunchAgents/com.hikari.ai.plist")
-    os.makedirs(os.path.dirname(plist_path), exist_ok=True)
-
-    with open(plist_path, "w") as f:
-        f.write(plist)
-
-    subprocess.run(["launchctl", "load", plist_path])
-    print("[+] HIKARI installed as login item!")
-    print("[+] Restart your Mac to start HIKARI automatically.")
+    """Install the single reviewed owner-locked macOS login agent."""
+    script_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "scripts",
+        "install-hikari-login-agent.sh",
+    )
+    return subprocess.run(["bash", script_path]).returncode
 
 def run_repo_script(script_name: str):
     """Run a repo-local script."""
@@ -679,6 +662,11 @@ def main():
         dest="daemon",
         action="store_true",
         help="Run always-listening background mode.",
+    )
+    runtime_modes.add_argument(
+        "--enroll-voice",
+        action="store_true",
+        help="Enroll the local owner's voice before using wake-word mode.",
     )
     runtime_modes.add_argument(
         "--tray",
@@ -1373,8 +1361,7 @@ def main():
             raise SystemExit("Saved conversation listing is unavailable.") from None
 
     if args.install:
-        install_service()
-        return
+        raise SystemExit(install_service())
 
     if args.install_cli:
         run_repo_script("install-hikari-cli.sh")
@@ -1401,9 +1388,11 @@ def main():
             )
         raise SystemExit(run_voice(args.voice_backend))
 
+    if args.enroll_voice:
+        raise SystemExit(run_voice_enrollment())
+
     if args.daemon:
-        run_daemon()
-        return
+        raise SystemExit(run_daemon())
 
     if args.session or args.new_session:
         run_interactive(session_id=args.session, new_session=args.new_session)

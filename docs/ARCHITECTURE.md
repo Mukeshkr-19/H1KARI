@@ -95,8 +95,8 @@ hikari --text --verbose
 Speaker-locked daemon:
 
 ```bash
-.venv/bin/python services/hikari_daemon.py --enroll-voice
-.venv/bin/python services/hikari_daemon.py
+.venv/bin/python hikari.py --enroll-voice
+.venv/bin/python hikari.py --daemon
 ```
 
 Frontend:

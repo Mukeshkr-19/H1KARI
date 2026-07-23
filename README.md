@@ -159,8 +159,8 @@ cd path/to/H1KARI
 .venv/bin/python hikari.py --daemon
 
 # Speaker-locked daemon enrollment and run
-.venv/bin/python services/hikari_daemon.py --enroll-voice
-.venv/bin/python services/hikari_daemon.py
+.venv/bin/python hikari.py --enroll-voice
+.venv/bin/python hikari.py --daemon
 ```
 
 CLI install/uninstall:

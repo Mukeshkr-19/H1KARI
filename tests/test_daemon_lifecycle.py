@@ -159,7 +159,9 @@ def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
 def test_main_registers_shutdown_signals_before_listening(monkeypatch):
     registered = {}
     monkeypatch.setattr(daemon, "initialize_audio_backends", lambda: True)
-    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", False)
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    auth = SimpleNamespace(is_enrolled=lambda: True, available=lambda: True)
+    monkeypatch.setattr(daemon, "_get_speaker_auth", lambda: auth)
     monkeypatch.setattr(
         daemon.signal,
         "signal",
@@ -175,3 +177,57 @@ def test_main_registers_shutdown_signals_before_listening(monkeypatch):
         signal.SIGTERM: daemon.request_shutdown,
     }
     listen.assert_called_once_with()
+
+
+def test_unavailable_speaker_verification_never_starts_listener(monkeypatch):
+    monkeypatch.setattr(daemon, "initialize_audio_backends", lambda: True)
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", False)
+    listen = MagicMock()
+    monkeypatch.setattr(daemon, "listen_always", listen)
+    monkeypatch.setattr(daemon.sys, "argv", ["hikari_daemon.py"])
+
+    assert daemon.main() == 1
+    listen.assert_not_called()
+
+
+def test_missing_owner_enrollment_never_starts_listener(monkeypatch):
+    monkeypatch.setattr(daemon, "initialize_audio_backends", lambda: True)
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    auth = SimpleNamespace(is_enrolled=lambda: False, available=lambda: True)
+    monkeypatch.setattr(daemon, "_get_speaker_auth", lambda: auth)
+    listen = MagicMock()
+    monkeypatch.setattr(daemon, "listen_always", listen)
+    monkeypatch.setattr(daemon.sys, "argv", ["hikari_daemon.py"])
+
+    assert daemon.main() == 2
+    listen.assert_not_called()
+
+
+def test_speaker_verification_fails_closed_without_enrollment(monkeypatch):
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    auth = SimpleNamespace(is_enrolled=lambda: False)
+    monkeypatch.setattr(daemon, "_get_speaker_auth", lambda: auth)
+
+    assert daemon.verify_speaker(object()) is False
+
+
+def test_check_enrollment_does_not_initialize_microphone(monkeypatch):
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    monkeypatch.setattr(
+        daemon,
+        "_get_speaker_auth",
+        lambda: SimpleNamespace(is_enrolled=lambda: True),
+    )
+    initialize = MagicMock()
+    monkeypatch.setattr(daemon, "initialize_audio_backends", initialize)
+    monkeypatch.setattr(daemon.sys, "argv", ["hikari_daemon.py", "--check-enrollment"])
+
+    assert daemon.main() == 0
+    initialize.assert_not_called()
+
+
+def test_wake_phrase_requires_explicit_hikari_form():
+    assert daemon._is_wake_phrase("hikari") is True
+    assert daemon._is_wake_phrase("hey hikari") is True
+    assert daemon._is_wake_phrase("heck") is False
+    assert daemon._is_wake_phrase("this has hikar somewhere") is False

@@ -3,14 +3,13 @@
 #
 # This installs ONE background listener to avoid multiple daemons fighting over the mic.
 #
-# Default: services/hikari_simple.py (STT-based wake phrase; most reliable setup on fresh Macs).
-# If you want speaker-locked mode, run services/hikari_daemon.py manually or customize this script.
+# The login agent always uses the owner-locked HIKARI wake-word daemon.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PY="$REPO_ROOT/.venv/bin/python"
-DAEMON="$REPO_ROOT/services/hikari_simple.py"
+DAEMON="$REPO_ROOT/services/hikari_daemon.py"
 PLIST_DST="$HOME/Library/LaunchAgents/com.hikari.assistant.plist"
 LOG_DIR="$HOME/Library/Logs"
 OUT_LOG="$LOG_DIR/hikari-assistant.stdout.log"
@@ -31,6 +30,29 @@ fi
 
 if [[ ! -f "$DAEMON" ]]; then
   echo "Missing daemon: $DAEMON" >&2
+  exit 1
+fi
+
+if ! "$PY" -E "$DAEMON" --check-enrollment; then
+  echo "Owner voice is not enrolled."
+  if [[ -t 0 && -t 1 ]]; then
+    read -r -p "Enroll your voice now? [y/N] " ENROLL_VOICE
+    case "$ENROLL_VOICE" in
+      y|Y|yes|YES|Yes)
+        "$PY" -E "$REPO_ROOT/hikari.py" --enroll-voice
+        ;;
+      *)
+        echo "Wake-word mode stays locked. Run: hikari --enroll-voice" >&2
+        exit 1
+        ;;
+    esac
+  else
+    echo "Run 'hikari --enroll-voice' before installing wake-word mode." >&2
+    exit 1
+  fi
+fi
+if ! "$PY" -E "$DAEMON" --check-enrollment; then
+  echo "Owner voice enrollment was not completed." >&2
   exit 1
 fi
 

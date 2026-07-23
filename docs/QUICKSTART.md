@@ -95,18 +95,22 @@ bash scripts/uninstall-hikari-cli.sh
 # Server mode for phone/browser connection
 .venv/bin/python hikari.py --server --host 127.0.0.1 --port 9876
 
-# Simple always-listening daemon
+# Owner-locked wake-word daemon
+.venv/bin/python hikari.py --enroll-voice
 .venv/bin/python hikari.py --daemon
 ```
 
-There is currently no `hikari.py --voice` option. Use `--daemon` for the simple voice service, or use `services/hikari_daemon.py` for the speaker-locked daemon.
+`hikari.py --voice` provides explicit foreground voice input. `--daemon` waits
+for the wake word `HIKARI` and refuses to start until the local owner voice is
+enrolled. Enrollment stores only a private local speaker embedding; raw
+enrollment audio is discarded.
 Normal text mode hides internal startup and routing logs. Add `--verbose` only when debugging.
 
 ## 5. Speaker-Locked Voice Daemon
 
 ```bash
-.venv/bin/python services/hikari_daemon.py --enroll-voice
-.venv/bin/python services/hikari_daemon.py
+.venv/bin/python hikari.py --enroll-voice
+.venv/bin/python hikari.py --daemon
 ```
 
 Speaker enrollment stores local voice-auth data under ignored runtime paths. Do not push it.

@@ -9,6 +9,7 @@ This is the "JARVIS-like" background mode:
 - Speaker verification: only the enrolled speaker can activate/command
 
 Enrollment stores embeddings locally under the private brain legacy-data dir.
+The daemon fails closed until an owner voice has been enrolled.
 """
 
 from __future__ import print_function
@@ -169,26 +170,23 @@ def _get_speaker_auth():
 def verify_speaker(audio) -> bool:
     """
     Returns True iff the speaker matches the enrolled voice.
-    If no enrollment exists OR verification unavailable, we allow activation (with warning).
+    Missing enrollment or unavailable verification always fails closed.
     """
     if not SPEAKER_AUTH_AVAILABLE:
-        # No speaker-verification available -> behave as "open" mode
-        return True
+        return False
 
     auth = _get_speaker_auth()
     if auth is None:
-        return True
+        return False
     if not auth.is_enrolled():
-        print("⚠️  No enrolled voice yet. Say 'enroll my voice' or run --enroll-voice")
-        return True
+        print("⚠️  Owner voice is not enrolled. Run: hikari --enroll-voice")
+        return False
 
     try:
         emb = auth.embedding_from_speech_recognition_audio(audio)
         res = auth.verify_embedding(emb)
         if not res.ok:
-            print(
-                f"❌ Speaker mismatch (score={res.score:.3f}, th={res.threshold:.3f})"
-            )
+            print("❌ Voice not recognized")
         return res.ok
     except ImportError:
         print("⚠️  Speaker verification unavailable. Access denied.")
@@ -285,6 +283,28 @@ def speak(text):
     hikari_state = HikariState.ACTIVE
 
 
+_voice_orchestrator = None
+
+
+def _get_voice_orchestrator():
+    """Return the shared orchestrator, bound to the latest private owner chat."""
+    global _voice_orchestrator
+    if _voice_orchestrator is not None:
+        return _voice_orchestrator
+
+    from core.conversation_sessions import create_conversation_session_store
+    from core.orchestrator import get_orchestrator
+
+    orchestrator = get_orchestrator()
+    store = create_conversation_session_store()
+    record = store.latest(owner_id="local-owner")
+    if record is None:
+        record = store.create(owner_id="local-owner")
+    orchestrator.configure_conversation_session(store, record.session_id)
+    _voice_orchestrator = orchestrator
+    return orchestrator
+
+
 def process(text):
     """Process user input through orchestrator"""
     correction = check_learnings(text)
@@ -292,9 +312,7 @@ def process(text):
         return f"Got it! {correction}"
 
     try:
-        from core.orchestrator import get_orchestrator
-
-        orch = get_orchestrator()
+        orch = _get_voice_orchestrator()
         response = orch.process_input(text, source="voice")
         return response
     except Exception:
@@ -324,13 +342,9 @@ def is_stop_command(text: str) -> bool:
 
 
 def _is_wake_phrase(text: str) -> bool:
-    """Allow common speech-to-text variants of the wake word."""
-    return bool(
-        text.startswith("hec")
-        or text.startswith("hik")
-        or "hect" in text
-        or "hikar" in text
-    )
+    """Accept only explicit forms of the HIKARI wake phrase."""
+    normalized = " ".join(text.casefold().split())
+    return normalized in {"hikari", "hey hikari", "okay hikari", "hi hikari"}
 
 
 def _listen_for_wake_word() -> None:
@@ -421,6 +435,11 @@ def main() -> int:
     global daemon_running, hikari_state
 
     _print_banner()
+    if len(sys.argv) > 1 and sys.argv[1] == "--check-enrollment":
+        if not SPEAKER_AUTH_AVAILABLE:
+            return 1
+        auth = _get_speaker_auth()
+        return 0 if auth is not None and auth.is_enrolled() else 1
     if not initialize_audio_backends():
         print("\n❌ Install SpeechRecognition before starting the voice daemon.")
         return 1
@@ -428,14 +447,17 @@ def main() -> int:
         return 0 if enroll_voice() else 1
 
     print(f"\n✅ HIKARI ready! Say '{WAKE_WORD}' to activate")
-    if SPEAKER_AUTH_AVAILABLE:
-        auth = _get_speaker_auth()
-        if auth and auth.is_enrolled():
-            print("🔐 Speaker verification enabled.\n")
-        else:
-            print("⚠️  No enrolled voice; activation is currently open.\n")
-    else:
-        print("⚠️  Speaker verification unavailable; activation is currently open.\n")
+    if not SPEAKER_AUTH_AVAILABLE:
+        print("❌ Speaker verification is unavailable. Voice mode will not start.")
+        return 1
+    auth = _get_speaker_auth()
+    if auth is None or not auth.is_enrolled():
+        print("❌ Owner voice is not enrolled. Run: hikari --enroll-voice")
+        return 2
+    if not auth.available():
+        print("❌ Speaker verification model is unavailable. Voice mode will not start.")
+        return 1
+    print("🔐 Owner speaker verification enabled.\n")
 
     daemon_running = True
     hikari_state = HikariState.LISTENING
