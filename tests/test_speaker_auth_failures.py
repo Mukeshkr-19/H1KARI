@@ -35,6 +35,18 @@ def test_enrollment_round_trip_and_owner_only_permissions(private_paths):
     assert stat.S_IMODE(enrollment.stat().st_mode) == 0o600
 
 
+def test_default_threshold_matches_speechbrain_verifier_boundary(private_paths):
+    auth = speaker_auth.SpeakerAuth()
+
+    assert auth.threshold == speaker_auth.DEFAULT_SPEAKER_THRESHOLD == 0.25
+
+
+@pytest.mark.parametrize("threshold", [False, 0.0, 1.0, float("nan")])
+def test_invalid_speaker_threshold_is_rejected(private_paths, threshold):
+    with pytest.raises(ValueError, match="speaker threshold is invalid"):
+        speaker_auth.SpeakerAuth(threshold=threshold)
+
+
 @pytest.mark.parametrize(
     "payload",
     [

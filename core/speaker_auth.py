@@ -24,6 +24,7 @@ from core.voice_status import SPEECHBRAIN_ECAPA_REVISION
 
 VOICE_AUTH_FILE = legacy_data_dir() / "voice_auth.json"
 HF_CACHE_DIR = legacy_data_dir() / "hf_cache"
+DEFAULT_SPEAKER_THRESHOLD = 0.25
 
 
 def _ensure_dirs():
@@ -84,8 +85,15 @@ class SpeakerAuth:
     Start conservative and tune with real recordings.
     """
 
-    def __init__(self, *, threshold: float = 0.78):
-        self.threshold = threshold
+    def __init__(self, *, threshold: float = DEFAULT_SPEAKER_THRESHOLD):
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, (int, float))
+            or not math.isfinite(float(threshold))
+            or not 0.0 < float(threshold) < 1.0
+        ):
+            raise ValueError("speaker threshold is invalid")
+        self.threshold = float(threshold)
         self._model = None
         self._enrolled_embedding: Optional[List[float]] = None
         _ensure_dirs()
@@ -123,11 +131,12 @@ class SpeakerAuth:
                 reason="empty_embedding",
             )
         score = _cosine_similarity(self._enrolled_embedding or [], embedding)
+        accepted = score > self.threshold
         return VerifyResult(
-            ok=score >= self.threshold,
+            ok=accepted,
             score=score,
             threshold=self.threshold,
-            reason="ok" if score >= self.threshold else "below_threshold",
+            reason="ok" if accepted else "below_threshold",
         )
 
     def embedding_from_speech_recognition_audio(
