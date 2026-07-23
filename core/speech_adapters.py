@@ -238,7 +238,7 @@ class FasterWhisperSTTAdapter:
             self._model = WhisperModel(self.model_size, **kwargs)
         return self._model
 
-    def transcribe(self, audio: CapturedAudio) -> str:
+    def _transcribe(self, audio: CapturedAudio, *, short_utterance: bool) -> str:
         if not self.is_available():
             raise SpeechBackendUnavailable(
                 "faster-whisper is not installed; install faster-whisper and numpy"
@@ -251,11 +251,31 @@ class FasterWhisperSTTAdapter:
         converted = audio.to_mono_16k()
         samples = np.frombuffer(converted.pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         model = self._load_model()
-        segments, _info = model.transcribe(samples, language="en", beam_size=1)
+        options: dict = {"language": "en", "beam_size": 1}
+        if short_utterance:
+            # Wake phrases are commonly shorter than Whisper's default
+            # no-speech filter expects. Decode them without that filter, while
+            # retaining exact wake-phrase matching and speaker verification at
+            # the daemon boundary.
+            options.update(
+                condition_on_previous_text=False,
+                hotwords="HIKARI",
+                initial_prompt="HIKARI",
+                no_speech_threshold=None,
+                without_timestamps=True,
+            )
+        segments, _info = model.transcribe(samples, **options)
         text = "".join(seg.text for seg in segments).strip()
         if not text:
             raise TranscriptionError("faster-whisper returned empty transcription")
         return text
+
+    def transcribe(self, audio: CapturedAudio) -> str:
+        return self._transcribe(audio, short_utterance=False)
+
+    def transcribe_short_utterance(self, audio: CapturedAudio) -> str:
+        """Transcribe a short local wake phrase without default no-speech filtering."""
+        return self._transcribe(audio, short_utterance=True)
 
 
 class GoogleSpeechRecognitionSTTAdapter:

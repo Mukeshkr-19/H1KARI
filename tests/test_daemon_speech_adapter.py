@@ -53,6 +53,25 @@ def test_recognize_audio_returns_empty_on_adapter_failure(capsys, monkeypatch):
     fake_adapter.transcribe.assert_called_once()
 
 
+def test_recognize_audio_uses_short_utterance_boundary_for_wake(monkeypatch):
+    fake_adapter = MagicMock()
+    fake_adapter.transcribe_short_utterance.return_value = "HIKARI"
+    monkeypatch.setattr(daemon, "stt_adapter", fake_adapter)
+
+    class FakeAudio:
+        def get_raw_data(self):
+            return b"\x00\x01" * 8
+
+        sample_rate = 16000
+        sample_width = 2
+
+    result = daemon.recognize_audio(FakeAudio(), short_utterance=True)
+
+    assert result == "hikari"
+    fake_adapter.transcribe_short_utterance.assert_called_once()
+    fake_adapter.transcribe.assert_not_called()
+
+
 def test_recognize_audio_uses_configured_backend(monkeypatch):
     """Daemon builds the adapter from runtime configuration."""
     captured = {}

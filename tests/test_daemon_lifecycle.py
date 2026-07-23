@@ -130,7 +130,11 @@ def test_verified_wake_phrase_enters_active_state(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.hikari_state = daemon.HikariState.LISTENING
-    monkeypatch.setattr(daemon, "recognize_audio", lambda _audio: "hikari")
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "hikari",
+    )
     monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
     speak = MagicMock()
     monkeypatch.setattr(daemon, "speak", speak)

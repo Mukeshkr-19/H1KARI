@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -275,6 +276,35 @@ def test_faster_whisper_adapter_construction_remains_lazy():
     """Creating the adapter must not import faster_whisper or load a model."""
     adapter = FasterWhisperSTTAdapter(model_size="base")
     assert adapter._model is None
+
+
+def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
+    adapter = FasterWhisperSTTAdapter(model_size="base")
+    model = MagicMock()
+    model.transcribe.return_value = ([SimpleNamespace(text=" HIKARI")], object())
+    monkeypatch.setattr(adapter, "is_available", lambda: True)
+    monkeypatch.setattr(adapter, "_load_model", lambda: model)
+
+    result = adapter.transcribe_short_utterance(
+        CapturedAudio(
+            pcm_bytes=b"\x00\x01" * 160,
+            sample_rate=16000,
+            sample_width=2,
+            channel_count=1,
+        )
+    )
+
+    assert result == "HIKARI"
+    _samples, kwargs = model.transcribe.call_args
+    assert kwargs == {
+        "language": "en",
+        "beam_size": 1,
+        "condition_on_previous_text": False,
+        "hotwords": "HIKARI",
+        "initial_prompt": "HIKARI",
+        "no_speech_threshold": None,
+        "without_timestamps": True,
+    }
 
 
 def test_build_tts_adapter_macos_say():

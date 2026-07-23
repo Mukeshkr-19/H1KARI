@@ -253,7 +253,7 @@ def initialize_audio_backends() -> bool:
     return sr is not None
 
 
-def recognize_audio(audio):
+def recognize_audio(audio, *, short_utterance: bool = False):
     """Transcribe captured audio through the bounded adapter boundary."""
     if stt_adapter is None:
         return ""
@@ -265,7 +265,11 @@ def recognize_audio(audio):
             sample_width=audio.sample_width,
             channel_count=1,
         )
-        text = stt_adapter.transcribe(captured)
+        short_transcribe = getattr(stt_adapter, "transcribe_short_utterance", None)
+        if short_utterance and callable(short_transcribe):
+            text = short_transcribe(captured)
+        else:
+            text = stt_adapter.transcribe(captured)
         if text:
             print("[DAEMON] Recognition succeeded", flush=True)
         return text.lower().strip()
@@ -360,7 +364,7 @@ def _listen_for_wake_word() -> None:
         r.adjust_for_ambient_noise(source, duration=0.5)
         audio = r.listen(source, timeout=5, phrase_time_limit=5)
 
-    text = recognize_audio(audio)
+    text = recognize_audio(audio, short_utterance=True)
     if not text or not _is_wake_phrase(text):
         return
     if not verify_speaker(audio):
