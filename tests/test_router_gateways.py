@@ -46,6 +46,7 @@ def test_gateways_use_distinct_loopback_defaults(monkeypatch):
 
     assert _local_gateway_base_url("omniroute") == "http://127.0.0.1:20128/v1"
     assert _local_gateway_base_url("9router") == "http://127.0.0.1:20129/v1"
+    assert _provider_model("omniroute", "balanced") == "auto/chat"
 
 
 def test_gateway_endpoint_rejects_remote_or_credentialed_urls(monkeypatch):
@@ -143,9 +144,65 @@ def test_gateway_request_is_openai_compatible_and_text_only(monkeypatch):
         "messages",
         "max_tokens",
         "temperature",
+        "stream",
     }
+    assert call.kwargs["json"]["stream"] is True
     assert "image" not in repr(call.kwargs["json"]).casefold()
     assert call.kwargs["stream"] is True
+
+
+def test_gateway_accepts_bounded_sse_and_excludes_reasoning(monkeypatch):
+    _clear_gateway_env(monkeypatch)
+    monkeypatch.setenv("OMNIROUTE_API_KEY", "omni-local-key")
+    router = AIRouter()
+    response = Mock(status_code=200)
+    response.headers = {"Content-Type": "text/event-stream; charset=utf-8"}
+    response.iter_content.return_value = [
+        b'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n',
+        b'data: {"choices":[{"delta":{"reasoning":"private reasoning"}}]}\n',
+        b'data: {"choices":[{"delta":{"content":"safe "}}]}\n',
+        b'data: {"choices":[{"delta":{"content":"response"},"finish_reason":"stop"}]}\n',
+        b'data: [DONE]\n',
+    ]
+    monkeypatch.setattr(router_module.requests, "post", Mock(return_value=response))
+
+    result = router._call_direct_api(
+        "omniroute",
+        "auto/chat",
+        [{"role": "user", "content": "hello"}],
+    )
+
+    assert result == "safe response"
+    assert "private reasoning" not in result
+
+
+def test_gateway_rejects_malformed_or_error_sse(monkeypatch):
+    _clear_gateway_env(monkeypatch)
+    monkeypatch.setenv("OMNIROUTE_API_KEY", "omni-local-key")
+    router = AIRouter()
+
+    for body in (
+        b"data: not-json\n",
+        b'data: {"error":{"code":"private"}}\n',
+        b'data: {"choices":[{"delta":{"content":7}}]}\n',
+    ):
+        response = Mock(status_code=200)
+        response.headers = {"Content-Type": "text/event-stream"}
+        response.iter_content.return_value = [body]
+        monkeypatch.setattr(
+            router_module.requests,
+            "post",
+            Mock(return_value=response),
+        )
+
+        assert (
+            router._call_direct_api(
+                "omniroute",
+                "auto/chat",
+                [{"role": "user", "content": "hello"}],
+            )
+            is None
+        )
 
 
 def test_gateway_rejects_oversized_response_before_json_parse(monkeypatch):

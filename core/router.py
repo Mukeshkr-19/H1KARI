@@ -75,7 +75,7 @@ PROVIDER_CONFIGS = {
         "base_url_env": "OMNIROUTE_BASE_URL",
         "models": {
             "fast": "auto/fast",
-            "balanced": "auto",
+            "balanced": "auto/chat",
             "smart": "auto/smart",
         },
         "model_envs": {
@@ -221,8 +221,8 @@ _MAX_HTTP_RESPONSE_BYTES = 1_048_576
 _HTTP_READ_CHUNK_BYTES = 8192
 
 
-def _bounded_json_response(response) -> Optional[dict]:
-    """Decode one bounded JSON object without retaining an oversized body."""
+def _bounded_response_body(response) -> Optional[bytes]:
+    """Read one bounded HTTP response body."""
     try:
         content_length = response.headers.get("Content-Length")
         if content_length is not None and int(content_length) > _MAX_HTTP_RESPONSE_BYTES:
@@ -242,10 +242,85 @@ def _bounded_json_response(response) -> Optional[dict]:
             if total > _MAX_HTTP_RESPONSE_BYTES:
                 return None
             chunks.append(chunk)
-        decoded = json.loads(b"".join(chunks).decode("utf-8"))
-    except (AttributeError, UnicodeDecodeError, ValueError):
+        return b"".join(chunks)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+
+def _bounded_json_response(response) -> Optional[dict]:
+    """Decode one bounded JSON object without retaining an oversized body."""
+    body = _bounded_response_body(response)
+    if body is None:
+        return None
+    try:
+        decoded = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
         return None
     return decoded if isinstance(decoded, dict) else None
+
+
+def _openai_message_text(payload: dict) -> Optional[str]:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return None
+    first = choices[0]
+    if not isinstance(first, dict):
+        return None
+    message = first.get("message")
+    if not isinstance(message, dict):
+        return None
+    content = message.get("content")
+    return content.strip() if isinstance(content, str) and content.strip() else None
+
+
+def _bounded_openai_response_text(response) -> Optional[str]:
+    """Decode bounded OpenAI JSON or SSE without exposing reasoning fields."""
+    body = _bounded_response_body(response)
+    if body is None:
+        return None
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+    content_type = str(response.headers.get("Content-Type", "")).casefold()
+    if "text/event-stream" not in content_type:
+        try:
+            payload = json.loads(text)
+        except ValueError:
+            return None
+        return _openai_message_text(payload) if isinstance(payload, dict) else None
+
+    parts: list[str] = []
+    for line in text.splitlines():
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            event = json.loads(data)
+        except ValueError:
+            return None
+        if not isinstance(event, dict) or "error" in event:
+            return None
+        choices = event.get("choices")
+        if not isinstance(choices, list):
+            return None
+        for choice in choices:
+            if not isinstance(choice, dict):
+                return None
+            delta = choice.get("delta")
+            if not isinstance(delta, dict):
+                return None
+            content = delta.get("content")
+            if content is None:
+                continue
+            if not isinstance(content, str):
+                return None
+            parts.append(content)
+    result = "".join(parts).strip()
+    return result or None
 
 
 def _local_gateway_base_url(provider: str) -> Optional[str]:
@@ -637,6 +712,8 @@ class AIRouter:
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
+        if provider in _LOCAL_OPENAI_GATEWAYS:
+            payload["stream"] = True
 
         try:
             response = requests.post(
@@ -647,11 +724,7 @@ class AIRouter:
                 stream=True,
             )
             if response.status_code == 200:
-                result = _bounded_json_response(response)
-                if result is None:
-                    return None
-                if "choices" in result and result["choices"]:
-                    return result["choices"][0]["message"]["content"].strip()
+                return _bounded_openai_response_text(response)
             elif response.status_code == 429:
                 _router_log(f"[ROUTER] Rate limited on {provider}")
                 self.providers[provider].cooldown_until = time.time() + 5
