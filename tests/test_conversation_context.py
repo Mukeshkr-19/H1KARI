@@ -247,6 +247,29 @@ def test_general_ai_route_receives_prior_native_history():
     assert history[1] == {"role": "assistant", "content": "provider answer"}
 
 
+def test_voice_ai_prompt_describes_the_real_spoken_channel():
+    orch = _wrapper_orchestrator()
+    orch.personality.traits = {"formality": 0.5, "verbosity": 0.5, "humor": 0.0}
+    orch.personality.get_prompt_context.return_value = ""
+    orch._brain_v2_authority_enabled = lambda: False
+    orch._build_memory_first_context = lambda _text: ""
+    captured = {}
+
+    class Router:
+        def generate(self, **kwargs):
+            captured.update(kwargs)
+            return "Spoken response"
+
+    orch.router = Router()
+
+    assert orch._get_ai_response("Can you hear me?", source="voice") == "Spoken response"
+    prompt = captured["system_prompt"]
+    assert "currently speaking aloud" in prompt
+    assert "Never describe yourself as text-only" in prompt
+    assert "Keep spoken replies concise" in prompt
+    assert "currently responding in a text conversation" not in prompt
+
+
 def test_weather_tool_frame_survives_multiple_followups_without_global_leakage():
     from core.location_service import CurrentWeather
     from core.orchestrator import HIKARI_Orchestrator

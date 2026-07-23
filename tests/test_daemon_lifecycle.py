@@ -145,6 +145,80 @@ def test_verified_wake_phrase_enters_active_state(monkeypatch):
     speak.assert_called_once_with("Go ahead!")
 
 
+def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.daemon_running = True
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "stop talking",
+    )
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+
+    class SpeechProcess:
+        def __init__(self):
+            self.running = True
+            self.terminated = False
+
+        def poll(self):
+            return None if self.running else 0
+
+        def terminate(self):
+            self.terminated = True
+            self.running = False
+
+        def wait(self, timeout=None):
+            self.running = False
+            return 0
+
+        def kill(self):
+            self.running = False
+
+    process = SpeechProcess()
+    monkeypatch.setattr(daemon.subprocess, "Popen", lambda *_args, **_kwargs: process)
+
+    completed = daemon.speak("This response should be interrupted.")
+
+    assert completed is False
+    assert process.terminated is True
+    assert daemon.hikari_state == daemon.HikariState.ACTIVE
+
+
+def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.daemon_running = True
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "stop",
+    )
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: False)
+
+    class SpeechProcess:
+        def __init__(self):
+            self.polls = 0
+            self.terminated = False
+
+        def poll(self):
+            self.polls += 1
+            return None if self.polls == 1 else 0
+
+        def terminate(self):
+            self.terminated = True
+
+        def wait(self, timeout=None):
+            return 0
+
+    process = SpeechProcess()
+
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    assert process.terminated is False
+
+
 def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()

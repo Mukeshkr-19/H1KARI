@@ -239,7 +239,9 @@ def initialize_audio_backends() -> bool:
         r = sr.Recognizer()
         r.energy_threshold = 200
         r.dynamic_energy_threshold = True
-        r.pause_threshold = 1.5
+        # End a captured phrase promptly after the owner stops speaking.  The
+        # previous 1.5-second pause made every voice turn feel sluggish.
+        r.pause_threshold = 0.8
         r.phrase_time_limit = 10
         r.non_speaking_duration = 0.5
         backend_name = _get_configured_stt_backend()
@@ -281,15 +283,76 @@ def recognize_audio(audio, *, short_utterance: bool = False):
         return ""
 
 
+def _is_speech_interrupt(text: str) -> bool:
+    """Match an explicit owner barge-in command without substring guesses."""
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    return normalized in {
+        "stop",
+        "hikari stop",
+        "stop hikari",
+        "stop talking",
+        "hikari stop talking",
+        "be quiet",
+        "hikari be quiet",
+        "quiet",
+    }
+
+
+def _terminate_speech_process(process) -> None:
+    """Stop only the owned speech process and reap it deterministically."""
+    try:
+        process.terminate()
+        process.wait(timeout=1)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=1)
+    except Exception:
+        pass
+
+
+def _wait_for_speech_or_owner_interrupt(process) -> bool:
+    """Return True when the verified owner interrupts active speech."""
+    if sr is None or r is None:
+        process.wait()
+        return False
+
+    try:
+        with sr.Microphone() as source:
+            while daemon_running and process.poll() is None:
+                try:
+                    audio = r.listen(source, timeout=0.35, phrase_time_limit=2)
+                except (sr.WaitTimeoutError, sr.UnknownValueError):
+                    continue
+                text = recognize_audio(audio, short_utterance=True)
+                if not text or not _is_speech_interrupt(text):
+                    continue
+                if not verify_speaker(audio):
+                    continue
+                _terminate_speech_process(process)
+                print("[DAEMON] Speech interrupted by verified owner", flush=True)
+                return True
+    except OSError:
+        pass
+
+    process.wait()
+    return False
+
+
 def speak(text):
-    """Speak using macOS say command"""
+    """Speak through the owned macOS process while accepting owner barge-in."""
     global hikari_state
     hikari_state = HikariState.SPEAKING
     print("[DAEMON] Synthesizing response", flush=True)
-    # Use macOS say with faster rate
-    subprocess.run(["say", "-r", "200", text], capture_output=True)
-    time.sleep(0.3)
+    process = subprocess.Popen(
+        ["say", "-r", "200", text],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    interrupted = _wait_for_speech_or_owner_interrupt(process)
+    if not interrupted:
+        time.sleep(0.15)
     hikari_state = HikariState.ACTIVE
+    return not interrupted
 
 
 _voice_orchestrator = None

@@ -885,7 +885,10 @@ class HIKARI_Orchestrator:
                     response = self._route_to_agent(lowered)
                     if not response:
                         response = self._get_ai_response(
-                            lowered, dominant_emotion, emotion_score
+                            lowered,
+                            dominant_emotion,
+                            emotion_score,
+                            source=source,
                         )
                     if response and emotion_score > 0.4:
                         response = self.emotional_iq.adapt_response(
@@ -1023,7 +1026,12 @@ class HIKARI_Orchestrator:
                 return v2_answer
             response = self._route_to_agent(lowered)
             if not response:
-                response = self._get_ai_response(lowered, dominant_emotion, emotion_score)
+                response = self._get_ai_response(
+                    lowered,
+                    dominant_emotion,
+                    emotion_score,
+                    source=source,
+                )
             if response and emotion_score > 0.4:
                 response = self.emotional_iq.adapt_response(
                     response, dominant_emotion, emotion_score, user_input=user_input
@@ -1067,7 +1075,12 @@ class HIKARI_Orchestrator:
 
         # If no response, use AI
         if not response:
-            response = self._get_ai_response(lowered, dominant_emotion, emotion_score)
+            response = self._get_ai_response(
+                lowered,
+                dominant_emotion,
+                emotion_score,
+                source=source,
+            )
 
         # Adapt response to emotions (skip for memory confirmations / family answers)
         memory_tone = response and (
@@ -1830,7 +1843,14 @@ class HIKARI_Orchestrator:
             "bro",
         }
 
-    def _get_ai_response(self, user_input: str, emotion: str = "neutral", emotion_score: float = 0.0) -> str:
+    def _get_ai_response(
+        self,
+        user_input: str,
+        emotion: str = "neutral",
+        emotion_score: float = 0.0,
+        *,
+        source: str = "text",
+    ) -> str:
         """Get AI response for general queries"""
         authority_on = self._brain_v2_authority_enabled()
         if authority_on and self._requires_brain_v2_personal_answer(user_input):
@@ -1860,9 +1880,23 @@ class HIKARI_Orchestrator:
             context += f"User is feeling {emotion}. "
 
         # Build prompt
+        voice_channel = source == "voice"
+        channel_rules = (
+            "You are currently speaking aloud with the verified local owner through "
+            "HIKARI's microphone and speech output. Never describe yourself as text-only "
+            "or claim that you cannot speak. Keep spoken replies concise, natural, and "
+            "free of Markdown formatting. The owner may interrupt your speech."
+            if voice_channel
+            else
+            "You are currently responding in a text conversation."
+        )
         system_prompt = f"""You are HIKARI, a helpful AI assistant.
 Your assistant name is HIKARI. If asked your name or who you are, answer as HIKARI.
 Do not answer self-identity questions with the underlying model provider or model name.
+{channel_rules}
+Some local actions are handled by HIKARI's policy-controlled tools outside the language
+model. Do not categorically claim HIKARI lacks app or device capabilities. If a requested
+action is unavailable, say that the specific local tool is not enabled for this request.
 Adapt your responses to be:
 - Formal level: {self.personality.traits['formality']:.0%} formal
 - Verbose level: {self.personality.traits['verbosity']:.0%} detailed
