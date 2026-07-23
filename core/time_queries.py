@@ -1,10 +1,11 @@
-"""Bounded, offline handling for common time-of-day questions."""
+"""Bounded time-of-day handling with offline common-place fallbacks."""
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 from zoneinfo import ZoneInfo
 
 
@@ -26,6 +27,8 @@ _LOCATION_ALIASES: tuple[tuple[tuple[str, ...], str, str], ...] = (
     (("utc", "gmt"), "UTC", "UTC"),
 )
 
+TimezoneResolver = Callable[[str], Optional[tuple[str, str]]]
+
 
 def _mentions_alias(text: str, alias: str) -> bool:
     return bool(re.search(rf"\b{re.escape(alias)}\b", text, re.IGNORECASE))
@@ -37,6 +40,30 @@ def _requested_location(text: str) -> Optional[tuple[str, str]]:
         if any(_mentions_alias(lowered, alias) for alias in aliases):
             return label, timezone_name
     return None
+
+
+def _location_phrase(text: str, *, correction: bool) -> Optional[str]:
+    if correction:
+        match = re.search(r"\b(?:in|for)\s+(?P<place>.+)$", text, re.I)
+    else:
+        match = re.search(r"\btime\b.*?\b(?:in|for|at)\s+(?P<place>.+)$", text, re.I)
+    if not match:
+        return None
+    place = re.sub(r"[?!.]+$", "", match.group("place")).strip()
+    place = re.sub(
+        r"\b(?:please|right\s+now|now|man|bro)\s*$",
+        "",
+        place,
+        flags=re.I,
+    ).strip()
+    if not place or len(place) > 100:
+        return None
+    if any(
+        ord(ch) < 32 or ord(ch) == 127 or unicodedata.category(ch) == "Cf"
+        for ch in place
+    ):
+        return None
+    return place
 
 
 def _has_location_clause(text: str) -> bool:
@@ -52,8 +79,9 @@ def answer_time_query(
     *,
     previous_was_time: bool = False,
     now: Optional[datetime] = None,
+    resolve_timezone: Optional[TimezoneResolver] = None,
 ) -> Optional[str]:
-    """Return an offline time answer, or ``None`` when *text* is unrelated.
+    """Return a bounded time answer, or ``None`` when *text* is unrelated.
 
     A short correction such as ``"no, in India"`` is recognized only when the
     immediately preceding special-command intent was a time query.
@@ -66,11 +94,14 @@ def answer_time_query(
         return None
 
     location = _requested_location(raw)
+    place = _location_phrase(raw, correction=is_time_correction)
+    if location is None and place and resolve_timezone is not None:
+        try:
+            location = resolve_timezone(place)
+        except Exception:
+            return "I couldn't reach the location service right now. Please try again."
     if location is None and _has_location_clause(raw):
-        return (
-            "I don't recognize that location for an offline time lookup. "
-            "Try India, London, New York, Los Angeles, Chicago, Denver, Tokyo, or UTC."
-        )
+        return "I couldn't find that location. Try a city, state, or country name."
     if location is None:
         if is_time_correction:
             return None

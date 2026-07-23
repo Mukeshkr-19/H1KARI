@@ -27,8 +27,19 @@ def test_location_phrase_is_not_hijacked_without_previous_time_intent():
 def test_unknown_location_does_not_silently_return_local_time():
     answer = answer_time_query("what time is it in Atlantis?", now=NOW_UTC)
     assert answer is not None
-    assert "don't recognize" in answer
+    assert "couldn't find" in answer
     assert "local time" not in answer
+
+
+def test_arbitrary_country_uses_injected_timezone_resolver():
+    answer = answer_time_query(
+        "what time is it in Spain?",
+        now=NOW_UTC,
+        resolve_timezone=lambda place: ("Spain", "Europe/Madrid")
+        if place.casefold() == "spain"
+        else None,
+    )
+    assert answer == "The current time in Spain is 5:34 AM CEST."
 
 
 def test_plain_time_question_still_uses_local_clock():
@@ -43,7 +54,7 @@ def test_orchestrator_tracks_time_intent_for_short_corrections(monkeypatch):
     orch = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
     monkeypatch.setattr(
         "core.orchestrator.answer_time_query",
-        lambda text, *, previous_was_time=False: (
+        lambda text, *, previous_was_time=False, resolve_timezone=None: (
             "india-time" if previous_was_time and "india" in text else "first-time"
         ),
     )

@@ -41,6 +41,11 @@ from core.brain_statements import (
 from core.action_policy import Actor, ActorContext, validate_actor_context
 from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
+from core.location_service import (
+    LocationService,
+    LocationServiceError,
+    extract_weather_location,
+)
 from core.time_queries import answer_time_query
 
 if TYPE_CHECKING:
@@ -877,6 +882,7 @@ class HIKARI_Orchestrator:
         time_reply = answer_time_query(
             lowered,
             previous_was_time=getattr(self, "_last_special_intent", None) == "time",
+            resolve_timezone=self._resolve_time_location,
         )
         if time_reply is not None:
             self._last_special_intent = "time"
@@ -885,8 +891,20 @@ class HIKARI_Orchestrator:
         if re.search(r"\b(?:today(?:'s)?\s+date|what(?:'s| is)\s+(?:today|the date)|date)\b", lowered):
             return f"Today is {datetime.now().strftime('%A, %B %-d, %Y')}."
 
-        if "weather" in lowered:
-            return "Live weather lookup is disabled until its network policy adapter is approved."
+        weather_location = extract_weather_location(lowered)
+        if weather_location is not None:
+            if not weather_location:
+                return "Which city, state, or country should I check the weather for?"
+            try:
+                weather = self._location_service().current_weather(weather_location)
+            except LocationServiceError:
+                return (
+                    "I couldn't reach the live weather service right now. "
+                    "Please try again."
+                )
+            if weather is None:
+                return "I couldn't find that location. Try a city, state, or country name."
+            return weather.to_text()
 
         if "news" in lowered or "headline" in lowered:
             return "News headlines are disabled until their network policy adapter is approved."
@@ -938,6 +956,16 @@ class HIKARI_Orchestrator:
             return self._get_help()
 
         return None
+
+    def _location_service(self) -> LocationService:
+        service = getattr(self, "_public_location_service", None)
+        if service is None:
+            service = LocationService()
+            self._public_location_service = service
+        return service
+
+    def _resolve_time_location(self, place: str) -> Optional[tuple[str, str]]:
+        return self._location_service().resolve_timezone(place)
 
     def _guest_blocks_owner_personal_memory(self, user_input: str) -> bool:
         """Guest sessions must not read owner reviewed memories or legacy personal summaries."""
