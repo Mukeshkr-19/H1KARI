@@ -211,6 +211,21 @@ def test_speaker_verification_fails_closed_without_enrollment(monkeypatch):
     assert daemon.verify_speaker(object()) is False
 
 
+def test_enrollment_checks_model_before_requesting_audio(monkeypatch):
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    monkeypatch.setattr(
+        daemon,
+        "SpeakerAuth",
+        lambda: SimpleNamespace(available=lambda: False),
+    )
+    daemon.sr = _speech_module()
+    microphone = MagicMock()
+    daemon.sr.Microphone = microphone
+
+    assert daemon.enroll_voice() is False
+    microphone.assert_not_called()
+
+
 def test_check_enrollment_does_not_initialize_microphone(monkeypatch):
     monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
     monkeypatch.setattr(

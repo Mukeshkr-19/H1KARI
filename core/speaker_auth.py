@@ -169,6 +169,7 @@ class SpeakerAuth:
 
         try:
             from speechbrain.inference.speaker import EncoderClassifier
+            from speechbrain.utils.fetching import FetchConfig
         except Exception as e:
             raise RuntimeError(
                 "speechbrain not installed (speaker verification unavailable)"
@@ -177,7 +178,10 @@ class SpeakerAuth:
         # Downloads model weights into HF_HOME on first run
         self._model = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
-            revision=SPEECHBRAIN_ECAPA_REVISION,
+            fetch_config=FetchConfig(
+                revision=SPEECHBRAIN_ECAPA_REVISION,
+                huggingface_cache_dir=str(HF_CACHE_DIR),
+            ),
             savedir=str(HF_CACHE_DIR / "speechbrain_spkrec_ecapa"),
         )
 

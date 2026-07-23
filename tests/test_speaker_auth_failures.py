@@ -86,13 +86,23 @@ def test_model_loader_uses_exact_id_and_private_cache_without_downloading(
             calls.append(kwargs)
             return model
 
+    class FetchConfig:
+        def __init__(self, *, revision=None, huggingface_cache_dir=None):
+            self.revision = revision
+            self.huggingface_cache_dir = huggingface_cache_dir
+
     speechbrain_module = ModuleType("speechbrain")
     inference_module = ModuleType("speechbrain.inference")
     speaker_module = ModuleType("speechbrain.inference.speaker")
     speaker_module.EncoderClassifier = EncoderClassifier
+    utils_module = ModuleType("speechbrain.utils")
+    fetching_module = ModuleType("speechbrain.utils.fetching")
+    fetching_module.FetchConfig = FetchConfig
     monkeypatch.setitem(sys.modules, "speechbrain", speechbrain_module)
     monkeypatch.setitem(sys.modules, "speechbrain.inference", inference_module)
     monkeypatch.setitem(sys.modules, "speechbrain.inference.speaker", speaker_module)
+    monkeypatch.setitem(sys.modules, "speechbrain.utils", utils_module)
+    monkeypatch.setitem(sys.modules, "speechbrain.utils.fetching", fetching_module)
     for name in ("HF_HOME", "HUGGINGFACE_HUB_CACHE", "TRANSFORMERS_CACHE"):
         monkeypatch.delenv(name, raising=False)
 
@@ -100,13 +110,12 @@ def test_model_loader_uses_exact_id_and_private_cache_without_downloading(
     auth._lazy_load_model()
 
     assert auth._model is model
-    assert calls == [
-        {
-            "source": "speechbrain/spkrec-ecapa-voxceleb",
-            "revision": speaker_auth.SPEECHBRAIN_ECAPA_REVISION,
-            "savedir": str(cache / "speechbrain_spkrec_ecapa"),
-        }
-    ]
+    assert len(calls) == 1
+    assert calls[0]["source"] == "speechbrain/spkrec-ecapa-voxceleb"
+    assert calls[0]["savedir"] == str(cache / "speechbrain_spkrec_ecapa")
+    fetch_config = calls[0]["fetch_config"]
+    assert fetch_config.revision == speaker_auth.SPEECHBRAIN_ECAPA_REVISION
+    assert fetch_config.huggingface_cache_dir == str(cache)
     assert os.environ["HF_HOME"] == str(cache)
     assert os.environ["HUGGINGFACE_HUB_CACHE"] == str(cache)
     assert os.environ["TRANSFORMERS_CACHE"] == str(cache)

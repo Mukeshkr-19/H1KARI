@@ -116,6 +116,10 @@ def enroll_voice():
         return False
 
     auth = SpeakerAuth()
+    if not auth.available():
+        print("\n❌ Speaker verification model could not be loaded.")
+        print("   Check your connection once, then retry: hikari --enroll-voice")
+        return False
     print("\n🎙️ Voice enrollment (speaker verification)")
     print("Say a short phrase 3 times when prompted (normal speaking voice).")
     print("Tip: do this in a quiet room for best results.\n")
