@@ -2,7 +2,7 @@
 
 Status: generated audit input; not a final release notice or legal approval
 Source: `hikari-frontend/package-lock.json`
-Lock SHA-256: `e351219a7d6c59d78f803aacd495f5642e58f06581c40e7dbe22980a84878834`
+Lock SHA-256: `c4ce5af84589839b8375a41aa86d4dd380269351e71b9e11ba9d2d1c91ac8b75`
 Package entries: 406
 
 Regenerate with `python scripts/frontend_third_party.py`. Verify with `python scripts/frontend_third_party.py --check`.
@@ -127,16 +127,16 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/@jridgewell/sourcemap-codec` | `@jridgewell/sourcemap-codec` | 1.5.4 | MIT |
 | `node_modules/@jridgewell/trace-mapping` | `@jridgewell/trace-mapping` | 0.3.29 | MIT |
 | `node_modules/@napi-rs/wasm-runtime` | `@napi-rs/wasm-runtime` | 0.2.12 | MIT |
-| `node_modules/@next/env` | `@next/env` | 15.5.18 | MIT |
-| `node_modules/@next/eslint-plugin-next` | `@next/eslint-plugin-next` | 15.5.18 | MIT |
-| `node_modules/@next/swc-darwin-arm64` | `@next/swc-darwin-arm64` | 15.5.18 | MIT |
-| `node_modules/@next/swc-darwin-x64` | `@next/swc-darwin-x64` | 15.5.18 | MIT |
-| `node_modules/@next/swc-linux-arm64-gnu` | `@next/swc-linux-arm64-gnu` | 15.5.18 | MIT |
-| `node_modules/@next/swc-linux-arm64-musl` | `@next/swc-linux-arm64-musl` | 15.5.18 | MIT |
-| `node_modules/@next/swc-linux-x64-gnu` | `@next/swc-linux-x64-gnu` | 15.5.18 | MIT |
-| `node_modules/@next/swc-linux-x64-musl` | `@next/swc-linux-x64-musl` | 15.5.18 | MIT |
-| `node_modules/@next/swc-win32-arm64-msvc` | `@next/swc-win32-arm64-msvc` | 15.5.18 | MIT |
-| `node_modules/@next/swc-win32-x64-msvc` | `@next/swc-win32-x64-msvc` | 15.5.18 | MIT |
+| `node_modules/@next/env` | `@next/env` | 15.5.21 | MIT |
+| `node_modules/@next/eslint-plugin-next` | `@next/eslint-plugin-next` | 15.5.21 | MIT |
+| `node_modules/@next/swc-darwin-arm64` | `@next/swc-darwin-arm64` | 15.5.21 | MIT |
+| `node_modules/@next/swc-darwin-x64` | `@next/swc-darwin-x64` | 15.5.21 | MIT |
+| `node_modules/@next/swc-linux-arm64-gnu` | `@next/swc-linux-arm64-gnu` | 15.5.21 | MIT |
+| `node_modules/@next/swc-linux-arm64-musl` | `@next/swc-linux-arm64-musl` | 15.5.21 | MIT |
+| `node_modules/@next/swc-linux-x64-gnu` | `@next/swc-linux-x64-gnu` | 15.5.21 | MIT |
+| `node_modules/@next/swc-linux-x64-musl` | `@next/swc-linux-x64-musl` | 15.5.21 | MIT |
+| `node_modules/@next/swc-win32-arm64-msvc` | `@next/swc-win32-arm64-msvc` | 15.5.21 | MIT |
+| `node_modules/@next/swc-win32-x64-msvc` | `@next/swc-win32-x64-msvc` | 15.5.21 | MIT |
 | `node_modules/@nodelib/fs.scandir` | `@nodelib/fs.scandir` | 2.1.5 | MIT |
 | `node_modules/@nodelib/fs.stat` | `@nodelib/fs.stat` | 2.0.5 | MIT |
 | `node_modules/@nodelib/fs.walk` | `@nodelib/fs.walk` | 1.2.8 | MIT |
@@ -264,7 +264,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/es-to-primitive` | `es-to-primitive` | 1.3.0 | MIT |
 | `node_modules/escape-string-regexp` | `escape-string-regexp` | 4.0.0 | MIT |
 | `node_modules/eslint` | `eslint` | 9.33.0 | MIT |
-| `node_modules/eslint-config-next` | `eslint-config-next` | 15.5.18 | MIT |
+| `node_modules/eslint-config-next` | `eslint-config-next` | 15.5.21 | MIT |
 | `node_modules/eslint-import-resolver-node` | `eslint-import-resolver-node` | 0.3.9 | MIT |
 | `node_modules/eslint-import-resolver-node/node_modules/debug` | `debug` | 3.2.7 | MIT |
 | `node_modules/eslint-import-resolver-typescript` | `eslint-import-resolver-typescript` | 3.10.1 | ISC |
@@ -388,7 +388,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/nanoid` | `nanoid` | 3.3.15 | MIT |
 | `node_modules/napi-postinstall` | `napi-postinstall` | 0.3.2 | MIT |
 | `node_modules/natural-compare` | `natural-compare` | 1.4.0 | MIT |
-| `node_modules/next` | `next` | 15.5.18 | MIT |
+| `node_modules/next` | `next` | 15.5.21 | MIT |
 | `node_modules/object-assign` | `object-assign` | 4.1.1 | MIT |
 | `node_modules/object-inspect` | `object-inspect` | 1.13.4 | MIT |
 | `node_modules/object-keys` | `object-keys` | 1.1.1 | MIT |
