@@ -244,5 +244,20 @@ def test_check_enrollment_does_not_initialize_microphone(monkeypatch):
 def test_wake_phrase_requires_explicit_hikari_form():
     assert daemon._is_wake_phrase("hikari") is True
     assert daemon._is_wake_phrase("hey hikari") is True
+    assert daemon._is_wake_phrase("Hikari.") is True
+    assert daemon._is_wake_phrase("Hey, HIKARI!") is True
     assert daemon._is_wake_phrase("heck") is False
     assert daemon._is_wake_phrase("this has hikar somewhere") is False
+
+
+def test_check_enrollment_is_silent(monkeypatch, capsys):
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    monkeypatch.setattr(
+        daemon,
+        "_get_speaker_auth",
+        lambda: SimpleNamespace(is_enrolled=lambda: True),
+    )
+    monkeypatch.setattr(daemon.sys, "argv", ["hikari_daemon.py", "--check-enrollment"])
+
+    assert daemon.main() == 0
+    assert capsys.readouterr().out == ""

@@ -20,6 +20,7 @@ from pathlib import Path
 import subprocess
 import signal
 import json
+import re
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -347,7 +348,7 @@ def is_stop_command(text: str) -> bool:
 
 def _is_wake_phrase(text: str) -> bool:
     """Accept only explicit forms of the HIKARI wake phrase."""
-    normalized = " ".join(text.casefold().split())
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
     return normalized in {"hikari", "hey hikari", "okay hikari", "hi hikari"}
 
 
@@ -438,12 +439,12 @@ def request_shutdown(_signum=None, _frame=None) -> None:
 def main() -> int:
     global daemon_running, hikari_state
 
-    _print_banner()
     if len(sys.argv) > 1 and sys.argv[1] == "--check-enrollment":
         if not SPEAKER_AUTH_AVAILABLE:
             return 1
         auth = _get_speaker_auth()
         return 0 if auth is not None and auth.is_enrolled() else 1
+    _print_banner()
     if not initialize_audio_backends():
         print("\n❌ Install SpeechRecognition before starting the voice daemon.")
         return 1
