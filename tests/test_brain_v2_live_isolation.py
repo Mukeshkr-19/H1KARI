@@ -293,20 +293,23 @@ os.environ["HIKARI_DISABLE_PROACTIVE_SCHEDULER"] = "1"
 sys.path.insert(0, str(repo_root))
 
 from core.orchestrator import HIKARI_Orchestrator
+from core.location_service import CurrentWeather
 
 orch = HIKARI_Orchestrator()
-weather_json = {
-    "current_condition": [
-        {
-            "temp_F": "72",
-            "temp_C": "22",
-            "weatherDesc": [{"value": "Clear"}],
-            "humidity": "40",
-        }
-    ]
-}
-weather_resp = MagicMock()
-weather_resp.json.return_value = weather_json
+
+class FakeLocationService:
+    def current_weather(self, query):
+        return CurrentWeather(
+            "Sample City",
+            "clear",
+            22.0,
+            22.0,
+            40,
+            0.0,
+            5.0,
+        )
+
+orch._public_location_service = FakeLocationService()
 search_resp = MagicMock()
 search_resp.json.return_value = {
     "Abstract": "Mock search result for isolation test.",
@@ -316,9 +319,8 @@ search_resp.json.return_value = {
 feed = MagicMock()
 feed.entries = [MagicMock(title="Mock headline A"), MagicMock(title="Mock headline B")]
 
-with patch("agents.research.requests.get", return_value=weather_resp) as _wg:
-    w = orch.process_input("what is the weather in Sample City")
-    assert w and "weather" in w.lower()
+w = orch.process_input("what is the weather in Sample City")
+assert w and "weather" in w.lower()
 with patch("agents.research.requests.get", return_value=search_resp):
     s = orch.process_input("search for sample isolation topic")
     assert s
