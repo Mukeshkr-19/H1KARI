@@ -135,7 +135,7 @@ def test_verified_wake_phrase_enters_active_state(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "hikari",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
     speak = MagicMock()
     monkeypatch.setattr(daemon, "speak", speak)
 
@@ -155,7 +155,8 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "stop talking",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
+    verify = MagicMock(return_value=False)
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
 
     class SpeechProcess:
         def __init__(self):
@@ -184,6 +185,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     assert completed is False
     assert process.terminated is True
     assert daemon.hikari_state == daemon.HikariState.ACTIVE
+    verify.assert_not_called()
 
 
 def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
@@ -233,7 +235,7 @@ def test_pocket_tts_process_uses_temporary_wav_and_cleans_it(monkeypatch, tmp_pa
     assert not output.exists()
 
 
-def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
+def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.daemon_running = True
@@ -243,7 +245,8 @@ def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "stop",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: False)
+    verify = MagicMock(return_value=False)
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
 
     class SpeechProcess:
         def __init__(self):
@@ -262,8 +265,9 @@ def test_unverified_speaker_cannot_interrupt_speech(monkeypatch):
 
     process = SpeechProcess()
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
-    assert process.terminated is False
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is True
+    assert process.terminated is True
+    verify.assert_not_called()
 
 
 def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
@@ -373,6 +377,24 @@ def test_wake_phrase_requires_explicit_hikari_form():
     assert daemon._is_wake_phrase("Hey, HIKARI!") is True
     assert daemon._is_wake_phrase("heck") is False
     assert daemon._is_wake_phrase("this has hikar somewhere") is False
+
+
+def test_speech_interrupt_accepts_short_explicit_variants_only():
+    for phrase in (
+        "stop",
+        "please stop",
+        "stop talking",
+        "Hikari, please stop talking",
+        "be quiet please",
+    ):
+        assert daemon._is_speech_interrupt(phrase) is True
+
+    for phrase in (
+        "do not stop the timer",
+        "tell me about stop motion",
+        "actually answer the weather question",
+    ):
+        assert daemon._is_speech_interrupt(phrase) is False
 
 
 def test_check_enrollment_is_silent(monkeypatch, capsys):

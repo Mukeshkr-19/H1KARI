@@ -115,7 +115,7 @@ Normal text mode hides internal startup and routing logs. Add `--verbose` only w
 
 Speaker enrollment stores local voice-auth data under ignored runtime paths. Do not push it.
 
-The daemon uses the local Samantha voice at a comfortable 185 words per minute
+The daemon uses the local Karen voice at a comfortable 185 words per minute
 by default, with no model-generation delay.
 You can choose any bounded rate from 120 through 220 in the ignored private
 environment file:

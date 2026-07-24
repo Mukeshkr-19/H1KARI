@@ -288,18 +288,15 @@ def recognize_audio(audio, *, short_utterance: bool = False):
 
 
 def _is_speech_interrupt(text: str) -> bool:
-    """Match an explicit owner barge-in command without substring guesses."""
+    """Match a short explicit barge-in command without substring guesses."""
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in {
-        "stop",
-        "hikari stop",
-        "stop hikari",
-        "stop talking",
-        "hikari stop talking",
-        "be quiet",
-        "hikari be quiet",
-        "quiet",
-    }
+    return bool(
+        re.fullmatch(
+            r"(?:hikari )?(?:please )?(?:stop(?: talking)?|be quiet|quiet)(?: please)?",
+            normalized,
+        )
+        or normalized == "stop hikari"
+    )
 
 
 def _terminate_speech_process(process) -> None:
@@ -334,10 +331,8 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                 text = recognize_audio(audio, short_utterance=True)
                 if not text or not _is_speech_interrupt(text):
                     continue
-                if not verify_speaker(audio, announce=False):
-                    continue
                 _terminate_speech_process(process)
-                print("[DAEMON] Speech interrupted by verified owner", flush=True)
+                print("[DAEMON] Speech interrupted by explicit local command", flush=True)
                 return True
     except OSError:
         pass

@@ -248,7 +248,7 @@ def test_macos_say_adapter_uses_argv_list(monkeypatch):
     assert args == [
         "/usr/bin/say",
         "-v",
-        "Samantha",
+        "Karen",
         "-r",
         "185",
         "hello world",
@@ -307,8 +307,8 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
         "language": "en",
         "beam_size": 1,
         "condition_on_previous_text": False,
-        "hotwords": "HIKARI",
-        "initial_prompt": "HIKARI",
+        "hotwords": "HIKARI stop quiet",
+        "initial_prompt": "HIKARI. Stop. Be quiet.",
         "no_speech_threshold": None,
         "without_timestamps": True,
     }
