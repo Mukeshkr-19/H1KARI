@@ -76,21 +76,37 @@ def looks_like_current_fact_followup(value: str) -> bool:
     if not isinstance(value, str):
         return False
     text = " ".join(value.casefold().split())
-    return bool(
+    explicit = bool(
         re.fullmatch(
             r"(?:"
             r"(?:are|were) you sure|"
             r"(?:is|was) that (?:right|correct|true)|"
-            r"(?:did|has) (?:it|that) happen(?:ed)?|"
+            r"(?:did|has) (?:it|this|that) happen(?:ed)?|"
             r"really|"
             r"what was the score|"
-            r"when did (?:it|that) happen|"
-            r"where (?:was|did) (?:it|that)(?: happen)?|"
+            r"when did (?:it|this|that) happen|"
+            r"where (?:was|did) (?:it|this|that)(?: happen)?|"
             r"who did (?:they|he|she) beat|"
             r"what(?:'s| is) happening|"
-            r"tell me more(?: about (?:it|that))?|"
-            r"what about (?:it|that|them)"
+            r"tell me more(?: about (?:it|this|that))?|"
+            r"what about (?:it|this|that|them)"
             r")[?.!]*",
+            text,
+        )
+    )
+    if explicit:
+        return True
+    words = re.findall(r"[a-z0-9']+", text)
+    if not 1 <= len(words) <= 12 or not re.match(
+        r"^(?:when|where|why|how|who|what|did|does|was|were|is|are|has|have)\b",
+        text,
+    ):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:it|this|that|they|them|those|event|match|game|final|"
+            r"tournament|score|scored|winner|won|beat|happen|happened|"
+            r"year|date|day|time|place|stadium|opponent)\b",
             text,
         )
     )

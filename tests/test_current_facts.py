@@ -41,6 +41,10 @@ def test_current_query_recognizes_latest_winner_without_hard_coding_event():
     [
         "Are you sure?",
         "Did it happen?",
+        "When did this happen?",
+        "Where was that final?",
+        "How did they win?",
+        "What year was it?",
         "Who did they beat?",
         "What was the score?",
         "What's happening?",
@@ -53,6 +57,7 @@ def test_current_fact_followups_require_live_reverification(query):
 
 def test_unrelated_turn_is_not_a_current_fact_followup():
     assert not looks_like_current_fact_followup("Explain algebra")
+    assert not looks_like_current_fact_followup("What's my name?")
 
 
 def test_service_parses_bounded_headlines_from_fixed_endpoint():
@@ -175,7 +180,8 @@ def test_orchestrator_fails_closed_when_live_current_fact_lookup_is_empty():
     )
 
 
-def test_orchestrator_reverifies_current_fact_followup(monkeypatch):
+@pytest.mark.parametrize("followup", ["Are you sure?", "When did this happen?"])
+def test_orchestrator_reverifies_current_fact_followup(monkeypatch, followup):
     from core.current_facts import CurrentFactHeadline
     from core.orchestrator import HIKARI_Orchestrator
 
@@ -201,7 +207,7 @@ def test_orchestrator_reverifies_current_fact_followup(monkeypatch):
         messages=(), digest=""
     )
 
-    reply = orchestrator._get_ai_response("Are you sure?", source="voice")
+    reply = orchestrator._get_ai_response(followup, source="voice")
 
     assert reply == "Verified answer."
     assert searches == ["FIFA World Cup 2026 winner final"]
