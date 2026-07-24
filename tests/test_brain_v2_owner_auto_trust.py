@@ -140,6 +140,8 @@ def test_owner_legal_and_preferred_name_stored_separately(episode_db):
     assert "owner a" in legal.lower()
     assert casual
     assert "person b" in casual.lower()
+    preferred = coord.retrieval.answer_from_accepted("What should you call me?")
+    assert preferred == "I call you Person B."
 
 
 def test_real_name_query_does_not_return_preferred_only(episode_db):

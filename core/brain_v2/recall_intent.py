@@ -347,6 +347,8 @@ def _matches_identity_self(q: str) -> bool:
         or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
         or re.search(r"\bwhats?\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
         or re.search(r"\b(?:tell|remind)\s+me\s+my\s+(?:(?:official|legal|real|full)\s+)?name\b", q)
+        or re.search(r"\bwhat\s+(?:should|do)\s+(?:you|u)\s+call\s+me\b", q)
+        or re.search(r"\bwhat\s+name\s+do\s+(?:you|u)\s+call\s+me\b", q)
         or q in {
             "my name",
             "my official name",

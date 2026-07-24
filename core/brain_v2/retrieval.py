@@ -446,6 +446,9 @@ class BrainV2Retrieval:
                 )
             return self._no_reviewed_memory_reply(INTENT_IDENTITY_SELF, query)
 
+        if self._is_preferred_name_query(query) and preferred:
+            return f"I call you {preferred}."
+
         casual_name = preferred or legal or official
         if casual_name:
             return f"Your name is {casual_name}."
@@ -467,6 +470,17 @@ class BrainV2Retrieval:
     @staticmethod
     def _is_legal_name_query(query: str) -> bool:
         return bool(re.search(r"\b(?:real|legal|official|full)\s+name\b", query or "", re.I))
+
+    @staticmethod
+    def _is_preferred_name_query(query: str) -> bool:
+        return bool(
+            re.search(
+                r"\bwhat\s+(?:(?:should|do)\s+(?:you|u)\s+call\s+me|"
+                r"name\s+do\s+(?:you|u)\s+call\s+me)\b",
+                query or "",
+                re.I,
+            )
+        )
 
     @staticmethod
     def _asks_official_name(query: str) -> bool:
