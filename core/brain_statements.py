@@ -96,6 +96,7 @@ def is_declarative_memory_statement(text: str) -> bool:
         r"\bis\s+my\s+(?:sister|brother|gf|girlfriend|partner|wife|husband)\b",
         r"\bi\s+prefer\b",
         r"\bi\s+don'?t\s+like\b",
+        r"\bmy\s+favou?rite\s+[a-z][a-z\s-]{1,40}\s+is\b",
         r"\bi\s+study\s+(?:at|in)\b",
         r"\bremember\s+(?:this|that)\b",
         r"\b(?:return\s+)?flight\b",

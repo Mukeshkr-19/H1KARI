@@ -37,6 +37,10 @@ _CALL_ME = re.compile(
 _LOCATION = re.compile(r"\bi\s+live\s+in\s+([A-Za-z][\w\s'-]{1,60})", re.I)
 _PREFER = re.compile(r"\bi\s+prefer\s+(.+)", re.I)
 _DISLIKE = re.compile(r"\bi\s+don'?t\s+like\s+(.+)", re.I)
+_FAVORITE = re.compile(
+    r"\bmy\s+favou?rite\s+([a-z][a-z\s-]{1,40})\s+is\s+([^.!?]{1,100})",
+    re.I,
+)
 _RELATION = re.compile(
     r"\bmy\s+"
     r"(dad|father|mom|mother|sister|brother|gf|girlfriend|partner|wife|husband)\b"
@@ -278,6 +282,14 @@ class EpisodeConsolidationPipeline:
             (_IDENTITY, "identity", 0.86, lambda t, m: t),
             (_LOCATION, "location", 0.84, lambda t, m: f"I live in {m.group(1).strip().title()}."),
             (_PREFER, "preference", 0.82, lambda t, m: f"I prefer {m.group(1).strip().rstrip('.')}."),
+            (
+                _FAVORITE,
+                "preference",
+                0.86,
+                lambda t, m: (
+                    f"My favorite {m.group(1).strip()} is {m.group(2).strip()}."
+                ),
+            ),
             (_DISLIKE, "preference", 0.8, lambda t, m: f"I don't like {m.group(1).strip().rstrip('.')}."),
             (
                 _STUDY_WORK,

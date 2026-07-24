@@ -731,6 +731,20 @@ class HIKARI_Orchestrator:
                     debug(f"[BRAIN_V2] Working memory clear after guest intro failed: {e}")
         brain_memory_text = self._normalize_brain_memory_statement(user_input)
 
+        if self._is_anaphoric_memory_command(brain_memory_text):
+            if guest:
+                return self._guest_declarative_no_store_reply()
+            resolved_memory = self._resolve_anaphoric_memory_command(brain_memory_text)
+            if not resolved_memory:
+                return self._reply_and_record_brain_v2_turn(
+                    user_input,
+                    "Tell me the exact fact you want saved, for example: "
+                    "My favorite artist is Artist A.",
+                    source,
+                    metadata={"skip_candidate_extraction": True},
+                )
+            brain_memory_text = resolved_memory
+
         if guest and getattr(self.speaker, "last_was_session_intro", False):
             guest_name = self.speaker.current_speaker or "guest"
             return format_guest_intro_reply(guest_name)
@@ -1502,7 +1516,7 @@ class HIKARI_Orchestrator:
         inferred = inferred or infer_memory_type(brain_memory_text)
         outcome = self.brain_v2.ingest_trusted_owner_declaration(
             self._brain_v2_session,
-            user_input,
+            brain_memory_text,
         )
         if outcome.get("status") == "accepted":
             identity_meta = inferred.metadata or {}
@@ -1821,6 +1835,47 @@ class HIKARI_Orchestrator:
         if re.search(r"\b(?:she|he|they|shes|he's|she's)\s+(?:is\s+)?my\s+girl\s*friend\b", text, re.I):
             return text.replace("girl friend", "girlfriend")
         return text
+
+    @staticmethod
+    def _is_anaphoric_memory_command(text: str) -> bool:
+        normalized = " ".join((text or "").casefold().strip().rstrip(".!?").split())
+        return bool(
+            re.fullmatch(
+                r"(?:please\s+)?(?:remember|save|store|add|had|put)\s+"
+                r"(?:this|that|it)(?:\s+(?:to|in)\s+(?:my\s+)?"
+                r"(?:memory|brain))?(?:\s+too)?",
+                normalized,
+            )
+            or re.fullmatch(
+                r"(?:this|that|it)\s+to\s+(?:my\s+)?(?:memory|brain)(?:\s+too)?",
+                normalized,
+            )
+        )
+
+    def _resolve_anaphoric_memory_command(self, text: str) -> str:
+        """Resolve only a bounded owner preference explicitly confirmed by reference."""
+
+        scope = self._active_conversation_scope()
+        if scope is None or scope.guest:
+            return ""
+        packet = self._conversation_engine().compose(scope, text)
+        for message in reversed(packet.messages):
+            if message.get("role") != "assistant":
+                continue
+            content = re.sub(r"[*_`]", "", str(message.get("content") or ""))
+            match = re.search(
+                r"\byour\s+favou?rite\s+artist\s+is\s+(?:actually\s+)?"
+                r"(?P<artist>[A-Za-z][A-Za-z .'-]{1,79}?)(?=,|\.|!|\?|\s+not\b|$)",
+                content,
+                re.I,
+            )
+            if not match:
+                continue
+            artist = " ".join(match.group("artist").split()).strip(" .")
+            if 1 <= len(artist.split()) <= 8:
+                return f"My favorite artist is {artist}."
+            return ""
+        return ""
 
     def _extract_partner_location(self, text: str) -> str:
         m = re.search(

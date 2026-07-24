@@ -102,6 +102,17 @@ def infer_memory_type(
     if re.search(r"\bi\s+don'?t\s+like\b", low):
         return MemoryTypeInference("preference", 0.82, meta)
 
+    favorite = re.search(
+        r"\bmy\s+favou?rite\s+(?P<kind>[a-z][a-z\s-]{1,40})\s+is\s+"
+        r"(?P<value>[^.!?]{1,100})",
+        text,
+        re.I,
+    )
+    if favorite:
+        meta["preference_kind"] = " ".join(favorite.group("kind").split()).casefold()
+        meta["preference_value"] = " ".join(favorite.group("value").split())
+        return MemoryTypeInference("preference", 0.86, meta)
+
     if re.search(r"\bmy\s+name\s+is\b", low):
         declared = _extract_declared_self_name(text)
         if declared:

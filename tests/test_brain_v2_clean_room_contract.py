@@ -240,6 +240,60 @@ def test_bare_preference_auto_trusted(episode_db):
     assert "topic a" in profile.lower()
 
 
+def test_favorite_artist_is_auto_trusted_and_recalled(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    reply = _teach_long_term(orch, "My favorite artist is Lana Del Rey.")
+    answer = orch.process_input("Who's my favorite artist?")
+
+    assert "got it" in reply.lower()
+    assert "lana del rey" in answer.lower()
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    assert any(
+        "lana del rey" in memory.statement.lower()
+        and (memory.metadata or {}).get("candidate_type") == "preference"
+        for memory in accepted
+    )
+
+
+def test_anaphoric_memory_command_saves_confirmed_favorite_artist(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(
+        scope,
+        "We were discussing music.",
+        "Your favorite artist is actually Lana Del Rey, not Lorde.",
+    )
+
+    reply = orch.process_input("had that to my memory", source="voice", context=context)
+    answer = orch.process_input(
+        "Who's my favorite artist?",
+        source="voice",
+        context=context,
+    )
+
+    assert "got it" in reply.lower()
+    assert "lana del rey" in answer.lower()
+
+
+def test_unresolved_anaphoric_memory_command_never_claims_a_write(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(scope, "Okay", "Sounds good.")
+
+    reply = orch.process_input("add that to my brain", source="voice", context=context)
+
+    assert "exact fact" in reply.lower()
+    assert "updated your brain" not in reply.lower()
+    assert "stored" not in reply.lower()
+    assert not episode_db.get_active_accepted_memories(limit=10)
+
+
 def test_bare_dislike_auto_trusted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
