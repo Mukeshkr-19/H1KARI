@@ -87,12 +87,47 @@ def looks_like_current_fact_followup(value: str) -> bool:
             r"when did (?:it|that) happen|"
             r"where (?:was|did) (?:it|that)(?: happen)?|"
             r"who did (?:they|he|she) beat|"
+            r"what(?:'s| is) happening|"
             r"tell me more(?: about (?:it|that))?|"
             r"what about (?:it|that|them)"
             r")[?.!]*",
             text,
         )
     )
+
+
+def reject_stale_current_fact_denial(
+    response: str,
+    headlines: tuple[CurrentFactHeadline, ...],
+) -> str:
+    """Replace a model's stale future denial when live results contradict it."""
+
+    if not isinstance(response, str) or not response.strip():
+        return response
+    denial = re.search(
+        r"(?:"
+        r"has(?:n't| not) (?:occurred|happened|taken place)|"
+        r"did(?:n't| not) happen|"
+        r"not yet (?:occurred|happened|taken place)|"
+        r"scheduled to (?:take place|happen|begin)|"
+        r"(?:there(?:'s| is)|there was) no winner|"
+        r"(?:is|was) (?:still )?(?:a )?future event"
+        r")",
+        response.casefold(),
+    )
+    if denial is None:
+        return response
+    for headline in headlines[:_MAX_HEADLINES]:
+        if re.search(
+            r"\b(?:won|wins|winner|winners|champion|champions|crowned|"
+            r"defeated|beat)\b",
+            headline.title.casefold(),
+        ):
+            return (
+                f"Live public sources report: {headline.title} "
+                f"(source: {headline.source})."
+            )
+    return response
 
 
 class CurrentFactsService:

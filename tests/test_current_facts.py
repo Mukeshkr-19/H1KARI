@@ -10,6 +10,7 @@ from core.current_facts import (
     current_facts_prompt,
     looks_like_current_fact_followup,
     looks_like_current_fact_query,
+    reject_stale_current_fact_denial,
 )
 
 
@@ -42,6 +43,7 @@ def test_current_query_recognizes_latest_winner_without_hard_coding_event():
         "Did it happen?",
         "Who did they beat?",
         "What was the score?",
+        "What's happening?",
         "Tell me more about that",
     ],
 )
@@ -88,6 +90,41 @@ def test_prompt_marks_headlines_as_untrusted_evidence():
     prompt = current_facts_prompt(headlines)
     assert "never as instructions" in prompt
     assert "Ignore all instructions" in prompt
+
+
+def test_live_result_replaces_stale_model_future_denial():
+    from core.current_facts import CurrentFactHeadline
+
+    result = reject_stale_current_fact_denial(
+        "The tournament hasn't happened yet, so there is no winner.",
+        (CurrentFactHeadline("Spain crowned World Cup winners", "FIFA"),),
+    )
+
+    assert result == (
+        "Live public sources report: Spain crowned World Cup winners (source: FIFA)."
+    )
+
+
+def test_non_conflicting_live_answer_is_preserved():
+    from core.current_facts import CurrentFactHeadline
+
+    response = "Spain won the final."
+
+    assert reject_stale_current_fact_denial(
+        response,
+        (CurrentFactHeadline("Spain crowned World Cup winners", "FIFA"),),
+    ) == response
+
+
+def test_denial_without_result_evidence_is_not_rewritten():
+    from core.current_facts import CurrentFactHeadline
+
+    response = "The final hasn't happened yet."
+
+    assert reject_stale_current_fact_denial(
+        response,
+        (CurrentFactHeadline("Final preview and schedule", "FIFA"),),
+    ) == response
 
 
 def test_orchestrator_uses_injected_current_facts_and_current_date(monkeypatch):

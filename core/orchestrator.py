@@ -59,6 +59,7 @@ from core.current_facts import (
     current_facts_prompt,
     looks_like_current_fact_followup,
     looks_like_current_fact_query,
+    reject_stale_current_fact_denial,
 )
 
 if TYPE_CHECKING:
@@ -1683,7 +1684,7 @@ class HIKARI_Orchestrator:
         while True:
             next_cleaned = re.sub(r"^\s*(?:you|user)\s*:\s*", "", cleaned, flags=re.I).strip()
             if next_cleaned == cleaned:
-                return cleaned
+                return re.sub(r"\b2020\s+26\b", "2026", cleaned)
             cleaned = next_cleaned
 
     def _is_ai_runtime_question(self, text: str) -> bool:
@@ -1961,6 +1962,11 @@ Adapt your responses to be:
                 max_tokens=500,
                 temperature=0.7
             )
+            if current_headlines:
+                response = reject_stale_current_fact_denial(
+                    response,
+                    current_headlines,
+                )
             return response if response else self._get_ai_unavailable_message()
         except Exception as e:
             debug(f"[AI] Error: {e}")
