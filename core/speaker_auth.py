@@ -25,6 +25,8 @@ from core.voice_status import SPEECHBRAIN_ECAPA_REVISION
 VOICE_AUTH_FILE = legacy_data_dir() / "voice_auth.json"
 HF_CACHE_DIR = legacy_data_dir() / "hf_cache"
 DEFAULT_SPEAKER_THRESHOLD = 0.25
+MAX_ENROLLMENT_TEMPLATES = 5
+MAX_EMBEDDING_DIMENSIONS = 4096
 
 
 def _ensure_dirs():
@@ -45,8 +47,13 @@ def _cosine_similarity(a: List[float], b: List[float]) -> float:
 
 
 def _valid_embedding(value) -> bool:
-    return isinstance(value, list) and bool(value) and all(
-        type(item) in (int, float) and math.isfinite(float(item)) for item in value
+    return (
+        isinstance(value, list)
+        and 0 < len(value) <= MAX_EMBEDDING_DIMENSIONS
+        and all(
+            type(item) in (int, float) and math.isfinite(float(item))
+            for item in value
+        )
     )
 
 
@@ -96,6 +103,8 @@ class SpeakerAuth:
         self.threshold = float(threshold)
         self._model = None
         self._enrolled_embedding: Optional[List[float]] = None
+        self._enrolled_embeddings: List[List[float]] = []
+        self._enrollment_version = 0
         _ensure_dirs()
 
     def available(self) -> bool:
@@ -106,13 +115,25 @@ class SpeakerAuth:
             return False
 
     def is_enrolled(self) -> bool:
-        if self._enrolled_embedding is not None:
+        if self._enrolled_embeddings:
             return True
         self._load_enrollment()
-        return self._enrolled_embedding is not None
+        return bool(self._enrolled_embeddings)
+
+    def enrollment_version(self) -> int:
+        if not self._enrolled_embeddings:
+            self._load_enrollment()
+        return self._enrollment_version
 
     def enroll_from_embeddings(self, embeddings: List[List[float]]):
-        self._enrolled_embedding = _mean(embeddings)
+        if len(embeddings) > MAX_ENROLLMENT_TEMPLATES:
+            raise ValueError("Too many enrollment embeddings")
+        centroid = _mean(embeddings)
+        self._enrolled_embeddings = [
+            [float(value) for value in embedding] for embedding in embeddings
+        ]
+        self._enrolled_embedding = centroid
+        self._enrollment_version = 2
         self._save_enrollment()
 
     def verify_embedding(self, embedding: List[float]) -> VerifyResult:
@@ -130,7 +151,29 @@ class SpeakerAuth:
                 threshold=self.threshold,
                 reason="empty_embedding",
             )
-        score = _cosine_similarity(self._enrolled_embedding or [], embedding)
+        if not _valid_embedding(embedding):
+            return VerifyResult(
+                ok=False,
+                score=0.0,
+                threshold=self.threshold,
+                reason="invalid_embedding",
+            )
+        candidates = list(self._enrolled_embeddings)
+        if self._enrolled_embedding:
+            candidates.append(self._enrolled_embedding)
+        same_dimension = [
+            candidate for candidate in candidates if len(candidate) == len(embedding)
+        ]
+        if not same_dimension:
+            return VerifyResult(
+                ok=False,
+                score=0.0,
+                threshold=self.threshold,
+                reason="dimension_mismatch",
+            )
+        score = max(
+            _cosine_similarity(candidate, embedding) for candidate in same_dimension
+        )
         accepted = score > self.threshold
         return VerifyResult(
             ok=accepted,
@@ -255,19 +298,38 @@ class SpeakerAuth:
             data = json.loads(VOICE_AUTH_FILE.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 return
+            templates = data.get("templates")
+            if (
+                isinstance(templates, list)
+                and 0 < len(templates) <= MAX_ENROLLMENT_TEMPLATES
+            ):
+                if all(_valid_embedding(template) for template in templates):
+                    dimensions = {len(template) for template in templates}
+                    if len(dimensions) == 1:
+                        self._enrolled_embeddings = [
+                            [float(value) for value in template]
+                            for template in templates
+                        ]
+                        self._enrolled_embedding = _mean(self._enrolled_embeddings)
+                        self._enrollment_version = 2
+                        return
             emb = data.get("embedding")
             if _valid_embedding(emb):
-                self._enrolled_embedding = [float(x) for x in emb]
+                legacy = [float(x) for x in emb]
+                self._enrolled_embedding = legacy
+                self._enrolled_embeddings = [legacy]
+                self._enrollment_version = 1
         except Exception:
             return
 
     def _save_enrollment(self):
-        if not self._enrolled_embedding:
+        if not self._enrolled_embeddings or not self._enrolled_embedding:
             return
         payload = {
-            "version": 1,
+            "version": 2,
             "threshold": self.threshold,
             "embedding": self._enrolled_embedding,
+            "templates": self._enrolled_embeddings,
         }
         VOICE_AUTH_FILE.write_text(json.dumps(payload), encoding="utf-8")
         VOICE_AUTH_FILE.chmod(0o600)

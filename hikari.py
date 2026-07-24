@@ -59,13 +59,62 @@ def run_daemon():
 
 
 def run_voice_enrollment():
-    """Explicitly capture and store a local owner voice embedding."""
+    """Capture the owner voice without competing with the login listener."""
     from services.hikari_daemon import enroll_voice, initialize_audio_backends
 
-    if not initialize_audio_backends():
-        print("Voice enrollment requires microphone support.", file=sys.stderr)
-        return 1
-    return 0 if enroll_voice() else 1
+    label = "com.hikari.assistant"
+    domain = f"gui/{os.getuid()}"
+    service = f"{domain}/{label}"
+    plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
+    paused_listener = False
+
+    if sys.platform == "darwin":
+        status = subprocess.run(
+            ["launchctl", "print", service],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if status.returncode == 0:
+            stopped = subprocess.run(
+                ["launchctl", "bootout", service],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if stopped.returncode != 0:
+                print(
+                    "Could not pause HIKARI's background microphone. Try again.",
+                    file=sys.stderr,
+                )
+                return 1
+            paused_listener = True
+            print("Paused the background listener for voice enrollment.")
+
+    result = 1
+    try:
+        if not initialize_audio_backends():
+            print("Voice enrollment requires microphone support.", file=sys.stderr)
+        else:
+            result = 0 if enroll_voice() else 1
+    finally:
+        if paused_listener:
+            restarted = subprocess.run(
+                ["launchctl", "bootstrap", domain, str(plist)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if restarted.returncode == 0:
+                print("Restarted HIKARI's background listener.")
+            else:
+                print(
+                    "Voice enrollment finished, but the background listener could not restart. "
+                    "Run: hikari --install",
+                    file=sys.stderr,
+                )
+                result = 1
+    return result
 
 
 def _format_conversation_sessions(records) -> str:

@@ -31,8 +31,54 @@ def test_enrollment_round_trip_and_owner_only_permissions(private_paths):
 
     restored = speaker_auth.SpeakerAuth()
     assert restored.is_enrolled() is True
+    assert restored.enrollment_version() == 2
     assert restored.verify_embedding([0.9, 0.1]).ok is True
     assert stat.S_IMODE(enrollment.stat().st_mode) == 0o600
+
+
+def test_enrollment_keeps_distinct_voice_templates(private_paths):
+    auth = speaker_auth.SpeakerAuth(threshold=0.9)
+    auth.enroll_from_embeddings([[1.0, 0.0], [0.0, 1.0]])
+
+    restored = speaker_auth.SpeakerAuth(threshold=0.9)
+
+    assert restored.verify_embedding([1.0, 0.0]).ok is True
+    assert restored.verify_embedding([0.0, 1.0]).ok is True
+
+
+def test_legacy_centroid_profile_remains_loadable(private_paths):
+    enrollment, _cache = private_paths
+    enrollment.parent.mkdir(parents=True, exist_ok=True)
+    enrollment.write_text(
+        json.dumps({"version": 1, "threshold": 0.78, "embedding": [1.0, 0.0]}),
+        encoding="utf-8",
+    )
+
+    auth = speaker_auth.SpeakerAuth(threshold=0.5)
+
+    assert auth.is_enrolled() is True
+    assert auth.enrollment_version() == 1
+    assert auth.verify_embedding([1.0, 0.0]).ok is True
+
+
+def test_malformed_template_profile_fails_closed(private_paths):
+    enrollment, _cache = private_paths
+    enrollment.parent.mkdir(parents=True, exist_ok=True)
+    enrollment.write_text(
+        json.dumps({"version": 2, "templates": [[1.0, 0.0], [1.0]]}),
+        encoding="utf-8",
+    )
+
+    auth = speaker_auth.SpeakerAuth()
+
+    assert auth.is_enrolled() is False
+
+
+def test_enrollment_template_count_is_bounded(private_paths):
+    auth = speaker_auth.SpeakerAuth()
+
+    with pytest.raises(ValueError, match="Too many enrollment embeddings"):
+        auth.enroll_from_embeddings([[1.0, 0.0]] * 6)
 
 
 def test_bounded_window_verification_uses_best_owner_match(private_paths):
