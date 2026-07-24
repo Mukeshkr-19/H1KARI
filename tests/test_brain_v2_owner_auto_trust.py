@@ -65,6 +65,65 @@ def test_owner_relation_auto_accepted(episode_db):
     assert any("person a" in m.statement.lower() for m in accepted)
 
 
+def test_favorite_slot_correction_retires_prior_value(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    first = coord.ingest_trusted_owner_declaration(
+        "sess-favorite-1",
+        "My favorite artist is Lorde.",
+    )
+    second = coord.ingest_trusted_owner_declaration(
+        "sess-favorite-2",
+        "My favorite artist is Lana Del Rey, not Lorde.",
+    )
+
+    assert first["status"] == "accepted"
+    assert second["status"] == "accepted"
+    active = episode_db.get_active_accepted_memories(limit=20)
+    artist_memories = [
+        memory
+        for memory in active
+        if (memory.metadata or {}).get("preference_kind") == "artist"
+    ]
+    assert len(artist_memories) == 1
+    assert artist_memories[0].statement == "My favorite artist is Lana Del Rey."
+    assert coord.retrieval.answer_from_accepted("Who's my favorite artist?") == (
+        "My favorite artist is Lana Del Rey."
+    )
+
+
+def test_distinct_favorite_categories_coexist(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    coord.ingest_trusted_owner_declaration(
+        "sess-favorite-artist",
+        "My favorite artist is Lana Del Rey.",
+    )
+    coord.ingest_trusted_owner_declaration(
+        "sess-favorite-color",
+        "My favorite color is blue.",
+    )
+
+    active = episode_db.get_active_accepted_memories(limit=20)
+    assert {
+        (memory.metadata or {}).get("preference_kind")
+        for memory in active
+        if (memory.metadata or {}).get("candidate_type") == "preference"
+    } == {"artist", "color"}
+
+
+def test_identity_parser_drops_trailing_conversation_filler(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    outcome = coord.ingest_trusted_owner_declaration(
+        "sess-identity-filler",
+        "My name is Owner A but u can call me Person B okay?",
+    )
+
+    assert outcome["status"] == "accepted"
+    active = episode_db.get_active_accepted_memories(limit=10)
+    assert len(active) == 1
+    assert (active[0].metadata or {}).get("legal_name") == "Owner A"
+    assert (active[0].metadata or {}).get("preferred_name") == "Person B"
+
+
 def test_owner_legal_and_preferred_name_stored_separately(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))

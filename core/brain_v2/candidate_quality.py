@@ -46,6 +46,7 @@ _FILLER_EXACT = frozenset(
 _COMMAND_PATTERNS = (
     re.compile(r"^(exit|quit|bye|goodbye|stop|continue|do it|go on)\b", re.I),
     re.compile(r"^(open|close|run|start|stop)\s+\w+", re.I),
+    re.compile(r"^explain\b", re.I),
 )
 
 _QUESTION_FORMS = (
@@ -91,6 +92,7 @@ _DURABLE_PATTERNS = (
     re.compile(r"\b(?:i'?m|i am)\s+in\s+[A-Za-z]", re.I),
     re.compile(r"\bi\s+prefer\b", re.I),
     re.compile(r"\bi\s+don'?t\s+like\b", re.I),
+    re.compile(r"\bmy\s+fav(?:ou?rite)?\s+[a-z][a-z\s-]{0,40}\s+is\b", re.I),
     re.compile(r"\bfor\s+hikari\b.+\b(decided|should|use|prefer|will)\b", re.I),
     re.compile(r"\bhikari\b.+\b(decided|should|use|prefer)\b", re.I),
     re.compile(r"\b(?:return\s+)?flights?\b", re.I),

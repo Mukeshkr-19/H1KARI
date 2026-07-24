@@ -24,6 +24,8 @@ _STRUCTURED_META_KEYS = (
     "preferred_name",
     "legal_name",
     "official_name",
+    "preference_kind",
+    "preference_value",
     "explicit_remember",
     "auto_trusted_owner_assertion",
     "auto_trust_policy",

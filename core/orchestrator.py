@@ -921,6 +921,7 @@ class HIKARI_Orchestrator:
                         )
                     if response:
                         response = self.personality.format_response(response)
+                        response = self._guard_unverified_memory_claim(response)
                 return self._reply_and_record_brain_v2_turn(
                     user_input,
                     response or "",
@@ -1060,6 +1061,7 @@ class HIKARI_Orchestrator:
                 )
             if response:
                 response = self.personality.format_response(response)
+                response = self._guard_unverified_memory_claim(response)
             self._record_brain_v2_turn(user_input, response or "", source)
             if not self._brain_v2_blocks_legacy_neural_writes():
                 self._get_legacy_brain().remember_turn(
@@ -1123,6 +1125,8 @@ class HIKARI_Orchestrator:
         # Format based on personality
         if response:
             response = self.personality.format_response(response)
+            if self._brain_v2_authority_enabled():
+                response = self._guard_unverified_memory_claim(response)
 
         if self._may_persist_legacy_json_memory():
             self.memory.add_conversation(user_input, response or "")
@@ -1852,19 +1856,57 @@ class HIKARI_Orchestrator:
             )
         )
 
+    @staticmethod
+    def _guard_unverified_memory_claim(response: str) -> str:
+        """Never let a general model pretend it performed a reviewed Brain write."""
+        low = " ".join((response or "").casefold().split())
+        if re.search(
+            r"\b(?:i(?:'ll| will)\s+remember|"
+            r"i(?:'ve| have)\s+(?:saved|stored|updated)\b|"
+            r"(?:saved|stored)\s+(?:that|it)\s+(?:to|in)\s+"
+            r"(?:your\s+)?(?:memory|brain)|updated\s+your\s+(?:memory|brain))",
+            low,
+        ):
+            return (
+                "I haven't saved that as a reviewed memory. "
+                "Tell me the exact fact you want saved."
+            )
+        return response
+
     def _resolve_anaphoric_memory_command(self, text: str) -> str:
-        """Resolve only a bounded owner preference explicitly confirmed by reference."""
+        """Resolve a recent owner declaration, never an arbitrary model assertion."""
 
         scope = self._active_conversation_scope()
         if scope is None or scope.guest:
             return ""
         packet = self._conversation_engine().compose(scope, text)
+
+        from core.brain_v2.memory_policy import MemoryPolicyRoute, route_owner_utterance
+
+        for message in reversed(packet.messages):
+            if message.get("role") != "user":
+                continue
+            content = self._normalize_brain_memory_statement(
+                str(message.get("content") or "")
+            )
+            if not content or self._is_anaphoric_memory_command(content):
+                continue
+            decision = route_owner_utterance(content, guest=False)
+            if decision.route in {
+                MemoryPolicyRoute.ACTIVE_MEMORY,
+                MemoryPolicyRoute.REVIEW_QUEUE,
+            }:
+                return content
+
+        # A bounded confirmation sentence is useful when speech recognition split
+        # the owner's correction across turns. Do not treat arbitrary assistant text
+        # as owner-authored memory.
         for message in reversed(packet.messages):
             if message.get("role") != "assistant":
                 continue
             content = re.sub(r"[*_`]", "", str(message.get("content") or ""))
             match = re.search(
-                r"\byour\s+favou?rite\s+artist\s+is\s+(?:actually\s+)?"
+                r"\byour\s+fav(?:ou?rite)?\s+artist\s+is\s+(?:actually\s+)?"
                 r"(?P<artist>[A-Za-z][A-Za-z .'-]{1,79}?)(?=,|\.|!|\?|\s+not\b|$)",
                 content,
                 re.I,

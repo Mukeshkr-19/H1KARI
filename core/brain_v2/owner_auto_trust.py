@@ -30,6 +30,10 @@ _EXPLICIT_REMEMBER = re.compile(r"\bremember\s+(?:this|that)\b", re.I)
 
 
 def is_explicit_remember_command(text: str) -> bool:
+    from core.brain_statements import is_memory_rejection_statement
+
+    if is_memory_rejection_statement(text):
+        return False
     return bool(_EXPLICIT_REMEMBER.search(text or ""))
 
 

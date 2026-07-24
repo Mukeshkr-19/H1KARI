@@ -13,6 +13,7 @@ from core.brain_v2.candidate_quality import (
 )
 from core.brain_v2.candidate_scoring import annotate_and_rank_candidates, normalize_statement
 from core.brain_v2.memory_type import (
+    extract_favorite_preference,
     extract_owner_identity_names,
     infer_memory_type,
     normalize_user_education_statement,
@@ -37,10 +38,6 @@ _CALL_ME = re.compile(
 _LOCATION = re.compile(r"\bi\s+live\s+in\s+([A-Za-z][\w\s'-]{1,60})", re.I)
 _PREFER = re.compile(r"\bi\s+prefer\s+(.+)", re.I)
 _DISLIKE = re.compile(r"\bi\s+don'?t\s+like\s+(.+)", re.I)
-_FAVORITE = re.compile(
-    r"\bmy\s+favou?rite\s+([a-z][a-z\s-]{1,40})\s+is\s+([^.!?]{1,100})",
-    re.I,
-)
 _RELATION = re.compile(
     r"\bmy\s+"
     r"(dad|father|mom|mother|sister|brother|gf|girlfriend|partner|wife|husband)\b"
@@ -235,9 +232,12 @@ class EpisodeConsolidationPipeline:
         self, text: str
     ) -> List[Tuple[str, str, float, Optional[dict]]]:
         """Return list of (statement, type, confidence, extra_meta)."""
-        from core.brain_statements import is_task_or_action_statement
+        from core.brain_statements import (
+            is_memory_rejection_statement,
+            is_task_or_action_statement,
+        )
 
-        if is_task_or_action_statement(text):
+        if is_task_or_action_statement(text) or is_memory_rejection_statement(text):
             return []
 
         found: List[Tuple[str, str, float, Optional[dict]]] = []
@@ -278,18 +278,22 @@ class EpisodeConsolidationPipeline:
                 )
             )
 
+        favorite = extract_favorite_preference(text)
+        if favorite:
+            kind, value = favorite
+            found.append(
+                (
+                    f"My favorite {kind} is {value}.",
+                    "preference",
+                    0.86,
+                    {"preference_kind": kind, "preference_value": value},
+                )
+            )
+
         for pattern, ctype, conf, builder in (
             (_IDENTITY, "identity", 0.86, lambda t, m: t),
             (_LOCATION, "location", 0.84, lambda t, m: f"I live in {m.group(1).strip().title()}."),
             (_PREFER, "preference", 0.82, lambda t, m: f"I prefer {m.group(1).strip().rstrip('.')}."),
-            (
-                _FAVORITE,
-                "preference",
-                0.86,
-                lambda t, m: (
-                    f"My favorite {m.group(1).strip()} is {m.group(2).strip()}."
-                ),
-            ),
             (_DISLIKE, "preference", 0.8, lambda t, m: f"I don't like {m.group(1).strip().rstrip('.')}."),
             (
                 _STUDY_WORK,

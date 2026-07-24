@@ -26,6 +26,32 @@ def test_temporary_speaker_intro_not_in_pending_queue(tmp_path, monkeypatch):
     assert not pending
 
 
+def test_general_explanation_request_not_in_pending_queue(tmp_path, monkeypatch):
+    monkeypatch.setenv("HIKARI_BRAIN_V2_EPISODES_DB", str(tmp_path / EPISODES_DB))
+    store = EpisodeStore(db_path=tmp_path / EPISODES_DB)
+    episode_id = store.create_episode("ordinary-command")
+    store.add_turn(
+        episode_id,
+        "Explain why the sky is blue in one short sentence.",
+        is_user=True,
+    )
+    EpisodeConsolidationPipeline(store).process_episode(episode_id)
+    assert not store.get_candidates(status=MemoryCandidateStatus.PENDING)
+
+
+def test_negated_remember_request_not_in_pending_queue(tmp_path, monkeypatch):
+    monkeypatch.setenv("HIKARI_BRAIN_V2_EPISODES_DB", str(tmp_path / EPISODES_DB))
+    store = EpisodeStore(db_path=tmp_path / EPISODES_DB)
+    episode_id = store.create_episode("negated-memory")
+    store.add_turn(
+        episode_id,
+        "No, don't remember that; there is nothing to remember.",
+        is_user=True,
+    )
+    EpisodeConsolidationPipeline(store).process_episode(episode_id)
+    assert not store.get_candidates(status=MemoryCandidateStatus.PENDING)
+
+
 def test_durable_remember_fact_enters_pending_queue(tmp_path, monkeypatch):
     monkeypatch.setenv("HIKARI_BRAIN_V2_EPISODES_DB", str(tmp_path / EPISODES_DB))
     store = EpisodeStore(db_path=tmp_path / EPISODES_DB)

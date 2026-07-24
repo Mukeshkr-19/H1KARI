@@ -158,6 +158,17 @@ class BrainV2Coordinator:
         identity_legal_correction = (
             candidate.candidate_type == "identity" and bool(legal_name)
         )
+        preference_kind = str(
+            (candidate.metadata or {}).get("preference_kind") or ""
+        ).strip()
+        preference_slot_correction = [
+            memory
+            for memory in active_same_type
+            if preference_kind
+            and str((memory.metadata or {}).get("preference_kind") or "").strip()
+            == preference_kind
+            and normalize_statement(memory.statement) != candidate_norm
+        ]
         if (
             candidate.candidate_type in singleton_types
             and active_same_type
@@ -176,6 +187,12 @@ class BrainV2Coordinator:
                     mem.memory_id,
                     reason="identity_legal_correction",
                 )
+
+        for mem in preference_slot_correction:
+            self.retire_accepted_memory(
+                mem.memory_id,
+                reason="preference_slot_correction",
+            )
 
         trusted_meta = dict(candidate.metadata or {})
         trusted_meta["auto_trusted_owner_assertion"] = True

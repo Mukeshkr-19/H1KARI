@@ -52,6 +52,24 @@ def extract_person_names(text: str) -> List[str]:
     return names
 
 
+def extract_favorite_preference(text: str) -> Optional[tuple[str, str]]:
+    """Return a bounded favorite category/value without trailing corrections or chatter."""
+    match = re.search(
+        r"\bmy\s+fav(?:ou?rite)?\s+(?P<kind>[a-z][a-z\s-]{0,40}?)\s+is\s+"
+        r"(?P<value>[^.!?]{1,100}?)"
+        r"(?=\s*(?:,?\s+not\b|,?\s+and\s+then\b|,?\s+but\b|[.!?]|$))",
+        text or "",
+        re.I,
+    )
+    if not match:
+        return None
+    kind = " ".join(match.group("kind").split()).casefold()
+    value = " ".join(match.group("value").split()).strip(" ,")
+    if not kind or not value:
+        return None
+    return kind, value
+
+
 def infer_memory_type(
     statement: str,
     *,
@@ -102,15 +120,9 @@ def infer_memory_type(
     if re.search(r"\bi\s+don'?t\s+like\b", low):
         return MemoryTypeInference("preference", 0.82, meta)
 
-    favorite = re.search(
-        r"\bmy\s+favou?rite\s+(?P<kind>[a-z][a-z\s-]{1,40})\s+is\s+"
-        r"(?P<value>[^.!?]{1,100})",
-        text,
-        re.I,
-    )
+    favorite = extract_favorite_preference(text)
     if favorite:
-        meta["preference_kind"] = " ".join(favorite.group("kind").split()).casefold()
-        meta["preference_value"] = " ".join(favorite.group("value").split())
+        meta["preference_kind"], meta["preference_value"] = favorite
         return MemoryTypeInference("preference", 0.86, meta)
 
     if re.search(r"\bmy\s+name\s+is\b", low):
@@ -264,12 +276,21 @@ def extract_owner_identity_names(text: str) -> Dict[str, str]:
 
     for pat in (
         r"\b(?:you\s+can\s+|u\s+can\s+|i\s+told\s+(?:you|u)\s+to\s+)?call\s+me\s+"
-        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z])?)",
-        r"\b(?:you\s+can\s+|u\s+can\s+)?call\s+me\s+([A-Za-z][\w'-]*(?:\s+[A-Za-z])?)",
+        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*)?)",
+        r"\b(?:you\s+can\s+|u\s+can\s+)?call\s+me\s+"
+        r"([A-Za-z][\w'-]*(?:\s+[A-Za-z][\w'-]*)?)",
     ):
         m_call = re.search(pat, raw, re.I)
         if m_call:
-            preferred = m_call.group(1).strip().title()
+            pieces = m_call.group(1).strip().split()
+            if len(pieces) > 1 and pieces[-1].casefold() in {
+                "ok",
+                "okay",
+                "please",
+                "right",
+            }:
+                pieces.pop()
+            preferred = " ".join(pieces).title()
             if preferred:
                 out["preferred_name"] = preferred
             break
@@ -318,7 +339,7 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
     )
     if m2:
         meta["person"] = m2.group(1).strip().title()
-    if not meta.get("person"):
+    if not meta.get("person") and meta.get("relation"):
         # "Madhu is my sister" → person=Madhu, relation=sister
         m3 = re.search(
             r"\b([A-Z][a-z]+(?:\s+[A-Z])?)\s+is\s+my\s+"

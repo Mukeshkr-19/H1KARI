@@ -54,6 +54,7 @@ def _accept_turn(episode_db, statement: str, episode_key: str = "ep"):
     [
         ("I prefer local-first private tools.", "preference"),
         ("My favorite artist is Lana Del Rey.", "preference"),
+        ("My favorite artist is Lana Del Rey, not Lorde.", "preference"),
         ("I live in City A.", "location"),
         (
             "my girlfriend Jamie is a medical student at River Medical University.",

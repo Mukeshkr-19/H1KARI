@@ -168,7 +168,7 @@ def is_positive_brain_v2_recall_answer(text: Optional[str]) -> bool:
     if low.startswith("yes."):
         return True
     if re.search(
-        r"\b(?:live in|study|studies|bachelors?|degree|major|prefer|favou?rite|graduat|"
+        r"\b(?:live in|study|studies|bachelors?|degree|major|prefer|fav(?:ou?rite)?|graduat|"
         r"rising senior|meet|meeting|will be|"
         r"works?|worked|medical student|girlfriend|boyfriend|my sister|my brother|"
         r"my dad|my mom)\b",
@@ -637,8 +637,8 @@ def _matches_preference(q: str) -> bool:
         re.search(r"\bwhat\s+do\s+i\s+prefer\b", q)
         or re.search(r"\bwhat\s+(?:are|is)\s+my\s+preferences?\b", q)
         or re.search(r"\bwhat\s+do\s+i\s+(?:like|don'?t\s+like|dislike)\b", q)
-        or re.search(r"\bwho(?:'s|\s+is)\s+my\s+favou?rite\s+artist\b", q)
-        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+favou?rite\s+\w+\b", q)
+        or re.search(r"\bwho(?:'s|\s+is)\s+my\s+fav(?:ou?rite)?\s+artist\b", q)
+        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+fav(?:ou?rite)?\s+\w+\b", q)
     )
 
 

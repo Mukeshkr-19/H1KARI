@@ -18,6 +18,16 @@ _TASK_ACTION_PATTERNS = (
     ),
 )
 
+_NEGATED_MEMORY_PATTERN = re.compile(
+    r"\b(?:do\s+not|don'?t|dont|no+)\s+(?:remember|remeber)\b",
+    re.I,
+)
+
+
+def is_memory_rejection_statement(text: str) -> bool:
+    """True when the owner explicitly says not to retain the referenced content."""
+    return bool(_NEGATED_MEMORY_PATTERN.search(text or ""))
+
 
 def is_task_or_action_statement(text: str) -> bool:
     """Imperative or scheduling phrasing — not durable personal facts."""
@@ -60,6 +70,8 @@ def is_declarative_memory_statement(text: str) -> bool:
     raw = (text or "").strip().lower()
     if not raw or _looks_like_question_text(raw):
         return False
+    if is_memory_rejection_statement(raw):
+        return False
     try:
         from core.speaker_context import is_temporary_speaker_intro
 
@@ -96,7 +108,7 @@ def is_declarative_memory_statement(text: str) -> bool:
         r"\bis\s+my\s+(?:sister|brother|gf|girlfriend|partner|wife|husband)\b",
         r"\bi\s+prefer\b",
         r"\bi\s+don'?t\s+like\b",
-        r"\bmy\s+favou?rite\s+[a-z][a-z\s-]{1,40}\s+is\b",
+        r"\bmy\s+fav(?:ou?rite)?\s+[a-z][a-z\s-]{1,40}\s+is\b",
         r"\bi\s+study\s+(?:at|in)\b",
         r"\bremember\s+(?:this|that)\b",
         r"\b(?:return\s+)?flight\b",

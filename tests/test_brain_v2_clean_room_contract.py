@@ -257,6 +257,17 @@ def test_favorite_artist_is_auto_trusted_and_recalled(episode_db):
     )
 
 
+def test_fav_abbreviation_is_saved_and_recalled(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    reply = _teach_long_term(orch, "My fav artist is Lana Del Rey.")
+    answer = orch.process_input("Who's my fav artist?")
+
+    assert "got it" in reply.lower()
+    assert "lana del rey" in answer.lower()
+
+
 def test_anaphoric_memory_command_saves_confirmed_favorite_artist(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
@@ -279,6 +290,24 @@ def test_anaphoric_memory_command_saves_confirmed_favorite_artist(episode_db):
     assert "lana del rey" in answer.lower()
 
 
+def test_anaphoric_memory_command_saves_recent_owner_preference(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(
+        scope,
+        "I prefer quiet study rooms.",
+        "That sounds like a useful preference.",
+    )
+
+    reply = orch.process_input("add that to my brain", source="voice", context=context)
+    answer = orch.process_input("What do I prefer?", source="voice", context=context)
+
+    assert "got it" in reply.lower()
+    assert "quiet study rooms" in answer.lower()
+
+
 def test_unresolved_anaphoric_memory_command_never_claims_a_write(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
@@ -291,6 +320,18 @@ def test_unresolved_anaphoric_memory_command_never_claims_a_write(episode_db):
     assert "exact fact" in reply.lower()
     assert "updated your brain" not in reply.lower()
     assert "stored" not in reply.lower()
+    assert not episode_db.get_active_accepted_memories(limit=10)
+
+
+def test_general_model_cannot_claim_an_unverified_memory_write(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    orch._get_ai_response.return_value = "I've updated your brain and saved that."
+
+    reply = orch.process_input("Maybe that could matter later.")
+
+    assert "haven't saved" in reply.lower()
+    assert "updated your brain" not in reply.lower()
     assert not episode_db.get_active_accepted_memories(limit=10)
 
 
