@@ -187,7 +187,7 @@ class SpeakerAuth:
 
         if not embeddings:
             return VerifyResult(False, 0.0, self.threshold, "empty_embedding")
-        results = [self.verify_embedding(embedding) for embedding in embeddings[:3]]
+        results = [self.verify_embedding(embedding) for embedding in embeddings[:4]]
         best = max(results, key=lambda result: result.score)
         return VerifyResult(
             ok=best.ok,
@@ -230,7 +230,7 @@ class SpeakerAuth:
         *,
         sample_rate: int = 16000,
     ) -> List[List[float]]:
-        """Create at most three representative embeddings for one utterance.
+        """Create a whole-utterance embedding plus at most three bounded windows.
 
         Enrollment phrases are short. Comparing their centroid with a single
         embedding for a much longer command can reject the same speaker. Long
@@ -256,13 +256,18 @@ class SpeakerAuth:
                     raise ValueError("unsupported verification audio conversion")
                 return self._payload
 
-        return [
+        whole = self.embedding_from_speech_recognition_audio(
+            audio,
+            sample_rate=sample_rate,
+        )
+        windows = [
             self.embedding_from_speech_recognition_audio(
                 _WindowAudio(pcm[start : start + window_bytes]),
                 sample_rate=sample_rate,
             )
             for start in starts[:3]
         ]
+        return [whole, *windows]
 
     def _lazy_load_model(self):
         if self._model is not None:

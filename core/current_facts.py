@@ -59,10 +59,40 @@ def looks_like_current_fact_query(value: str) -> bool:
     if re.search(r"\b(?:latest|recent|recently|current|currently|today|tonight|news|headlines)\b", text):
         return True
     if re.search(r"\bwho won\b", text) and re.search(
-        r"\b(?:world cup|cup|championship|final|election|award|tournament)\b", text
+        r"\b(?:world\s*cup|cup|championship|final|election|award|tournament)\b",
+        text,
+    ):
+        return True
+    if re.search(r"\b(?:fifa|world\s*cup)\b", text) and re.search(
+        r"\b(?:winner|won|champion)\b", text
     ):
         return True
     return bool(re.search(r"\b(?:202[6-9]|203\d)\b", text))
+
+
+def looks_like_current_fact_followup(value: str) -> bool:
+    """Recognize a bounded follow-up that must reuse live verification."""
+
+    if not isinstance(value, str):
+        return False
+    text = " ".join(value.casefold().split())
+    return bool(
+        re.fullmatch(
+            r"(?:"
+            r"(?:are|were) you sure|"
+            r"(?:is|was) that (?:right|correct|true)|"
+            r"(?:did|has) (?:it|that) happen(?:ed)?|"
+            r"really|"
+            r"what was the score|"
+            r"when did (?:it|that) happen|"
+            r"where (?:was|did) (?:it|that)(?: happen)?|"
+            r"who did (?:they|he|she) beat|"
+            r"tell me more(?: about (?:it|that))?|"
+            r"what about (?:it|that|them)"
+            r")[?.!]*",
+            text,
+        )
+    )
 
 
 class CurrentFactsService:

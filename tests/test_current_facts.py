@@ -8,6 +8,7 @@ from core.current_facts import (
     CurrentFactsError,
     CurrentFactsService,
     current_facts_prompt,
+    looks_like_current_fact_followup,
     looks_like_current_fact_query,
 )
 
@@ -29,8 +30,27 @@ class FakeResponse:
 
 def test_current_query_recognizes_latest_winner_without_hard_coding_event():
     assert looks_like_current_fact_query("Who won the FIFA World Cup?")
+    assert looks_like_current_fact_query("FIFA Worldcup winner?")
     assert looks_like_current_fact_query("What's the latest news about India?")
     assert not looks_like_current_fact_query("Explain the offside rule")
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Are you sure?",
+        "Did it happen?",
+        "Who did they beat?",
+        "What was the score?",
+        "Tell me more about that",
+    ],
+)
+def test_current_fact_followups_require_live_reverification(query):
+    assert looks_like_current_fact_followup(query)
+
+
+def test_unrelated_turn_is_not_a_current_fact_followup():
+    assert not looks_like_current_fact_followup("Explain algebra")
 
 
 def test_service_parses_bounded_headlines_from_fixed_endpoint():
@@ -116,3 +136,38 @@ def test_orchestrator_fails_closed_when_live_current_fact_lookup_is_empty():
     assert orchestrator._get_ai_response("Who won the World Cup?").startswith(
         "I couldn't verify that with live public sources"
     )
+
+
+def test_orchestrator_reverifies_current_fact_followup(monkeypatch):
+    from core.current_facts import CurrentFactHeadline
+    from core.orchestrator import HIKARI_Orchestrator
+
+    searches = []
+    notes = []
+    frame = SimpleNamespace(slot=lambda name: "FIFA World Cup 2026 winner final")
+    orchestrator = HIKARI_Orchestrator.__new__(HIKARI_Orchestrator)
+    orchestrator._brain_v2_authority_enabled = lambda: False
+    orchestrator._latest_conversation_tool = lambda kind: frame
+    orchestrator._note_conversation_tool = lambda kind, **slots: notes.append((kind, slots))
+    orchestrator._public_current_facts_service = SimpleNamespace(
+        search=lambda query: searches.append(query)
+        or (CurrentFactHeadline("Verified final result", "Public source"),)
+    )
+    orchestrator.router = SimpleNamespace(generate=lambda **_kwargs: "Verified answer.")
+    orchestrator.personality = SimpleNamespace(
+        traits={"formality": 0.5, "verbosity": 0.5, "humor": 0.0},
+        get_prompt_context=lambda *_args, **_kwargs: "",
+    )
+    orchestrator.speaker = SimpleNamespace()
+    orchestrator._build_memory_first_context = lambda _query: ""
+    orchestrator._conversation_packet = lambda _query: SimpleNamespace(
+        messages=(), digest=""
+    )
+
+    reply = orchestrator._get_ai_response("Are you sure?", source="voice")
+
+    assert reply == "Verified answer."
+    assert searches == ["FIFA World Cup 2026 winner final"]
+    assert notes == [
+        ("current_facts", {"query": "FIFA World Cup 2026 winner final"})
+    ]

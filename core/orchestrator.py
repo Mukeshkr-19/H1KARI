@@ -57,6 +57,7 @@ from core.current_facts import (
     CurrentFactsError,
     CurrentFactsService,
     current_facts_prompt,
+    looks_like_current_fact_followup,
     looks_like_current_fact_query,
 )
 
@@ -1869,9 +1870,21 @@ class HIKARI_Orchestrator:
             )
 
         current_facts = looks_like_current_fact_query(user_input)
+        prior_current_facts = self._latest_conversation_tool("current_facts")
+        current_fact_followup = (
+            not current_facts
+            and prior_current_facts is not None
+            and looks_like_current_fact_followup(user_input)
+        )
         current_headlines = ()
-        if current_facts:
-            search_query = user_input
+        if current_facts or current_fact_followup:
+            search_query = (
+                prior_current_facts.slot("query")
+                if current_fact_followup and prior_current_facts is not None
+                else user_input
+            )
+            if not search_query:
+                return "I couldn't verify that with live public sources right now. Please try again."
             if re.search(r"\bwho won\b", user_input, re.IGNORECASE):
                 search_query = f"{user_input} {datetime.now().year} winner final"
             try:
@@ -1880,6 +1893,7 @@ class HIKARI_Orchestrator:
                 return "I couldn't verify that with live public sources right now. Please try again."
             if not current_headlines:
                 return "I couldn't verify that with live public sources right now. Please try again."
+            self._note_conversation_tool("current_facts", query=search_query)
 
         # Build context (speaker-aware; avoid leaking primary-only prefs to guests)
         persona_ctx = self.personality.get_prompt_context(
