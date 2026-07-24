@@ -19,6 +19,7 @@ _STRUCTURED_META_KEYS = (
     "relation",
     "organization",
     "location",
+    "birthplace",
     "place",
     "date_text",
     "preferred_name",

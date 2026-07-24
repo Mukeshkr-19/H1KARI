@@ -70,6 +70,23 @@ def extract_favorite_preference(text: str) -> Optional[tuple[str, str]]:
     return kind, value
 
 
+def extract_birthplace(text: str) -> Optional[str]:
+    """Extract an explicitly declared birthplace, including a common voice-STT form."""
+    patterns = (
+        r"\bi\s+was\s+born\s+(?:in|at)\s+([A-Za-z][A-Za-z\s,'-]{1,80})",
+        r"\b(?:1st|first)\s+born\s+(?:in|at)\s+([A-Za-z][A-Za-z\s,'-]{1,80})",
+        r"\bmy\s+birth\s*place\s+is\s+([A-Za-z][A-Za-z\s,'-]{1,80})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text or "", re.I)
+        if not match:
+            continue
+        place = " ".join(match.group(1).split()).strip(" ,.'")
+        if place:
+            return place
+    return None
+
+
 def infer_memory_type(
     statement: str,
     *,
@@ -113,6 +130,12 @@ def infer_memory_type(
     if m:
         meta["location"] = m.group(1).strip().rstrip(".")
         return MemoryTypeInference("location", 0.86, meta)
+
+    birthplace = extract_birthplace(text)
+    if birthplace:
+        meta["birthplace"] = birthplace
+        meta["normalized_statement"] = f"I was born in {birthplace}."
+        return MemoryTypeInference("birthplace", 0.88, meta)
 
     if re.search(r"\bi\s+prefer\b", low):
         return MemoryTypeInference("preference", 0.84, meta)

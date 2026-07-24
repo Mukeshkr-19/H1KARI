@@ -13,6 +13,7 @@ from core.brain_v2.candidate_quality import (
 )
 from core.brain_v2.candidate_scoring import annotate_and_rank_candidates, normalize_statement
 from core.brain_v2.memory_type import (
+    extract_birthplace,
     extract_favorite_preference,
     extract_owner_identity_names,
     infer_memory_type,
@@ -287,6 +288,17 @@ class EpisodeConsolidationPipeline:
                     "preference",
                     0.86,
                     {"preference_kind": kind, "preference_value": value},
+                )
+            )
+
+        birthplace = extract_birthplace(text)
+        if birthplace:
+            found.append(
+                (
+                    f"I was born in {birthplace}.",
+                    "birthplace",
+                    0.88,
+                    {"birthplace": birthplace},
                 )
             )
 

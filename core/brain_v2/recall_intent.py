@@ -15,6 +15,7 @@ INTENT_FAMILY_PERSON = "family_person"
 INTENT_RELATIONSHIP = "relationship"
 INTENT_PREFERENCE = "preference"
 INTENT_LOCATION = "location"
+INTENT_BIRTHPLACE = "birthplace"
 INTENT_CURRENT_LOCATION = "current_location"
 INTENT_TRAVEL = "travel"
 INTENT_PLAN = "plan"
@@ -39,6 +40,7 @@ PERSONAL_RECALL_INTENTS: FrozenSet[str] = frozenset(
         INTENT_RELATIONSHIP,
         INTENT_PREFERENCE,
         INTENT_LOCATION,
+        INTENT_BIRTHPLACE,
         INTENT_CURRENT_LOCATION,
         INTENT_TRAVEL,
         INTENT_PLAN,
@@ -92,6 +94,8 @@ def classify_recall_intent(query: str) -> str:
         return INTENT_RELATIONSHIP
     if _matches_preference(q):
         return INTENT_PREFERENCE
+    if _matches_birthplace(q):
+        return INTENT_BIRTHPLACE
     if _matches_current_location(q):
         return INTENT_CURRENT_LOCATION
     if _matches_stable_location(q):
@@ -168,7 +172,7 @@ def is_positive_brain_v2_recall_answer(text: Optional[str]) -> bool:
     if low.startswith("yes."):
         return True
     if re.search(
-        r"\b(?:live in|study|studies|bachelors?|degree|major|prefer|fav(?:ou?rite)?|graduat|"
+        r"\b(?:live in|born in|study|studies|bachelors?|degree|major|prefer|fav(?:ou?rite)?|graduat|"
         r"rising senior|meet|meeting|will be|"
         r"works?|worked|medical student|girlfriend|boyfriend|my sister|my brother|"
         r"my dad|my mom)\b",
@@ -655,6 +659,14 @@ def _matches_current_location(q: str) -> bool:
         re.search(r"\bwhere\s+am\s+i\s+(?:now|currently|right\s+now|today)\b", q)
         or re.search(r"\bwhere\s+am\s+i\s+at\b", q)
         or re.search(r"\bwhere\s+am\s+i\b", q)
+    )
+
+
+def _matches_birthplace(q: str) -> bool:
+    return bool(
+        re.search(r"\bwhere\s+was\s+i\s+born\b", q)
+        or re.search(r"\bwhat(?:'s|\s+is)\s+my\s+birth\s*place\b", q)
+        or re.search(r"\bwhere\s+is\s+my\s+birth\s*place\b", q)
     )
 
 

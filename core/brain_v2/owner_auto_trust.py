@@ -12,6 +12,7 @@ _TRUSTED_TYPES = frozenset(
     {
         "identity",
         "location",
+        "birthplace",
         "education",
         "preference",
         "plan",
@@ -70,7 +71,14 @@ def is_owner_scoped_auto_trust_candidate(
             return False
         return True
 
-    if ctype in ("identity", "location", "preference", "plan", "decision"):
+    if ctype in (
+        "identity",
+        "location",
+        "birthplace",
+        "preference",
+        "plan",
+        "decision",
+    ):
         return not (meta.get("relation") and ctype != "relation")
 
     return False

@@ -23,6 +23,7 @@ _PROFILE_SECTIONS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Plans / events", ("plan", "event")),
     ("Preferences", ("preference",)),
     ("Location", ("location",)),
+    ("Birthplace", ("birthplace",)),
     ("Current context", ("current_location",)),
     ("Travel", ("travel",)),
     ("HIKARI project decisions", ("decision",)),

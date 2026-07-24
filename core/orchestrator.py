@@ -1847,11 +1847,12 @@ class HIKARI_Orchestrator:
             re.fullmatch(
                 r"(?:please\s+)?(?:remember|save|store|add|had|put)\s+"
                 r"(?:this|that|it)(?:\s+(?:to|in)\s+(?:my\s+)?"
-                r"(?:memory|brain))?(?:\s+too)?",
+                r"(?:memory|brain)(?:\s+database)?)?(?:\s+too)?",
                 normalized,
             )
             or re.fullmatch(
-                r"(?:this|that|it)\s+to\s+(?:my\s+)?(?:memory|brain)(?:\s+too)?",
+                r"(?:this|that|it)\s+to\s+(?:my\s+)?(?:memory|brain)"
+                r"(?:\s+database)?(?:\s+too)?",
                 normalized,
             )
         )
@@ -1861,8 +1862,8 @@ class HIKARI_Orchestrator:
         """Never let a general model pretend it performed a reviewed Brain write."""
         low = " ".join((response or "").casefold().split())
         if re.search(
-            r"\b(?:i(?:'ll| will)\s+remember|"
-            r"i(?:'ve| have)\s+(?:saved|stored|updated)\b|"
+            r"\b(?:i(?:'ll| will)\s+(?:make\s+sure\s+to\s+)?remember|"
+            r"i(?:'ve| have)\s+(?:saved|stored|updated|added)\b|"
             r"(?:saved|stored)\s+(?:that|it)\s+(?:to|in)\s+"
             r"(?:your\s+)?(?:memory|brain)|updated\s+your\s+(?:memory|brain))",
             low,

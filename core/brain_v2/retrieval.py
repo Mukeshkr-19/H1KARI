@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from core.brain_v2.candidate_scoring import normalize_statement
 from core.brain_v2.episode_store import EpisodeStore
 from core.brain_v2.recall_intent import (
+    INTENT_BIRTHPLACE,
     INTENT_CURRENT_LOCATION,
     INTENT_EDUCATION,
     INTENT_FAMILY_PERSON,
@@ -64,7 +65,7 @@ _PROFILE_SECTIONS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("family / relationships", ("relation", "education")),
     ("plans / events", ("plan", "event")),
     ("preferences", ("preference",)),
-    ("locations / travel", ("location", "current_location", "travel")),
+    ("locations / travel", ("location", "birthplace", "current_location", "travel")),
     ("HIKARI project decisions", ("decision",)),
 )
 
@@ -318,6 +319,7 @@ class BrainV2Retrieval:
 
         if intent in (
             INTENT_IDENTITY_SELF,
+            INTENT_BIRTHPLACE,
             INTENT_FAMILY_PERSON,
             INTENT_RELATIONSHIP,
             INTENT_PREFERENCE,
@@ -346,6 +348,12 @@ class BrainV2Retrieval:
             identity_answer = self._answer_identity_self(query)
             if identity_answer:
                 return identity_answer
+
+        if intent == INTENT_BIRTHPLACE and semantic:
+            body = self._statement_from_hit(semantic[0])
+            match = re.search(r"\bi\s+was\s+born\s+in\s+(.+?)(?:\.|$)", body, re.I)
+            if match:
+                return f"You were born in {match.group(1).strip()}."
 
         if not semantic:
             if intent != "non_memory":
@@ -523,6 +531,10 @@ class BrainV2Retrieval:
         return str((mem.metadata or {}).get("candidate_type", "fact")) == "preference"
 
     @staticmethod
+    def _memory_matches_birthplace_intent(mem: SourceLinkedMemory) -> bool:
+        return str((mem.metadata or {}).get("candidate_type", "fact")) == "birthplace"
+
+    @staticmethod
     def _memory_matches_travel_intent(mem: SourceLinkedMemory) -> bool:
         return str((mem.metadata or {}).get("candidate_type", "fact")) == "travel"
 
@@ -622,6 +634,7 @@ class BrainV2Retrieval:
         accepted_by_id = self._accepted_by_memory_id()
         matchers = {
             INTENT_IDENTITY_SELF: self._memory_matches_identity_intent,
+            INTENT_BIRTHPLACE: self._memory_matches_birthplace_intent,
             INTENT_FAMILY_PERSON: self._memory_matches_relation_intent,
             INTENT_RELATIONSHIP: self._memory_matches_relation_intent,
             INTENT_PREFERENCE: self._memory_matches_preference_intent,
@@ -791,6 +804,7 @@ class BrainV2Retrieval:
             INTENT_RELATIONSHIP: ("relation", 0.22),
             INTENT_EDUCATION: ("education", 0.26),
             INTENT_PREFERENCE: ("preference", 0.24),
+            INTENT_BIRTHPLACE: ("birthplace", 0.26),
             INTENT_LOCATION: ("location", 0.24),
             INTENT_CURRENT_LOCATION: ("current_location", 0.26),
             INTENT_TRAVEL: ("travel", 0.22),

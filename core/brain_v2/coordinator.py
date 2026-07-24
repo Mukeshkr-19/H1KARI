@@ -137,7 +137,7 @@ class BrainV2Coordinator:
         if not candidate:
             return {"status": "not_candidate"} if not candidates else {"status": "pending_review"}
 
-        singleton_types = {"identity", "location", "education"}
+        singleton_types = {"identity", "location", "birthplace", "education"}
 
         active_same_type = [
             memory

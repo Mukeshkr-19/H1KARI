@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 from core.brain_v2.recall_intent import (
+    INTENT_BIRTHPLACE,
     INTENT_CURRENT_LOCATION,
     INTENT_EDUCATION,
     INTENT_GENERAL_MEMORY,
@@ -51,6 +52,12 @@ def format_no_reviewed_memory_reply(query: str, intent: str | None = None) -> st
         return (
             "I don't have a reviewed memory for where you live yet. "
             "Tell me in your own words, for example: I live in City Z."
+        )
+
+    if label == INTENT_BIRTHPLACE:
+        return (
+            "I don't have a reviewed memory for where you were born yet. "
+            "You can say: I was born in City Z."
         )
 
     if label == INTENT_CURRENT_LOCATION:

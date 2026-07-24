@@ -326,13 +326,51 @@ def test_unresolved_anaphoric_memory_command_never_claims_a_write(episode_db):
 def test_general_model_cannot_claim_an_unverified_memory_write(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
-    orch._get_ai_response.return_value = "I've updated your brain and saved that."
+    orch._get_ai_response.return_value = (
+        "I've added that to your brain database and I'll make sure to remember it."
+    )
 
     reply = orch.process_input("Maybe that could matter later.")
 
     assert "haven't saved" in reply.lower()
-    assert "updated your brain" not in reply.lower()
+    assert "added that" not in reply.lower()
     assert not episode_db.get_active_accepted_memories(limit=10)
+
+
+def test_voice_stt_birthplace_is_saved_and_recalled(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    reply = orch.process_input("1st born in Tirupati, India", source="voice")
+    answer = orch.process_input("Where was I born?", source="voice")
+
+    assert "got it" in reply.lower()
+    assert answer == "You were born in Tirupati, India."
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    assert len(accepted) == 1
+    assert (accepted[0].metadata or {}).get("candidate_type") == "birthplace"
+    assert (accepted[0].metadata or {}).get("birthplace") == "Tirupati, India"
+
+
+def test_brain_database_anaphoric_command_resolves_birthplace(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(
+        scope,
+        "I was born in Tirupati, India.",
+        "Thanks for telling me.",
+    )
+
+    reply = orch.process_input(
+        "add that to my brain database.", source="voice", context=context
+    )
+
+    assert "got it" in reply.lower()
+    assert coord.try_answer_from_accepted_memories("Where was I born?") == (
+        "You were born in Tirupati, India."
+    )
 
 
 def test_bare_dislike_auto_trusted(episode_db):
