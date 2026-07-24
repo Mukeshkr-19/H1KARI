@@ -45,7 +45,7 @@ except Exception:
 
 from core.daily_logs import maybe_rotate_daily_log
 from core.runtime_paths import legacy_data_dir
-from core.voice_config import tts_rate
+from core.voice_config import tts_rate, tts_voice_name
 
 WAKE_WORD = "hikari"
 STOP_WORDS = [
@@ -317,9 +317,8 @@ def _terminate_speech_process(process) -> None:
 def _wait_for_speech_or_owner_interrupt(process) -> bool:
     """Return True when the verified owner speaks over active speech.
 
-    Natural barge-in should not depend on an exact transcript.  The owner may
-    say "stop", correct HIKARI, or immediately ask a follow-up; any verified
-    owner speech stops playback first.
+    Barge-in requires an explicit interruption phrase. This prevents HIKARI's
+    own speaker output from being mistaken for the owner's next command.
     """
     if sr is None or r is None:
         process.wait()
@@ -333,7 +332,7 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                 except (sr.WaitTimeoutError, sr.UnknownValueError):
                     continue
                 text = recognize_audio(audio, short_utterance=True)
-                if not text:
+                if not text or not _is_speech_interrupt(text):
                     continue
                 if not verify_speaker(audio, announce=False):
                     continue
@@ -370,7 +369,7 @@ def _start_speech_process(text: str):
                 [
                     "/usr/bin/afplay",
                     "-r",
-                    f"{tts_rate() / 170:.3f}",
+                    f"{tts_rate() / 185:.3f}",
                     output,
                 ],
                 stdout=subprocess.DEVNULL,
@@ -386,7 +385,7 @@ def _start_speech_process(text: str):
             )
 
     process = subprocess.Popen(
-        ["say", "-r", str(tts_rate()), text],
+        ["/usr/bin/say", "-v", tts_voice_name(), "-r", str(tts_rate()), text],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

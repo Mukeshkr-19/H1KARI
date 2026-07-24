@@ -245,7 +245,14 @@ def test_macos_say_adapter_uses_argv_list(monkeypatch):
 
     assert len(captured) == 1
     args, kwargs = captured[0]
-    assert args == ["/usr/bin/say", "-r", "170", "hello world"]
+    assert args == [
+        "/usr/bin/say",
+        "-v",
+        "Samantha",
+        "-r",
+        "185",
+        "hello world",
+    ]
     assert kwargs.get("shell") is False
 
 

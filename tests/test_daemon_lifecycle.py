@@ -186,7 +186,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     assert daemon.hikari_state == daemon.HikariState.ACTIVE
 
 
-def test_verified_owner_follow_up_also_interrupts_without_exact_stop_word(monkeypatch):
+def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.daemon_running = True
@@ -195,18 +195,20 @@ def test_verified_owner_follow_up_also_interrupts_without_exact_stop_word(monkey
         "recognize_audio",
         lambda _audio, *, short_utterance=False: "actually tell me the weather",
     )
-    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio, **_kwargs: True)
+    verify = MagicMock(return_value=True)
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
 
     process = MagicMock()
     process.poll.side_effect = [None, 0]
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is True
-    process.terminate.assert_called_once_with()
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    process.terminate.assert_not_called()
+    verify.assert_not_called()
 
 
 def test_pocket_tts_process_uses_temporary_wav_and_cleans_it(monkeypatch, tmp_path):
     monkeypatch.setenv("HIKARI_TTS_BACKEND", "pocket-tts")
-    monkeypatch.setenv("HIKARI_TTS_RATE", "170")
+    monkeypatch.setenv("HIKARI_TTS_RATE", "185")
 
     adapter = daemon.PocketTTSAdapter()
 

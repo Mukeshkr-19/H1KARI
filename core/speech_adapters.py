@@ -341,8 +341,8 @@ class GoogleSpeechRecognitionSTTAdapter:
 class MacOSSayTTSAdapter:
     """macOS ``say`` TTS adapter using subprocess with an argv list."""
 
-    def __init__(self, *, rate: Optional[int] = None) -> None:
-        self._voice: Optional[str] = None
+    def __init__(self, *, rate: Optional[int] = None, voice: Optional[str] = None) -> None:
+        self._voice = voice or tts_voice_name()
         self._rate = tts_rate() if rate is None else max(120, min(220, int(rate)))
 
     def is_available(self) -> bool:
@@ -372,7 +372,7 @@ class MacOSSayTTSAdapter:
             raise SpeechBackendUnavailable("say executable not found")
         try:
             subprocess.run(
-                [say_path, "-r", str(self._rate), clean],
+                [say_path, "-v", self._voice, "-r", str(self._rate), clean],
                 shell=False,
                 check=True,
                 capture_output=True,
@@ -391,7 +391,7 @@ class PocketTTSAdapter:
     """
 
     def __init__(self, *, voice: Optional[str] = None) -> None:
-        self._voice = voice or tts_voice_name()
+        self._voice = voice or tts_voice_name(default="alba")
         self._model = None
         self._voice_state = None
 

@@ -115,12 +115,13 @@ Normal text mode hides internal startup and routing logs. Add `--verbose` only w
 
 Speaker enrollment stores local voice-auth data under ignored runtime paths. Do not push it.
 
-The daemon uses a comfortable 170-words-per-minute speaking rate by default.
+The daemon uses the local Samantha voice at a comfortable 185 words per minute
+by default, with no model-generation delay.
 You can choose any bounded rate from 120 through 220 in the ignored private
 environment file:
 
 ```text
-HIKARI_TTS_RATE=170
+HIKARI_TTS_RATE=185
 ```
 
 macOS `say` remains the zero-download fallback. For the optional free, local
