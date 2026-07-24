@@ -15,6 +15,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import ClassVar, Optional, Protocol, runtime_checkable
 
@@ -43,6 +44,49 @@ class SynthesisError(SpeechAdapterError):
 
 class InvalidAudioError(SpeechAdapterError):
     """Raised when captured audio metadata or payload is unusable."""
+
+
+def prepare_spoken_text(text: str) -> str:
+    """Return plain, speakable prose without changing sentence content.
+
+    Model replies can contain Markdown, links, and emoji that are useful on a
+    screen but distracting when spoken.  Keep ordinary Unicode letters,
+    numbers, mathematical notation, punctuation, and complete sentences while
+    removing presentation-only syntax and pictographs.
+    """
+
+    if not isinstance(text, str):
+        raise SynthesisError("speech text must be a string")
+    clean = re.sub(r"```(?:[^\n]*)\n?(.*?)```", r" \1 ", text, flags=re.DOTALL)
+    clean = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r" \1 ", clean)
+    clean = re.sub(r"\[([^\]]+)\]\([^)]*\)", r" \1 ", clean)
+    clean = re.sub(r"https?://\S+|www\.\S+", " ", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"\[\[[^\]\r\n]{0,100}\]\]", " ", clean)
+    clean = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)", "", clean)
+    clean = clean.replace("`", "").replace("**", "").replace("__", "")
+    clean = clean.replace("*", "").replace("_", " ").replace("~", "")
+    # macOS voices support bracketed inline control commands. Model output is
+    # prose, never a trusted speech-control program.
+    clean = clean.replace("[", "").replace("]", "")
+
+    spoken: list[str] = []
+    for char in clean:
+        codepoint = ord(char)
+        category = unicodedata.category(char)
+        if category in {"Cf", "Cs", "Co", "Sk"}:
+            continue
+        if category == "So" and codepoint >= 0x2000:
+            continue
+        if 0x1F1E6 <= codepoint <= 0x1F1FF or 0x1F300 <= codepoint <= 0x1FAFF:
+            continue
+        if codepoint < 32 and char not in {"\n", "\t"}:
+            continue
+        if codepoint == 127:
+            continue
+        spoken.append(char)
+
+    result = " ".join("".join(spoken).split())
+    return re.sub(r"\s+([,.;:!?])", r"\1", result)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -264,8 +308,8 @@ class FasterWhisperSTTAdapter:
             # the daemon boundary.
             options.update(
                 condition_on_previous_text=False,
-                hotwords="HIKARI stop quiet",
-                initial_prompt="HIKARI. Stop. Be quiet.",
+                hotwords="HIKARI stop quiet enough pause",
+                initial_prompt="HIKARI. Stop. Be quiet. Enough. Pause.",
                 no_speech_threshold=None,
                 without_timestamps=True,
             )
@@ -355,11 +399,8 @@ class MacOSSayTTSAdapter:
         return shutil.which("say")
 
     def _sanitize_text(self, text: str) -> str:
-        """Remove characters that could be interpreted by the speech engine.
-
-        Keeps alphanumerics, common punctuation, and whitespace.
-        """
-        return re.sub(r"[^\w\s:,.!?]", "", text)
+        """Convert display-oriented output into complete spoken prose."""
+        return prepare_spoken_text(text)
 
     def synthesize(self, text: str) -> None:
         if not self.is_available():
@@ -421,7 +462,7 @@ class PocketTTSAdapter:
     def render_wav(self, text: str, output: str | os.PathLike[str]) -> None:
         """Render one utterance to a caller-owned temporary WAV path."""
 
-        clean = re.sub(r"[^\w\s:,.!?']", "", text)
+        clean = prepare_spoken_text(text)
         if not clean.strip():
             raise SynthesisError("No speakable text after sanitization")
         model, voice_state = self._load()

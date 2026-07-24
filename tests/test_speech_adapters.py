@@ -17,6 +17,7 @@ from core.speech_adapters import (
     GoogleSpeechRecognitionSTTAdapter,
     InvalidAudioError,
     MacOSSayTTSAdapter,
+    prepare_spoken_text,
     OpenAIWhisperSTTAdapter,
     SpeechBackendUnavailable,
     SynthesisError,
@@ -219,8 +220,28 @@ def test_macos_say_adapter_unavailable_on_non_darwin():
 
 def test_macos_say_adapter_sanitizes_text():
     adapter = MacOSSayTTSAdapter()
-    assert adapter._sanitize_text("hello; $(world)") == "hello world"
-    assert adapter._sanitize_text("say 'this'") == "say this"
+    assert adapter._sanitize_text("hello; $(world)") == "hello; $(world)"
+    assert adapter._sanitize_text("say 'this'") == "say 'this'"
+
+
+def test_prepare_spoken_text_removes_display_markup_and_emoji_without_truncating():
+    reply = "## Result 🏆\nSpain won **1–0** after extra time. [Read more](https://example.com)."
+
+    spoken = prepare_spoken_text(reply)
+
+    assert spoken == "Result Spain won 1–0 after extra time. Read more."
+    assert "🏆" not in spoken
+    assert "https://" not in spoken
+
+
+def test_prepare_spoken_text_preserves_math_and_complete_sentences():
+    reply = "The formula is (a + b)² = a² + 2ab + b². It is 32°C. That is the full identity."
+
+    assert prepare_spoken_text(reply) == reply
+
+
+def test_prepare_spoken_text_removes_inline_speech_control_syntax():
+    assert prepare_spoken_text("Hello [[rate 400]] there.") == "Hello there."
 
 
 def test_macos_say_adapter_refuses_empty_text():
@@ -307,8 +328,8 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
         "language": "en",
         "beam_size": 1,
         "condition_on_previous_text": False,
-        "hotwords": "HIKARI stop quiet",
-        "initial_prompt": "HIKARI. Stop. Be quiet.",
+        "hotwords": "HIKARI stop quiet enough pause",
+        "initial_prompt": "HIKARI. Stop. Be quiet. Enough. Pause.",
         "no_speech_threshold": None,
         "without_timestamps": True,
     }

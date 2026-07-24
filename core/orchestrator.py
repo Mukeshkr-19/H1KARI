@@ -53,6 +53,12 @@ from core.location_service import (
     extract_weather_location,
 )
 from core.time_queries import answer_time_query
+from core.current_facts import (
+    CurrentFactsError,
+    CurrentFactsService,
+    current_facts_prompt,
+    looks_like_current_fact_query,
+)
 
 if TYPE_CHECKING:
     from core.brain import HikariBrain
@@ -1181,10 +1187,7 @@ class HIKARI_Orchestrator:
             self._note_conversation_tool("weather", location=weather_location)
             return weather.to_text()
 
-        if "news" in lowered or "headline" in lowered:
-            return "News headlines are disabled until their network policy adapter is approved."
-
-        if lowered.startswith(("search ", "find ", "look up ")):
+        if lowered.startswith(("search ", "find ", "look up ")) and not looks_like_current_fact_query(lowered):
             return "Web search is disabled until its network policy adapter is approved."
 
         # Status command
@@ -1237,6 +1240,13 @@ class HIKARI_Orchestrator:
         if service is None:
             service = LocationService()
             self._public_location_service = service
+        return service
+
+    def _current_facts_service(self) -> CurrentFactsService:
+        service = getattr(self, "_public_current_facts_service", None)
+        if service is None:
+            service = CurrentFactsService()
+            self._public_current_facts_service = service
         return service
 
     def _resolve_time_location(self, place: str) -> Optional[tuple[str, str]]:
@@ -1858,6 +1868,19 @@ class HIKARI_Orchestrator:
                 user_input
             )
 
+        current_facts = looks_like_current_fact_query(user_input)
+        current_headlines = ()
+        if current_facts:
+            search_query = user_input
+            if re.search(r"\bwho won\b", user_input, re.IGNORECASE):
+                search_query = f"{user_input} {datetime.now().year} winner final"
+            try:
+                current_headlines = self._current_facts_service().search(search_query)
+            except CurrentFactsError:
+                return "I couldn't verify that with live public sources right now. Please try again."
+            if not current_headlines:
+                return "I couldn't verify that with live public sources right now. Please try again."
+
         # Build context (speaker-aware; avoid leaking primary-only prefs to guests)
         persona_ctx = self.personality.get_prompt_context(
             self.speaker,
@@ -1872,6 +1895,9 @@ class HIKARI_Orchestrator:
         memory_context = self._build_memory_first_context(user_input)
         if memory_context:
             context += f"{memory_context}\n\n"
+
+        if current_headlines:
+            context += f"{current_facts_prompt(current_headlines)}\n\n"
 
         conversation_packet = self._conversation_packet(user_input)
 
@@ -1890,7 +1916,11 @@ class HIKARI_Orchestrator:
             else
             "You are currently responding in a text conversation."
         )
+        current_date = datetime.now().strftime("%A, %B %-d, %Y")
         system_prompt = f"""You are HIKARI, a helpful AI assistant.
+The current local date is {current_date}. Events before this date are in the past.
+For current-event questions, use only supplied live public-source context. Never use
+training-cutoff assumptions to claim that a past event has not happened.
 Your assistant name is HIKARI. If asked your name or who you are, answer as HIKARI.
 Do not answer self-identity questions with the underlying model provider or model name.
 {channel_rules}

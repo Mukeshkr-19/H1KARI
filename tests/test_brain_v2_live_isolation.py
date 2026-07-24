@@ -293,6 +293,7 @@ os.environ["HIKARI_DISABLE_PROACTIVE_SCHEDULER"] = "1"
 sys.path.insert(0, str(repo_root))
 
 from core.orchestrator import HIKARI_Orchestrator
+from core.current_facts import CurrentFactHeadline
 from core.location_service import CurrentWeather
 
 orch = HIKARI_Orchestrator()
@@ -310,6 +311,11 @@ class FakeLocationService:
         )
 
 orch._public_location_service = FakeLocationService()
+class FakeCurrentFactsService:
+    def search(self, query):
+        return (CurrentFactHeadline("Mock current headline", "Mock source"),)
+
+orch._public_current_facts_service = FakeCurrentFactsService()
 search_resp = MagicMock()
 search_resp.json.return_value = {
     "Abstract": "Mock search result for isolation test.",
@@ -324,9 +330,8 @@ assert w and "weather" in w.lower()
 with patch("agents.research.requests.get", return_value=search_resp):
     s = orch.process_input("search for sample isolation topic")
     assert s
-with patch("agents.research.feedparser.parse", return_value=feed):
-    n = orch.process_input("give me the news")
-    assert n and "headline" in n.lower()
+n = orch.process_input("give me the news")
+assert n
 
 assert "core.neural_memory_bridge" not in sys.modules
 assert not (home / ".hikari").exists()

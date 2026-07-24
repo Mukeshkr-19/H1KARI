@@ -30,6 +30,7 @@ sys.path.insert(0, _REPO_ROOT)
 from core.speech_adapters import (
     CapturedAudio,
     PocketTTSAdapter,
+    prepare_spoken_text,
     SpeechAdapterError,
     build_tts_adapter,
     build_stt_adapter,
@@ -243,9 +244,9 @@ def initialize_audio_backends() -> bool:
         r = sr.Recognizer()
         r.energy_threshold = 200
         r.dynamic_energy_threshold = True
-        # End a captured phrase promptly after the owner stops speaking.  The
-        # previous 1.5-second pause made every voice turn feel sluggish.
-        r.pause_threshold = 0.8
+        # Preserve natural pauses inside a sentence without returning to the
+        # old 1.5-second delay after every completed request.
+        r.pause_threshold = 1.1
         r.phrase_time_limit = 10
         r.non_speaking_duration = 0.5
         backend_name = _get_configured_stt_backend()
@@ -288,14 +289,23 @@ def recognize_audio(audio, *, short_utterance: bool = False):
 
 
 def _is_speech_interrupt(text: str) -> bool:
-    """Match a short explicit barge-in command without substring guesses."""
+    """Match an explicit barge-in command, including overlapped transcripts."""
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    if not normalized:
+        return False
+    words = normalized.split()
+    if len(words) > 12:
+        words = words[-12:]
+    tail = " ".join(words)
     return bool(
-        re.fullmatch(
-            r"(?:hikari )?(?:please )?(?:stop(?: talking)?|be quiet|quiet)(?: please)?",
-            normalized,
+        re.search(
+            r"(?:^| )(?:hikari )?(?:please )?"
+            r"(?:stop(?: talking)?|be quiet|quiet|enough|pause)"
+            r"(?: please)?$",
+            tail,
         )
-        or normalized == "stop hikari"
+        or tail.endswith(" stop hikari")
+        or tail == "stop hikari"
     )
 
 
@@ -349,6 +359,9 @@ def _start_speech_process(text: str):
     """Start the selected local backend and return process plus cleanup."""
 
     global _local_tts_adapter
+    text = prepare_spoken_text(text)
+    if not text:
+        raise SpeechAdapterError("no speakable response")
     backend = (os.getenv("HIKARI_TTS_BACKEND") or "macos-say").strip()
     if backend == "pocket-tts":
         temp_dir = None

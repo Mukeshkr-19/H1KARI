@@ -397,6 +397,12 @@ def test_speech_interrupt_accepts_short_explicit_variants_only():
         assert daemon._is_speech_interrupt(phrase) is False
 
 
+def test_speech_interrupt_accepts_command_at_end_of_overlapped_transcript():
+    assert daemon._is_speech_interrupt("the speaker output overlaps then Hikari stop")
+    assert daemon._is_speech_interrupt("I have heard enough")
+    assert daemon._is_speech_interrupt("please pause")
+
+
 def test_check_enrollment_is_silent(monkeypatch, capsys):
     monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
     monkeypatch.setattr(
