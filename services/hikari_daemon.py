@@ -291,25 +291,32 @@ def recognize_audio(audio, *, short_utterance: bool = False):
         return ""
 
 
-def _is_speech_interrupt(text: str) -> bool:
-    """Match an explicit barge-in command, including overlapped transcripts."""
+def _speech_interrupt_mode(text: str) -> str | None:
+    """Classify only deliberate stop commands, never transcript fragments."""
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    if not normalized:
-        return False
-    words = normalized.split()
-    if len(words) > 12:
-        words = words[-12:]
-    tail = " ".join(words)
-    return bool(
-        re.search(
-            r"(?:^| )(?:hikari )?(?:please )?"
-            r"(?:stop(?: talking)?|be quiet|quiet|enough|pause)"
-            r"(?: please)?$",
-            tail,
-        )
-        or tail.endswith(" stop hikari")
-        or tail == "stop hikari"
-    )
+    if normalized in {
+        "hikari stop",
+        "hikari stop talking",
+        "hikari done",
+        "hikari be quiet",
+        "stop hikari",
+    }:
+        return "wake_explicit"
+    if normalized in {
+        "stop",
+        "please stop",
+        "stop talking",
+        "done",
+        "i am done",
+        "im done",
+        "be quiet",
+    }:
+        return "owner_verified"
+    return None
+
+
+def _is_speech_interrupt(text: str) -> bool:
+    return _speech_interrupt_mode(text) is not None
 
 
 def _terminate_speech_process(process) -> None:
@@ -342,7 +349,10 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                 except (sr.WaitTimeoutError, sr.UnknownValueError):
                     continue
                 text = recognize_audio(audio, short_utterance=True)
-                if not text or not _is_speech_interrupt(text):
+                mode = _speech_interrupt_mode(text)
+                if mode is None:
+                    continue
+                if mode == "owner_verified" and not verify_speaker(audio, announce=False):
                     continue
                 _terminate_speech_process(process)
                 print("[DAEMON] Speech interrupted by explicit local command", flush=True)

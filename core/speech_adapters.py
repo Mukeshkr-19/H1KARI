@@ -308,8 +308,8 @@ class FasterWhisperSTTAdapter:
             # the daemon boundary.
             options.update(
                 condition_on_previous_text=False,
-                hotwords="HIKARI stop quiet enough pause",
-                initial_prompt="HIKARI. Stop. Be quiet. Enough. Pause.",
+                hotwords="HIKARI stop done",
+                initial_prompt="HIKARI. Stop. Done.",
                 no_speech_threshold=None,
                 without_timestamps=True,
             )

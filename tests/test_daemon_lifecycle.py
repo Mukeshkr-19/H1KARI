@@ -153,7 +153,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     monkeypatch.setattr(
         daemon,
         "recognize_audio",
-        lambda _audio, *, short_utterance=False: "stop talking",
+        lambda _audio, *, short_utterance=False: "hikari stop",
     )
     verify = MagicMock(return_value=False)
     monkeypatch.setattr(daemon, "verify_speaker", verify)
@@ -243,7 +243,7 @@ def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
     monkeypatch.setattr(
         daemon,
         "recognize_audio",
-        lambda _audio, *, short_utterance=False: "stop",
+        lambda _audio, *, short_utterance=False: "hikari stop",
     )
     verify = MagicMock(return_value=False)
     monkeypatch.setattr(daemon, "verify_speaker", verify)
@@ -268,6 +268,26 @@ def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
     assert daemon._wait_for_speech_or_owner_interrupt(process) is True
     assert process.terminated is True
     verify.assert_not_called()
+
+
+def test_bare_stop_requires_owner_verification(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.daemon_running = True
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "stop",
+    )
+    verify = MagicMock(return_value=False)
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
+
+    process = MagicMock()
+    process.poll.side_effect = [None, 0]
+
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    verify.assert_called_once()
+    process.terminate.assert_not_called()
 
 
 def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
@@ -414,8 +434,8 @@ def test_speech_interrupt_accepts_short_explicit_variants_only():
         "stop",
         "please stop",
         "stop talking",
-        "Hikari, please stop talking",
-        "be quiet please",
+        "Hikari stop talking",
+        "done",
     ):
         assert daemon._is_speech_interrupt(phrase) is True
 
@@ -427,10 +447,10 @@ def test_speech_interrupt_accepts_short_explicit_variants_only():
         assert daemon._is_speech_interrupt(phrase) is False
 
 
-def test_speech_interrupt_accepts_command_at_end_of_overlapped_transcript():
-    assert daemon._is_speech_interrupt("the speaker output overlaps then Hikari stop")
-    assert daemon._is_speech_interrupt("I have heard enough")
-    assert daemon._is_speech_interrupt("please pause")
+def test_speech_interrupt_rejects_overlapped_output_and_noise_fragments():
+    assert daemon._is_speech_interrupt("the speaker output overlaps then Hikari stop") is False
+    assert daemon._is_speech_interrupt("I have heard enough") is False
+    assert daemon._is_speech_interrupt("please pause") is False
 
 
 def test_check_enrollment_is_silent(monkeypatch, capsys):

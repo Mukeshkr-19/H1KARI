@@ -18,7 +18,7 @@ def test_tts_rate_is_bounded_and_invalid_values_fail_safe(monkeypatch):
 
 
 def test_tts_voice_accepts_only_a_preset_name_not_a_path(monkeypatch):
-    monkeypatch.setenv("HIKARI_TTS_VOICE", "Karen")
-    assert tts_voice_name() == "Karen"
+    monkeypatch.setenv("HIKARI_TTS_VOICE", "Samantha")
+    assert tts_voice_name() == "Samantha"
     monkeypatch.setenv("HIKARI_TTS_VOICE", "/private/voice.wav")
-    assert tts_voice_name() == "Karen"
+    assert tts_voice_name() == "Samantha"

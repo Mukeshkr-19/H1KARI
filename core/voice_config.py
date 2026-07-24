@@ -9,7 +9,7 @@ import re
 DEFAULT_TTS_RATE = 185
 MIN_TTS_RATE = 120
 MAX_TTS_RATE = 220
-DEFAULT_TTS_VOICE = "Karen"
+DEFAULT_TTS_VOICE = "Samantha"
 _VOICE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 
 
