@@ -16,7 +16,7 @@ import json
 import os
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from core.runtime_paths import legacy_data_dir
 from core.voice_status import SPEECHBRAIN_ECAPA_REVISION
@@ -139,6 +139,20 @@ class SpeakerAuth:
             reason="ok" if accepted else "below_threshold",
         )
 
+    def verify_embeddings(self, embeddings: List[List[float]]) -> VerifyResult:
+        """Verify bounded windows and accept only an actual matching window."""
+
+        if not embeddings:
+            return VerifyResult(False, 0.0, self.threshold, "empty_embedding")
+        results = [self.verify_embedding(embedding) for embedding in embeddings[:3]]
+        best = max(results, key=lambda result: result.score)
+        return VerifyResult(
+            ok=best.ok,
+            score=best.score,
+            threshold=best.threshold,
+            reason="ok_window" if best.ok else best.reason,
+        )
+
     def embedding_from_speech_recognition_audio(
         self, audio, *, sample_rate: int = 16000
     ) -> List[float]:
@@ -166,6 +180,46 @@ class SpeakerAuth:
             emb = self._model.encode_batch(waveform)
         emb = emb.squeeze(0).squeeze(0).cpu().numpy()
         return [float(x) for x in emb.tolist()]
+
+    def verification_embeddings_from_speech_recognition_audio(
+        self,
+        audio,
+        *,
+        sample_rate: int = 16000,
+    ) -> List[List[float]]:
+        """Create at most three representative embeddings for one utterance.
+
+        Enrollment phrases are short. Comparing their centroid with a single
+        embedding for a much longer command can reject the same speaker. Long
+        utterances are therefore sampled at the beginning, middle, and end;
+        raw audio remains transient and is never written to disk.
+        """
+
+        pcm = audio.get_raw_data(convert_rate=sample_rate, convert_width=2)
+        bytes_per_second = sample_rate * 2
+        window_bytes = bytes_per_second * 2
+        if len(pcm) <= window_bytes + bytes_per_second // 2:
+            return [self.embedding_from_speech_recognition_audio(audio, sample_rate=sample_rate)]
+
+        last = len(pcm) - window_bytes
+        starts = sorted({0, max(0, last // 2), last})
+
+        class _WindowAudio:
+            def __init__(self, payload: bytes) -> None:
+                self._payload = payload
+
+            def get_raw_data(self, *, convert_rate: int, convert_width: int) -> bytes:
+                if convert_rate != sample_rate or convert_width != 2:
+                    raise ValueError("unsupported verification audio conversion")
+                return self._payload
+
+        return [
+            self.embedding_from_speech_recognition_audio(
+                _WindowAudio(pcm[start : start + window_bytes]),
+                sample_rate=sample_rate,
+            )
+            for start in starts[:3]
+        ]
 
     def _lazy_load_model(self):
         if self._model is not None:

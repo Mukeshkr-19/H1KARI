@@ -142,7 +142,7 @@ def test_verified_wake_phrase_enters_active_state(monkeypatch):
     daemon._listen_for_wake_word()
 
     assert daemon.hikari_state == daemon.HikariState.ACTIVE
-    speak.assert_called_once_with("Go ahead!")
+    speak.assert_called_once_with("Yes?", allow_interrupt=False)
 
 
 def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
@@ -377,6 +377,36 @@ def test_wake_phrase_requires_explicit_hikari_form():
     assert daemon._is_wake_phrase("Hey, HIKARI!") is True
     assert daemon._is_wake_phrase("heck") is False
     assert daemon._is_wake_phrase("this has hikar somewhere") is False
+
+
+def test_wake_command_can_share_the_verified_owner_utterance():
+    assert daemon._extract_wake_command("Hikari, who won the final?") == "who won the final?"
+    assert daemon._extract_wake_command("Hey Hikari tell me the weather") == "tell me the weather"
+    assert daemon._extract_wake_command("this mentions hikari later") is None
+
+
+def test_verified_same_utterance_wake_command_is_processed_without_second_auth(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.LISTENING
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "hikari what time is it",
+    )
+    verify = MagicMock(return_value=True)
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
+    process = MagicMock(return_value="It is noon.")
+    monkeypatch.setattr(daemon, "process", process)
+    speak = MagicMock()
+    monkeypatch.setattr(daemon, "speak", speak)
+    monkeypatch.setattr(daemon, "log_convo", MagicMock())
+
+    daemon._listen_for_wake_word()
+
+    verify.assert_called_once()
+    process.assert_called_once_with("what time is it")
+    speak.assert_called_once_with("It is noon.")
 
 
 def test_speech_interrupt_accepts_short_explicit_variants_only():

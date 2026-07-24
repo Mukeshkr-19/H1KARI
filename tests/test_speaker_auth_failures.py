@@ -35,6 +35,40 @@ def test_enrollment_round_trip_and_owner_only_permissions(private_paths):
     assert stat.S_IMODE(enrollment.stat().st_mode) == 0o600
 
 
+def test_bounded_window_verification_uses_best_owner_match(private_paths):
+    auth = speaker_auth.SpeakerAuth(threshold=0.5)
+    auth.enroll_from_embeddings([[1.0, 0.0]])
+
+    result = auth.verify_embeddings([[0.0, 1.0], [0.9, 0.1], [-1.0, 0.0]])
+
+    assert result.ok is True
+    assert result.reason == "ok_window"
+    assert result.score > 0.5
+
+
+def test_verification_windows_are_bounded_and_cover_long_utterance(private_paths, monkeypatch):
+    auth = speaker_auth.SpeakerAuth()
+    payloads = []
+
+    def embed(audio, *, sample_rate=16000):
+        payload = audio.get_raw_data(convert_rate=sample_rate, convert_width=2)
+        payloads.append(payload)
+        return [float(payload[0]), 1.0]
+
+    monkeypatch.setattr(auth, "embedding_from_speech_recognition_audio", embed)
+
+    class Audio:
+        def get_raw_data(self, *, convert_rate, convert_width):
+            assert (convert_rate, convert_width) == (16000, 2)
+            return b"\x01" * 64_000 + b"\x02" * 64_000 + b"\x03" * 64_000
+
+    embeddings = auth.verification_embeddings_from_speech_recognition_audio(Audio())
+
+    assert len(embeddings) == 3
+    assert all(len(payload) == 64_000 for payload in payloads)
+    assert [payload[0] for payload in payloads] == [1, 2, 3]
+
+
 def test_default_threshold_matches_speechbrain_verifier_boundary(private_paths):
     auth = speaker_auth.SpeakerAuth()
 

@@ -193,10 +193,13 @@ def verify_speaker(audio, *, announce: bool = True) -> bool:
         return False
 
     try:
-        emb = auth.embedding_from_speech_recognition_audio(audio)
-        res = auth.verify_embedding(emb)
+        embeddings = auth.verification_embeddings_from_speech_recognition_audio(audio)
+        res = auth.verify_embeddings(embeddings)
         if not res.ok and announce:
-            print("❌ Voice not recognized")
+            print(
+                "❌ Voice not recognized "
+                f"(match {res.score:.3f}, required {res.threshold:.3f})"
+            )
         return res.ok
     except ImportError:
         print("⚠️  Speaker verification unavailable. Access denied.")
@@ -400,14 +403,18 @@ def _start_speech_process(text: str):
     return process, lambda: None
 
 
-def speak(text):
+def speak(text, *, allow_interrupt: bool = True):
     """Speak locally while accepting verified owner barge-in."""
     global hikari_state
     hikari_state = HikariState.SPEAKING
     print("[DAEMON] Synthesizing response", flush=True)
     process, cleanup = _start_speech_process(text)
     try:
-        interrupted = _wait_for_speech_or_owner_interrupt(process)
+        if allow_interrupt:
+            interrupted = _wait_for_speech_or_owner_interrupt(process)
+        else:
+            process.wait()
+            interrupted = False
         if not interrupted:
             time.sleep(0.15)
         return not interrupted
@@ -473,8 +480,22 @@ def is_stop_command(text: str) -> bool:
 
 def _is_wake_phrase(text: str) -> bool:
     """Accept only explicit forms of the HIKARI wake phrase."""
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in {"hikari", "hey hikari", "okay hikari", "hi hikari"}
+    return _extract_wake_command(text) == ""
+
+
+def _extract_wake_command(text: str) -> str | None:
+    """Return a same-utterance command after an explicit HIKARI wake prefix."""
+
+    if not isinstance(text, str):
+        return None
+    match = re.fullmatch(
+        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hikari\b[\s,.:;!?-]*(.*?)\s*",
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match is None:
+        return None
+    return match.group(1).strip()
 
 
 def _listen_for_wake_word() -> None:
@@ -483,10 +504,11 @@ def _listen_for_wake_word() -> None:
     print("💤 ", end="\r", flush=True)
     with sr.Microphone() as source:
         r.adjust_for_ambient_noise(source, duration=0.5)
-        audio = r.listen(source, timeout=5, phrase_time_limit=5)
+        audio = r.listen(source, timeout=5, phrase_time_limit=10)
 
     text = recognize_audio(audio, short_utterance=True)
-    if not text or not _is_wake_phrase(text):
+    wake_command = _extract_wake_command(text)
+    if not text or wake_command is None:
         return
     if not verify_speaker(audio):
         print("❌ Voice not recognized, ignoring...\n")
@@ -494,7 +516,15 @@ def _listen_for_wake_word() -> None:
 
     print("\n🎉 ACTIVATED!\n")
     hikari_state = HikariState.ACTIVE
-    speak("Go ahead!")
+    if wake_command:
+        response = process(wake_command)
+        if response:
+            speak(response)
+            log_convo(wake_command, response)
+        return
+    # Do not run the microphone barge-in listener over the acknowledgement;
+    # it can consume the first words of the owner's next command.
+    speak("Yes?", allow_interrupt=False)
 
 
 def _listen_for_active_command() -> None:
