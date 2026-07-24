@@ -287,7 +287,7 @@ class FasterWhisperSTTAdapter:
             self._model = WhisperModel(self.model_size, **kwargs)
         return self._model
 
-    def _transcribe(self, audio: CapturedAudio, *, short_utterance: bool) -> str:
+    def _transcribe(self, audio: CapturedAudio, *, mode: str) -> str:
         if not self.is_available():
             raise SpeechBackendUnavailable(
                 "faster-whisper is not installed; install faster-whisper and numpy"
@@ -301,17 +301,26 @@ class FasterWhisperSTTAdapter:
         samples = np.frombuffer(converted.pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
         model = self._load_model()
         options: dict = {"language": "en", "beam_size": 1}
-        if short_utterance:
+        if mode == "wake":
             # Wake phrases are commonly shorter than Whisper's default
             # no-speech filter expects. Decode them without that filter, while
             # retaining exact wake-phrase matching and speaker verification at
             # the daemon boundary.
             options.update(
                 condition_on_previous_text=False,
-                hotwords="HIKARI stop done",
-                initial_prompt="HIKARI. Stop. Done.",
+                hotwords="HIKARI",
+                initial_prompt="HIKARI.",
                 no_speech_threshold=None,
                 without_timestamps=True,
+            )
+        elif mode == "interrupt":
+            # Unlike wake recognition, interruption decoding must not be
+            # primed with the target command or disable the no-speech filter.
+            # Doing either can turn speaker echo or room noise into "stop".
+            options.update(
+                condition_on_previous_text=False,
+                without_timestamps=True,
+                vad_filter=True,
             )
         segments, _info = model.transcribe(samples, **options)
         text = "".join(seg.text for seg in segments).strip()
@@ -320,11 +329,16 @@ class FasterWhisperSTTAdapter:
         return text
 
     def transcribe(self, audio: CapturedAudio) -> str:
-        return self._transcribe(audio, short_utterance=False)
+        return self._transcribe(audio, mode="normal")
 
     def transcribe_short_utterance(self, audio: CapturedAudio) -> str:
         """Transcribe a short local wake phrase without default no-speech filtering."""
-        return self._transcribe(audio, short_utterance=True)
+        return self._transcribe(audio, mode="wake")
+
+    def transcribe_interrupt_utterance(self, audio: CapturedAudio) -> str:
+        """Decode an interruption without target-word prompting."""
+
+        return self._transcribe(audio, mode="interrupt")
 
 
 class GoogleSpeechRecognitionSTTAdapter:

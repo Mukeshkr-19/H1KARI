@@ -152,7 +152,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     daemon.hikari_state = daemon.HikariState.ACTIVE
     monkeypatch.setattr(
         daemon,
-        "recognize_audio",
+        "recognize_interrupt_audio",
         lambda _audio, *, short_utterance=False: "hikari stop",
     )
     verify = MagicMock(return_value=False)
@@ -194,7 +194,7 @@ def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
     daemon.daemon_running = True
     monkeypatch.setattr(
         daemon,
-        "recognize_audio",
+        "recognize_interrupt_audio",
         lambda _audio, *, short_utterance=False: "actually tell me the weather",
     )
     verify = MagicMock(return_value=True)
@@ -242,7 +242,7 @@ def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
     daemon.hikari_state = daemon.HikariState.ACTIVE
     monkeypatch.setattr(
         daemon,
-        "recognize_audio",
+        "recognize_interrupt_audio",
         lambda _audio, *, short_utterance=False: "hikari stop",
     )
     verify = MagicMock(return_value=False)
@@ -270,23 +270,19 @@ def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
     verify.assert_not_called()
 
 
-def test_bare_stop_requires_owner_verification(monkeypatch):
+def test_bare_stop_cannot_interrupt_speech(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.daemon_running = True
     monkeypatch.setattr(
         daemon,
-        "recognize_audio",
+        "recognize_interrupt_audio",
         lambda _audio, *, short_utterance=False: "stop",
     )
-    verify = MagicMock(return_value=False)
-    monkeypatch.setattr(daemon, "verify_speaker", verify)
-
     process = MagicMock()
     process.poll.side_effect = [None, 0]
 
     assert daemon._wait_for_speech_or_owner_interrupt(process) is False
-    verify.assert_called_once()
     process.terminate.assert_not_called()
 
 
@@ -431,16 +427,17 @@ def test_verified_same_utterance_wake_command_is_processed_without_second_auth(m
 
 def test_speech_interrupt_accepts_short_explicit_variants_only():
     for phrase in (
-        "stop",
-        "please stop",
-        "stop talking",
-        "Hikari stop talking",
-        "done",
+        "Hikari stop",
+        "Hikari done",
+        "stop Hikari",
     ):
         assert daemon._is_speech_interrupt(phrase) is True
 
     for phrase in (
         "do not stop the timer",
+        "stop",
+        "done",
+        "Hikari stop talking",
         "tell me about stop motion",
         "actually answer the weather question",
     ):

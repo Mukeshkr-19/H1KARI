@@ -267,7 +267,6 @@ def recognize_audio(audio, *, short_utterance: bool = False):
     """Transcribe captured audio through the bounded adapter boundary."""
     if stt_adapter is None:
         return ""
-
     try:
         captured = CapturedAudio(
             pcm_bytes=audio.get_raw_data(),
@@ -291,27 +290,37 @@ def recognize_audio(audio, *, short_utterance: bool = False):
         return ""
 
 
+def recognize_interrupt_audio(audio):
+    """Transcribe a possible barge-in without wake-word hallucination bias."""
+
+    if stt_adapter is None:
+        return ""
+    method = getattr(stt_adapter, "transcribe_interrupt_utterance", None)
+    if not callable(method):
+        return recognize_audio(audio, short_utterance=False)
+    try:
+        captured = CapturedAudio(
+            pcm_bytes=audio.get_raw_data(),
+            sample_rate=audio.sample_rate,
+            sample_width=audio.sample_width,
+            channel_count=1,
+        )
+        return method(captured).lower().strip()
+    except SpeechAdapterError:
+        return ""
+    except Exception:
+        return ""
+
+
 def _speech_interrupt_mode(text: str) -> str | None:
     """Classify only deliberate stop commands, never transcript fragments."""
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
     if normalized in {
         "hikari stop",
-        "hikari stop talking",
         "hikari done",
-        "hikari be quiet",
         "stop hikari",
     }:
         return "wake_explicit"
-    if normalized in {
-        "stop",
-        "please stop",
-        "stop talking",
-        "done",
-        "i am done",
-        "im done",
-        "be quiet",
-    }:
-        return "owner_verified"
     return None
 
 
@@ -348,11 +357,9 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                     audio = r.listen(source, timeout=0.35, phrase_time_limit=2)
                 except (sr.WaitTimeoutError, sr.UnknownValueError):
                     continue
-                text = recognize_audio(audio, short_utterance=True)
+                text = recognize_interrupt_audio(audio)
                 mode = _speech_interrupt_mode(text)
                 if mode is None:
-                    continue
-                if mode == "owner_verified" and not verify_speaker(audio, announce=False):
                     continue
                 _terminate_speech_process(process)
                 print("[DAEMON] Speech interrupted by explicit local command", flush=True)

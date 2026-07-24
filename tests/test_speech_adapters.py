@@ -328,10 +328,37 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
         "language": "en",
         "beam_size": 1,
         "condition_on_previous_text": False,
-        "hotwords": "HIKARI stop done",
-        "initial_prompt": "HIKARI. Stop. Done.",
+        "hotwords": "HIKARI",
+        "initial_prompt": "HIKARI.",
         "no_speech_threshold": None,
         "without_timestamps": True,
+    }
+
+
+def test_faster_whisper_interrupt_decode_uses_vad_without_target_prompt(monkeypatch):
+    adapter = FasterWhisperSTTAdapter(model_size="base")
+    model = MagicMock()
+    model.transcribe.return_value = ([SimpleNamespace(text=" HIKARI stop")], object())
+    monkeypatch.setattr(adapter, "is_available", lambda: True)
+    monkeypatch.setattr(adapter, "_load_model", lambda: model)
+
+    result = adapter.transcribe_interrupt_utterance(
+        CapturedAudio(
+            pcm_bytes=b"\x00\x01" * 160,
+            sample_rate=16000,
+            sample_width=2,
+            channel_count=1,
+        )
+    )
+
+    assert result == "HIKARI stop"
+    _samples, kwargs = model.transcribe.call_args
+    assert kwargs == {
+        "language": "en",
+        "beam_size": 1,
+        "condition_on_previous_text": False,
+        "without_timestamps": True,
+        "vad_filter": True,
     }
 
 
