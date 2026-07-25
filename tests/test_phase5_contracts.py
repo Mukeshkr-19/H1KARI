@@ -354,6 +354,36 @@ def test_owner_child_mode_allowed(owner_context: Phase5ActorContext, now: float)
     assert decision.reason is DecisionReason.OWNER_LOW_RISK
 
 
+def test_child_scoped_teach_me_is_allowed(child_context: Phase5ActorContext, now: float) -> None:
+    decision = evaluate_phase5_request(
+        Phase5Request(
+            request_id="req_child_teach",
+            actor=child_context,
+            capability=Capability.TEACH_ME,
+            action="educational",
+            data_subject="child",
+        ),
+        now=now,
+    )
+    assert decision.outcome is Outcome.ALLOW
+    assert decision.reason is DecisionReason.CHILD_ALLOWED
+
+
+def test_child_scoped_care_requires_approval(child_context: Phase5ActorContext, now: float) -> None:
+    decision = evaluate_phase5_request(
+        Phase5Request(
+            request_id="req_child_care",
+            actor=child_context,
+            capability=Capability.CARE,
+            action="comfort",
+            data_subject="child",
+        ),
+        now=now,
+    )
+    assert decision.outcome is Outcome.REQUIRE_APPROVAL
+    assert decision.reason is DecisionReason.CHILD_APPROVAL_REQUIRED
+
+
 def test_owner_guide_hands_requires_approval(owner_context: Phase5ActorContext, now: float) -> None:
     req = Phase5Request(
         request_id="req_1",

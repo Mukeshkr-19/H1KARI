@@ -74,6 +74,8 @@ class DecisionReason(StrEnum):
     OWNER_APPROVED = "owner_approved"
     OWNER_APPROVAL_REQUIRED = "owner_approval_required"
     HELPER_GRANT_VALID = "helper_grant_valid"
+    CHILD_ALLOWED = "child_allowed"
+    CHILD_APPROVAL_REQUIRED = "child_approval_required"
 
     # Deny reasons
     DEFAULT_DENY = "default_deny"
@@ -643,6 +645,27 @@ def evaluate_phase5_request(
                 reason=DecisionReason.CHILD_DANGEROUS_BLOCKED,
                 granted_at=now,
             )
+
+        if capability in {Capability.GUIDE_MY_HANDS, Capability.CARE}:
+            return Phase5Decision(
+                request_id=request.request_id,
+                capability=capability,
+                actor_id=actor.actor_id,
+                actor=actor.actor,
+                outcome=Outcome.REQUIRE_APPROVAL,
+                reason=DecisionReason.CHILD_APPROVAL_REQUIRED,
+                granted_at=now,
+            )
+
+        return Phase5Decision(
+            request_id=request.request_id,
+            capability=capability,
+            actor_id=actor.actor_id,
+            actor=actor.actor,
+            outcome=Outcome.ALLOW,
+            reason=DecisionReason.CHILD_ALLOWED,
+            granted_at=now,
+        )
 
     # 5. Trusted helper requires valid grant
     if actor.actor is Phase5Actor.TRUSTED_HELPER:

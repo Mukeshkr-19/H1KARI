@@ -886,6 +886,83 @@ def test_policy_service_database_permissions(
     assert stat.S_IMODE(phase5_consents.db_path.stat().st_mode) == 0o600
 
 
+def test_policy_service_does_not_rewrite_audit_rows_with_entity_id_factory(
+    grants_store: GrantStore,
+    audit_store: ActionAuditStore,
+    phase5_grants: Phase5GrantStore,
+    phase5_consents: Phase5ConsentStore,
+    owner_actor: ActorContext,
+    phase5_owner: Phase5ActorContext,
+) -> None:
+    service = Phase5PolicyService(
+        grants_store,
+        audit_store,
+        phase5_grants,
+        phase5_consents,
+        clock=lambda: 1000.0,
+        id_factory=lambda: "audit.001",
+    )
+    req = Phase5AuthorizationRequest(
+        request=Phase5Request(
+            request_id="req_id",
+            actor=phase5_owner,
+            capability=Capability.TEACH_ME,
+            resource="private_data",
+        ),
+        actor=owner_actor,
+    )
+    decision = service.authorize(req)
+    assert decision.audit_id != "audit.001"
+
+    records = audit_store.list_recent(1)
+    assert len(records) == 1
+    assert records[0].audit_id == decision.audit_id
+
+
+def test_policy_service_audit_written_exactly_once(
+    policy_service: Phase5PolicyService,
+    owner_actor: ActorContext,
+    phase5_owner: Phase5ActorContext,
+    audit_store: ActionAuditStore,
+) -> None:
+    req = Phase5AuthorizationRequest(
+        request=Phase5Request(
+            request_id="req_audit_once",
+            actor=phase5_owner,
+            capability=Capability.TEACH_ME,
+        ),
+        actor=owner_actor,
+    )
+    decision = policy_service.authorize(req)
+    assert decision.audit_id is not None
+    records = audit_store.list_recent(100)
+    audit_ids = [r.audit_id for r in records]
+    assert audit_ids.count(decision.audit_id) == 1
+
+
+def test_policy_service_audit_resource_is_content_free(
+    policy_service: Phase5PolicyService,
+    owner_actor: ActorContext,
+    phase5_owner: Phase5ActorContext,
+    audit_store: ActionAuditStore,
+) -> None:
+    req = Phase5AuthorizationRequest(
+        request=Phase5Request(
+            request_id="req_resource",
+            actor=phase5_owner,
+            capability=Capability.TEACH_ME,
+            resource="private_secret_resource",
+        ),
+        actor=owner_actor,
+    )
+    policy_service.authorize(req)
+    records = audit_store.list_recent(1)
+    assert len(records) == 1
+    assert records[0].resource_ref is not None
+    assert "private_secret_resource" not in records[0].resource_ref
+    assert records[0].resource_ref.startswith("sha256.")
+
+
 # --- Forbidden Imports Test ---------------------------------------------------
 
 

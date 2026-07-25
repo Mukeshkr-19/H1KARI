@@ -156,6 +156,17 @@ def enroll_voice():
 
 # One SpeakerAuth loads ECAPA once; a new instance per utterance reloads the model and breaks wake responsiveness.
 _speaker_auth_cache = None
+_streaming_runtime = None
+
+
+def _get_streaming_runtime():
+    global _streaming_runtime
+    if _streaming_runtime is None:
+        from core.voice_streaming.runtime import VoiceStreamingRuntime
+
+        _streaming_runtime = VoiceStreamingRuntime("daemon_stream")
+        _streaming_runtime.start_wake_listening()
+    return _streaming_runtime
 
 
 # State machine for JARVIS-style behavior
@@ -247,8 +258,6 @@ def initialize_audio_backends() -> bool:
         r = sr.Recognizer()
         r.energy_threshold = 200
         r.dynamic_energy_threshold = True
-        # Preserve natural pauses inside a sentence without returning to the
-        # old 1.5-second delay after every completed request.
         r.pause_threshold = 1.1
         r.phrase_time_limit = 10
         r.non_speaking_duration = 0.5
@@ -361,7 +370,12 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                 mode = _speech_interrupt_mode(text)
                 if mode is None:
                     continue
+                if not verify_speaker(audio):
+                    continue
                 _terminate_speech_process(process)
+                runtime = _get_streaming_runtime()
+                runtime.request_interruption("barge_in_1", is_authenticated=True)
+                runtime.confirm_interruption("barge_in_1", is_confirmed=True)
                 print("[DAEMON] Speech interrupted by explicit local command", flush=True)
                 return True
     except OSError:
@@ -424,6 +438,8 @@ def speak(text, *, allow_interrupt: bool = True):
     """Speak locally while accepting verified owner barge-in."""
     global hikari_state
     hikari_state = HikariState.SPEAKING
+    runtime = _get_streaming_runtime()
+    runtime.assistant_speaking_start()
     print("[DAEMON] Synthesizing response", flush=True)
     process, cleanup = _start_speech_process(text)
     try:
@@ -434,6 +450,9 @@ def speak(text, *, allow_interrupt: bool = True):
             interrupted = False
         if not interrupted:
             time.sleep(0.15)
+            runtime.add_assistant_segment(text)
+        else:
+            runtime.start_active_listening()
         return not interrupted
     finally:
         cleanup()
@@ -534,14 +553,22 @@ def _listen_for_wake_word() -> None:
         print("❌ Voice not recognized, ignoring...\n")
         return
 
+    runtime = _get_streaming_runtime()
+    res = runtime.process_utterance(text, is_verified_speaker=True, is_short=True)
+    if res.get("action") == "ignore":
+        return
+
     print("\n🎉 ACTIVATED!\n")
     hikari_state = HikariState.ACTIVE
-    if wake_command:
-        response = process(wake_command)
+
+    if res.get("action") == "process_command":
+        cmd = res["command"]
+        response = process(cmd)
         if response:
             speak(response)
-            log_convo(wake_command, response)
+            log_convo(cmd, response)
         return
+
     # Do not run the microphone barge-in listener over the acknowledgement;
     # it can consume the first words of the owner's next command.
     speak("Yes?", allow_interrupt=False)
@@ -567,21 +594,33 @@ def _listen_for_active_command() -> None:
     if any(phrase in text for phrase in ["that's wrong", "mistake", "incorrect"]):
         speak("What should I have said?")
         return
+
     if is_stop_command(text):
         hikari_state = HikariState.LISTENING
+        runtime = _get_streaming_runtime()
+        runtime.reset_to_wake_listening()
         print("💤 Going to sleep... (still listening for 'hikari')\n")
         return
 
-    response = process(text)
+    runtime = _get_streaming_runtime()
+    result = runtime.process_utterance(text, is_verified_speaker=True)
+    if result.get("action") != "process_command":
+        return
+
+    command = result["command"]
+    response = process(command)
     if response:
         speak(response)
-        log_convo(text, response)
+        log_convo(command, response)
 
 
 def listen_always() -> None:
     """Listen for the wake word, then process verified commands until stopped."""
     if sr is None or r is None:
         raise RuntimeError("SpeechRecognition is not installed")
+
+    runtime = _get_streaming_runtime()
+    runtime.start_wake_listening()
 
     print("\n" + "=" * 50)
     print("🎯 HIKARI - JARVIS Mode Active")
@@ -607,9 +646,15 @@ def listen_always() -> None:
 
 def request_shutdown(_signum=None, _frame=None) -> None:
     """Ask the owned listener loop to stop at its next boundary."""
-    global daemon_running
+    global daemon_running, _streaming_runtime
 
     daemon_running = False
+    if _streaming_runtime is not None:
+        try:
+            _streaming_runtime.close()
+        except Exception:
+            pass
+        _streaming_runtime = None
 
 
 def main() -> int:

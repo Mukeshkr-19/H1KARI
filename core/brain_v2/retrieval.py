@@ -2,13 +2,27 @@
 
 from __future__ import annotations
 
+import math
 import os
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from core.brain_v2.candidate_scoring import normalize_statement
+from core.brain_v2.episodic_support import (
+    EpisodicSupportAnchor,
+    EpisodicSupportPolicy,
+    select_episodic_support,
+)
 from core.brain_v2.episode_store import EpisodeStore
+from core.brain_v2.graph_neighbors import find_graph_neighbors
+from core.brain_v2.memory_lifecycle import lifecycle_status
+from core.brain_v2.wiki_context import (
+    WikiContextAnchor,
+    WikiContextPolicy,
+    select_wiki_context,
+)
 from core.brain_v2.recall_intent import (
     INTENT_BIRTHPLACE,
     INTENT_CURRENT_LOCATION,
@@ -38,6 +52,11 @@ from core.brain_v2.working_memory import WorkingMemory
 
 _EPISODIC_MAX_SCORE = 0.42
 _SEMANTIC_MIN_SCORE = 0.22
+_SUPPLEMENTAL_REFERENCE_SENTINEL = datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
+_SUPPLEMENTAL_SCORE_EPSILON = 0.02
+_GRAPH_SUPPLEMENTAL_SCORE_CAP = 0.74
+_WIKI_SUPPLEMENTAL_SCORE_CAP = 0.40
+_AUTHORITY_ACCEPTED_MEMORY_ANCHOR = "accepted_memory_anchor"
 
 _EDUCATION_TEXT = re.compile(
     r"\b(?:study|studies|studying|studied|student|university|college|school)\b",
@@ -86,6 +105,65 @@ _FAMILY_TOKENS = (
 
 
 @dataclass(frozen=True)
+class RetrievalContextOptions:
+    """Optional supplemental retrieval controls for :meth:`BrainV2Retrieval.retrieve`."""
+
+    enable_graph_neighbors: bool = False
+    enable_episodic_support: bool = False
+    wiki_entries: Tuple[Any, ...] = ()
+    reference_time: Optional[datetime] = None
+    graph_max_seeds: int = 3
+    graph_max_results: int = 8
+    graph_max_depth: int = 2
+    graph_score_cap: float = _GRAPH_SUPPLEMENTAL_SCORE_CAP
+    episodic_score_cap: float = _EPISODIC_MAX_SCORE
+    wiki_score_cap: float = _WIKI_SUPPLEMENTAL_SCORE_CAP
+    supplemental_epsilon: float = _SUPPLEMENTAL_SCORE_EPSILON
+    episodic_policy: Optional[EpisodicSupportPolicy] = None
+    wiki_policy: Optional[WikiContextPolicy] = None
+    episodic_max_anchors: int = 2
+    max_supplemental_hits: int = 8
+
+    def __post_init__(self) -> None:
+        for name in (
+            "graph_max_seeds",
+            "graph_max_results",
+            "graph_max_depth",
+            "episodic_max_anchors",
+            "max_supplemental_hits",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        for name in (
+            "graph_score_cap",
+            "episodic_score_cap",
+            "wiki_score_cap",
+            "supplemental_epsilon",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{name} must be numeric")
+            if not math.isfinite(float(value)) or not 0.0 <= float(value) <= 1.0:
+                raise ValueError(f"{name} must be finite and within [0, 1]")
+        if not isinstance(self.wiki_entries, tuple):
+            raise ValueError("wiki_entries must be a tuple")
+        if self.reference_time is not None and (
+            not isinstance(self.reference_time, datetime)
+            or self.reference_time.tzinfo is None
+        ):
+            raise ValueError("reference_time must be timezone-aware")
+        if self.episodic_policy is not None and not isinstance(
+            self.episodic_policy, EpisodicSupportPolicy
+        ):
+            raise ValueError("episodic_policy must be EpisodicSupportPolicy")
+        if self.wiki_policy is not None and not isinstance(
+            self.wiki_policy, WikiContextPolicy
+        ):
+            raise ValueError("wiki_policy must be WikiContextPolicy")
+
+
+@dataclass(frozen=True)
 class BrainV2MemoryHit:
     layer: str
     text: str
@@ -112,11 +190,19 @@ class BrainV2ContextPacket:
             lines.append(f"{layer}:")
             for item in items:
                 text = item.text[:200]
+                kind = (item.metadata or {}).get("supplemental_kind")
+                if (item.metadata or {}).get("is_supplemental") and kind:
+                    text = f"{text} (supplemental {kind})"
                 lines.append(f"- {text}")
         return "\n".join(lines)
 
     def top_semantic_hits(self, limit: int = 5) -> List[BrainV2MemoryHit]:
-        semantic = [h for h in self.hits if h.layer == MemoryLayer.SEMANTIC.value]
+        semantic = [
+            h
+            for h in self.hits
+            if h.layer == MemoryLayer.SEMANTIC.value
+            and not (h.metadata or {}).get("is_supplemental")
+        ]
         return sorted(semantic, key=lambda h: h.score, reverse=True)[:limit]
 
 
@@ -143,7 +229,19 @@ class BrainV2Retrieval:
         speaker_context: Optional[Dict[str, str]] = None,
         task_context: Optional[str] = None,
         limit: int = 10,
+        context_options: Optional[RetrievalContextOptions] = None,
+        wiki_entries: Optional[Sequence[Any]] = None,
+        reference_time: Optional[datetime] = None,
+        enable_graph_neighbors: Optional[bool] = None,
+        enable_episodic_support: Optional[bool] = None,
     ) -> BrainV2ContextPacket:
+        ctx_opts = self._merge_retrieval_context_options(
+            context_options,
+            wiki_entries=wiki_entries,
+            reference_time=reference_time,
+            enable_graph_neighbors=enable_graph_neighbors,
+            enable_episodic_support=enable_episodic_support,
+        )
         intent = classify_recall_intent(query)
         strategies: List[str] = [f"recall_intent:{intent}"]
         hits: List[BrainV2MemoryHit] = []
@@ -226,6 +324,15 @@ class BrainV2Retrieval:
         hits.extend(proc)
         if proc:
             strategies.append("procedural_neural")
+
+        supplemental, supplemental_strategies = self._supplemental_context_hits(
+            query,
+            hits,
+            ctx_opts,
+            accepted=accepted,
+        )
+        hits.extend(supplemental)
+        strategies.extend(supplemental_strategies)
 
         hits = self._dedupe_and_cap(hits, limit)
         return BrainV2ContextPacket(
@@ -986,6 +1093,447 @@ class BrainV2Retrieval:
         except Exception:
             return []
 
+
+    @staticmethod
+    def _merge_retrieval_context_options(
+        base: Optional[RetrievalContextOptions],
+        *,
+        wiki_entries: Optional[Sequence[Any]] = None,
+        reference_time: Optional[datetime] = None,
+        enable_graph_neighbors: Optional[bool] = None,
+        enable_episodic_support: Optional[bool] = None,
+    ) -> RetrievalContextOptions:
+        opts = base or RetrievalContextOptions()
+        updates: Dict[str, Any] = {}
+        if enable_graph_neighbors is not None:
+            updates["enable_graph_neighbors"] = bool(enable_graph_neighbors)
+        if enable_episodic_support is not None:
+            updates["enable_episodic_support"] = bool(enable_episodic_support)
+        if wiki_entries is not None:
+            if isinstance(wiki_entries, (str, bytes)):
+                updates["wiki_entries"] = ()
+            else:
+                try:
+                    updates["wiki_entries"] = tuple(wiki_entries)
+                except TypeError:
+                    updates["wiki_entries"] = ()
+        if reference_time is not None:
+            if isinstance(reference_time, datetime) and reference_time.tzinfo is not None:
+                updates["reference_time"] = reference_time
+        if updates:
+            opts = replace(opts, **updates)
+        return opts
+
+    @staticmethod
+    def _supplemental_requested(opts: RetrievalContextOptions) -> bool:
+        return bool(
+            opts.enable_graph_neighbors
+            or opts.enable_episodic_support
+            or opts.wiki_entries
+        )
+
+    @staticmethod
+    def _reference_time_for_supplemental(opts: RetrievalContextOptions) -> datetime:
+        ref = opts.reference_time
+        if ref is not None and ref.tzinfo is not None:
+            return ref
+        return _SUPPLEMENTAL_REFERENCE_SENTINEL
+
+    @staticmethod
+    def _semantic_source_linked_hits(
+        hits: List[BrainV2MemoryHit],
+    ) -> List[BrainV2MemoryHit]:
+        linked = [
+            h
+            for h in hits
+            if h.source == "source_linked"
+            and h.layer == MemoryLayer.SEMANTIC.value
+            and not (h.metadata or {}).get("is_supplemental")
+        ]
+        return sorted(linked, key=lambda h: (-h.score, str((h.metadata or {}).get("memory_id") or "")))
+
+    @staticmethod
+    def _cap_supplemental_score(
+        raw_score: float,
+        anchor_score: float,
+        kind_cap: float,
+        epsilon: float,
+    ) -> float:
+        ceiling = min(float(kind_cap), max(0.0, float(anchor_score) - float(epsilon)))
+        return max(0.0, min(float(raw_score), ceiling))
+
+    def _supplemental_context_hits(
+        self,
+        query: str,
+        hits: List[BrainV2MemoryHit],
+        opts: RetrievalContextOptions,
+        *,
+        accepted: List[SourceLinkedMemory],
+    ) -> Tuple[List[BrainV2MemoryHit], List[str]]:
+        if not self._supplemental_requested(opts):
+            return [], []
+        anchors = self._semantic_source_linked_hits(hits)
+        if not anchors:
+            return [], []
+
+        ref_time = self._reference_time_for_supplemental(opts)
+        accepted_by_id = {m.memory_id: m for m in accepted}
+        anchor_memories: List[Tuple[BrainV2MemoryHit, SourceLinkedMemory]] = []
+        for hit in anchors:
+            mid = str((hit.metadata or {}).get("memory_id") or "")
+            mem = accepted_by_id.get(mid)
+            if mem is not None:
+                anchor_memories.append((hit, mem))
+        if not anchor_memories:
+            return [], []
+
+        out: List[BrainV2MemoryHit] = []
+        strategies: List[str] = []
+        seen_memory_ids = {
+            str((h.metadata or {}).get("memory_id") or "")
+            for h in hits
+            if h.source == "source_linked" and not (h.metadata or {}).get("is_supplemental")
+        }
+        structured_norms = self._structured_episode_text_norms(hits)
+
+        if opts.enable_graph_neighbors:
+            try:
+                graph_hits, graph_strategy = self._graph_supplemental_hits(
+                    anchor_memories,
+                    accepted,
+                    opts,
+                    seen_memory_ids=seen_memory_ids,
+                )
+                out.extend(graph_hits)
+                if graph_strategy:
+                    strategies.append(graph_strategy)
+            except Exception:
+                pass
+
+        if opts.enable_episodic_support:
+            try:
+                episodic_hits, episodic_strategy = self._episodic_supplemental_hits(
+                    query,
+                    anchor_memories,
+                    opts,
+                    ref_time=ref_time,
+                    structured_norms=structured_norms,
+                )
+                out.extend(episodic_hits)
+                if episodic_strategy:
+                    strategies.append(episodic_strategy)
+            except Exception:
+                pass
+
+        if opts.wiki_entries:
+            try:
+                wiki_hits, wiki_strategy = self._wiki_supplemental_hits(
+                    query,
+                    anchor_memories,
+                    opts,
+                    ref_time=ref_time,
+                )
+                out.extend(wiki_hits)
+                if wiki_strategy:
+                    strategies.append(wiki_strategy)
+            except Exception:
+                pass
+
+        if opts.max_supplemental_hits > 0:
+            out = sorted(
+                out,
+                key=lambda h: (
+                    -h.score,
+                    str((h.metadata or {}).get("supplemental_kind") or ""),
+                    str((h.metadata or {}).get("memory_id") or h.text[:40]),
+                ),
+            )[: opts.max_supplemental_hits]
+        return out, strategies
+
+    def _graph_supplemental_hits(
+        self,
+        anchor_memories: List[Tuple[BrainV2MemoryHit, SourceLinkedMemory]],
+        accepted: List[SourceLinkedMemory],
+        opts: RetrievalContextOptions,
+        *,
+        seen_memory_ids: Set[str],
+    ) -> Tuple[List[BrainV2MemoryHit], Optional[str]]:
+        seeds = [mem for _, mem in anchor_memories[: max(1, opts.graph_max_seeds)]]
+        if not seeds:
+            return [], None
+        anchor_score_by_id = {
+            str((hit.metadata or {}).get("memory_id") or ""): hit.score
+            for hit, _ in anchor_memories
+        }
+        raw = find_graph_neighbors(
+            seeds,
+            accepted,
+            max_results=opts.graph_max_results,
+            max_depth=opts.graph_max_depth,
+        )
+        seed_by_id = {mem.memory_id: mem for mem in seeds}
+        hits: List[BrainV2MemoryHit] = []
+        for gn in raw:
+            if gn.memory_id in seen_memory_ids:
+                continue
+            mem = gn.memory
+            seed_mem = seed_by_id.get(gn.seed_memory_id)
+            if mem is not None and seed_mem is not None:
+                if not self._supplemental_subjects_compatible(seed_mem, mem):
+                    continue
+            anchor_score = anchor_score_by_id.get(gn.seed_memory_id, _SEMANTIC_MIN_SCORE)
+            score = self._cap_supplemental_score(
+                gn.score,
+                anchor_score,
+                opts.graph_score_cap,
+                opts.supplemental_epsilon,
+            )
+            text = self._format_source_linked(mem) if mem else gn.statement
+            path_edges = [
+                {
+                    "source_memory_id": edge.source_memory_id,
+                    "target_memory_id": edge.target_memory_id,
+                    "entity_type": edge.entity_type,
+                    "entity_key": edge.entity_key,
+                }
+                for edge in gn.path.edges
+            ]
+            hits.append(
+                BrainV2MemoryHit(
+                    layer=MemoryLayer.SEMANTIC.value,
+                    text=text,
+                    score=score,
+                    source="graph_neighbor",
+                    metadata={
+                        "memory_id": gn.memory_id,
+                        "episode_id": (mem.episode_id if mem else None),
+                        "is_supplemental": True,
+                        "supplemental_kind": "graph_neighbor",
+                        "authority": _AUTHORITY_ACCEPTED_MEMORY_ANCHOR,
+                        "seed_memory_id": gn.seed_memory_id,
+                        "target_memory_id": gn.memory_id,
+                        "connecting_memory_id": gn.connecting_memory_id,
+                        "edge_type": gn.edge_type,
+                        "depth": gn.depth,
+                        "shared_entities": list(gn.shared_entities),
+                        "path_memory_ids": list(gn.path.memory_ids),
+                        "path_edges": path_edges,
+                    },
+                )
+            )
+        if not hits:
+            return [], None
+        hits.sort(
+            key=lambda h: (
+                -h.score,
+                (h.metadata or {}).get("depth", 0),
+                str((h.metadata or {}).get("memory_id") or ""),
+            )
+        )
+        return hits, "supplemental_graph_neighbors"
+
+    def _episodic_supplemental_hits(
+        self,
+        query: str,
+        anchor_memories: List[Tuple[BrainV2MemoryHit, SourceLinkedMemory]],
+        opts: RetrievalContextOptions,
+        *,
+        ref_time: datetime,
+        structured_norms: Set[str],
+    ) -> Tuple[List[BrainV2MemoryHit], Optional[str]]:
+        policy = opts.episodic_policy or EpisodicSupportPolicy()
+        excluded_episode_ids = self.store.get_episode_ids_with_inactive_accepted_memory()
+        if excluded_episode_ids:
+            policy = replace(
+                policy,
+                excluded_episode_ids=frozenset(
+                    set(policy.excluded_episode_ids) | set(excluded_episode_ids)
+                ),
+            )
+
+        episode_ids: Set[str] = set()
+        for _, mem in anchor_memories[: max(1, opts.episodic_max_anchors)]:
+            if mem.episode_id:
+                episode_ids.add(mem.episode_id)
+
+        episodes = []
+        segments = []
+        for eid in sorted(episode_ids):
+            ep = self.store.get_structured_episode(eid)
+            if ep is not None:
+                episodes.append(ep)
+            segments.extend(self.store.get_raw_segments(eid))
+
+        hits: List[BrainV2MemoryHit] = []
+        seen_segment_ids: Set[str] = set()
+        for anchor_hit, mem in anchor_memories[: max(1, opts.episodic_max_anchors)]:
+            anchor = EpisodicSupportAnchor(
+                memory_id=mem.memory_id,
+                episode_id=mem.episode_id or "",
+                source_segment_ids=tuple(mem.source_segment_ids or ()),
+                statement=mem.statement or "",
+                lifecycle_status=lifecycle_status(mem.metadata),
+                strength=anchor_hit.score,
+            )
+            selected = select_episodic_support(
+                query,
+                anchor,
+                episodes,
+                segments,
+                policy,
+                reference_time=ref_time,
+            )
+            for eh in selected:
+                if eh.segment_id in seen_segment_ids:
+                    continue
+                norm = normalize_statement(eh.text)
+                if norm and norm in structured_norms:
+                    continue
+                seen_segment_ids.add(eh.segment_id)
+                score = self._cap_supplemental_score(
+                    eh.score,
+                    anchor_hit.score,
+                    opts.episodic_score_cap,
+                    opts.supplemental_epsilon,
+                )
+                hits.append(
+                    BrainV2MemoryHit(
+                        layer=MemoryLayer.EPISODIC.value,
+                        text=eh.text,
+                        score=score,
+                        source="episodic_support",
+                        metadata={
+                            "episode_id": eh.episode_id,
+                            "segment_id": eh.segment_id,
+                            "memory_id": eh.anchor_memory_id,
+                            "is_supplemental": True,
+                            "supplemental_kind": "episodic_support",
+                            "authority": _AUTHORITY_ACCEPTED_MEMORY_ANCHOR,
+                            "anchor_memory_id": eh.anchor_memory_id,
+                            "supplemental_reason": eh.supplemental_reason,
+                            "session_id": eh.session_id,
+                            "speaker_label": eh.speaker_label,
+                        },
+                    )
+                )
+        if not hits:
+            return [], None
+        hits.sort(
+            key=lambda h: (
+                -h.score,
+                str((h.metadata or {}).get("episode_id") or ""),
+                str((h.metadata or {}).get("segment_id") or ""),
+            )
+        )
+        return hits, "supplemental_episodic_support"
+
+    def _wiki_supplemental_hits(
+        self,
+        query: str,
+        anchor_memories: List[Tuple[BrainV2MemoryHit, SourceLinkedMemory]],
+        opts: RetrievalContextOptions,
+        *,
+        ref_time: datetime,
+    ) -> Tuple[List[BrainV2MemoryHit], Optional[str]]:
+        anchor_hit, mem = anchor_memories[0]
+        anchor = WikiContextAnchor(
+            memory_id=mem.memory_id,
+            statement=mem.statement or "",
+            lifecycle_status=lifecycle_status(mem.metadata),
+            review_status="accepted",
+            strength=anchor_hit.score,
+            subject_keys=self._wiki_subject_keys(mem.metadata),
+        )
+        policy = opts.wiki_policy or WikiContextPolicy()
+        selected = select_wiki_context(
+            query,
+            anchor,
+            opts.wiki_entries,
+            policy,
+            reference_time=ref_time,
+        )
+        hits: List[BrainV2MemoryHit] = []
+        for wh in selected:
+            score = self._cap_supplemental_score(
+                wh.score,
+                anchor_hit.score,
+                opts.wiki_score_cap,
+                opts.supplemental_epsilon,
+            )
+            label = wh.title or wh.section or "wiki"
+            text = f"({label}) {wh.text}"
+            hits.append(
+                BrainV2MemoryHit(
+                    layer=MemoryLayer.SEMANTIC.value,
+                    text=text,
+                    score=score,
+                    source="wiki_context",
+                    metadata={
+                        "entry_id": wh.entry_id,
+                        "anchor_memory_id": wh.anchor_memory_id,
+                        "is_supplemental": True,
+                        "supplemental_kind": "wiki_context",
+                        "authority": _AUTHORITY_ACCEPTED_MEMORY_ANCHOR,
+                        "source_memory_ids": list(wh.source_memory_ids),
+                        "source_type": wh.source_type,
+                        "section": wh.section,
+                        "title": wh.title,
+                    },
+                )
+            )
+        if not hits:
+            return [], None
+        hits.sort(key=lambda h: (-h.score, str((h.metadata or {}).get("entry_id") or "")))
+        return hits, "supplemental_wiki_context"
+
+    @staticmethod
+    def _supplemental_subjects_compatible(
+        seed: SourceLinkedMemory,
+        neighbor: SourceLinkedMemory,
+    ) -> bool:
+        """Reject graph neighbors whose declared people conflict with the seed."""
+        seed_people = memory_person_names(seed.statement, seed.metadata)
+        neighbor_people = memory_person_names(neighbor.statement, neighbor.metadata)
+        if not seed_people or not neighbor_people:
+            return True
+        return person_names_compatible(seed_people, neighbor_people)
+
+    @staticmethod
+    def _wiki_subject_keys(metadata: Optional[Dict[str, Any]]) -> Tuple[str, ...]:
+        meta = metadata or {}
+        keys: List[str] = []
+        for field in ("person", "location", "place", "organization", "relation"):
+            raw = meta.get(field)
+            if raw is None or raw == "":
+                continue
+            values = raw if isinstance(raw, (list, tuple, set)) else (raw,)
+            for value in values:
+                text = " ".join(str(value).split()).strip().casefold()
+                if text:
+                    keys.append(text)
+        if not keys:
+            text = str(meta.get("preferred_name") or meta.get("legal_name") or "").strip()
+            if text:
+                keys.append(text.casefold())
+        return tuple(dict.fromkeys(keys))
+
+    @staticmethod
+    def _structured_episode_text_norms(hits: List[BrainV2MemoryHit]) -> Set[str]:
+        norms: Set[str] = set()
+        for hit in hits:
+            if hit.source != "structured_episode":
+                continue
+            body = hit.text
+            if body.startswith("(episode)"):
+                body = body[len("(episode)") :].strip()
+            if ":" in body:
+                body = body.split(":", 1)[1].strip()
+            norm = normalize_statement(body)
+            if norm:
+                norms.add(norm)
+        return norms
+
+
     def pending_or_rejected_in_results(self, query: str) -> bool:
         """True if any non-accepted candidate text would match query (guard for tests)."""
         q_norm = normalize_statement(query)
@@ -1000,9 +1548,19 @@ class BrainV2Retrieval:
         return False
 
     def _dedupe_and_cap(self, hits: List[BrainV2MemoryHit], limit: int) -> List[BrainV2MemoryHit]:
+        ranked = sorted(
+            hits,
+            key=lambda h: (
+                bool((h.metadata or {}).get("is_supplemental")),
+                -h.score,
+                h.layer,
+                h.source,
+                str((h.metadata or {}).get("memory_id") or (h.metadata or {}).get("segment_id") or ""),
+            ),
+        )
         seen: set[str] = set()
         unique: List[BrainV2MemoryHit] = []
-        for hit in sorted(hits, key=lambda h: h.score, reverse=True):
+        for hit in ranked:
             key = normalize_statement(hit.text) or re.sub(
                 r"\s+", " ", hit.text.lower().strip()
             )[:100]
@@ -1010,4 +1568,12 @@ class BrainV2Retrieval:
                 continue
             seen.add(key)
             unique.append(hit)
+        unique.sort(
+            key=lambda h: (
+                bool((h.metadata or {}).get("is_supplemental")),
+                -h.score,
+                h.layer,
+                h.source,
+            )
+        )
         return unique[:limit]

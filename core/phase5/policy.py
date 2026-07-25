@@ -392,6 +392,7 @@ class Phase5PolicyService:
         phase5_grants: Phase5GrantStore,
         phase5_consents: Phase5ConsentStore,
         clock: Callable[[], float],
+        id_factory: Callable[[], str] | None = None,
     ):
         self.grants = grants
         self.audit = audit
@@ -400,13 +401,23 @@ class Phase5PolicyService:
         if not callable(clock):
             raise ValueError("clock must be callable")
         self.clock = clock
+        self.id_factory = id_factory if id_factory is not None else lambda: str(uuid.uuid4())
 
     def _now(self) -> float:
         now = self.clock()
         _validate_finite_timestamp(now, "clock result")
         return float(now)
 
-    def authorize(self, request: Phase5AuthorizationRequest) -> Phase5AuthorizationDecision:
+    def get_helper_grant(self, grant_id: str) -> Optional[CapabilityGrant]:
+        """Return the current stored helper grant, including expired/revoked."""
+        return self.phase5_grants.get(grant_id)
+
+    def authorize(
+        self,
+        request: Phase5AuthorizationRequest,
+        *,
+        evaluation_time: Optional[float] = None,
+    ) -> Phase5AuthorizationDecision:
         """Authorize a Phase 5 capability request.
 
         Returns a decision with audit trail. Performs no external actions.
@@ -424,7 +435,8 @@ class Phase5PolicyService:
             and core_actor.session_id == request.actor.session_id
         )
         if not actor_matches:
-            now = self._now()
+            now = self._now() if evaluation_time is None else float(evaluation_time)
+            _validate_finite_timestamp(now, "evaluation_time")
             decision = Phase5Decision(
                 request_id=request.request.request_id,
                 capability=request.request.capability,
@@ -438,7 +450,8 @@ class Phase5PolicyService:
             decision = replace(decision, audit_id=audit_id)
             return Phase5AuthorizationDecision(decision, audit_id)
 
-        now = self._now()
+        now = self._now() if evaluation_time is None else float(evaluation_time)
+        _validate_finite_timestamp(now, "evaluation_time")
         # Fetch all grants (including expired/revoked) so evaluator can return correct outcome
         grants = self.phase5_grants.list_for_helper(core_actor.actor_id, now, include_expired_revoked=True) if core_actor.actor == Actor.GUEST else ()
         consents = self.phase5_consents.list_for_owner(core_actor.actor_id, now) if core_actor.actor == Actor.OWNER else ()
@@ -525,7 +538,7 @@ class Phase5PolicyService:
             raise ValueError("expires_at must be in the future")
 
         grant = CapabilityGrant(
-            grant_id=grant_id or str(uuid.uuid4()),
+            grant_id=grant_id or self.id_factory(),
             helper_actor_id=helper_actor_id,
             owner_actor_id=owner_actor.actor_id,
             capability=capability,
@@ -562,7 +575,7 @@ class Phase5PolicyService:
             now = self._now()
 
         consent = ConsentRecord(
-            consent_id=consent_id or str(uuid.uuid4()),
+            consent_id=consent_id or self.id_factory(),
             owner_actor_id=owner_actor.actor_id,
             capability=capability,
             scope=scope,

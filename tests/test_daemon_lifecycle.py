@@ -155,7 +155,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
         "recognize_interrupt_audio",
         lambda _audio, *, short_utterance=False: "hikari stop",
     )
-    verify = MagicMock(return_value=False)
+    verify = MagicMock(return_value=True)
     monkeypatch.setattr(daemon, "verify_speaker", verify)
 
     class SpeechProcess:
@@ -185,7 +185,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     assert completed is False
     assert process.terminated is True
     assert daemon.hikari_state == daemon.HikariState.ACTIVE
-    verify.assert_not_called()
+    verify.assert_called_once()
 
 
 def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
@@ -235,7 +235,7 @@ def test_pocket_tts_process_uses_temporary_wav_and_cleans_it(monkeypatch, tmp_pa
     assert not output.exists()
 
 
-def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
+def test_explicit_stop_requires_speaker_verification(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.daemon_running = True
@@ -265,9 +265,9 @@ def test_explicit_stop_does_not_wait_for_speaker_verification(monkeypatch):
 
     process = SpeechProcess()
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is True
-    assert process.terminated is True
-    verify.assert_not_called()
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    assert process.terminated is False
+    verify.assert_called_once()
 
 
 def test_bare_stop_cannot_interrupt_speech(monkeypatch):
