@@ -530,9 +530,19 @@ def _extract_wake_command(text: str) -> str | None:
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if match is None:
-        return None
-    return match.group(1).strip()
+    if match is not None:
+        return match.group(1).strip()
+
+    # Both reviewed local Whisper base implementations render the isolated
+    # product name "Hikari" as "Hickory". Accept that observed spelling only
+    # as a standalone wake phrase. It cannot carry a command, and owner speaker
+    # verification still runs before activation.
+    alias_match = re.fullmatch(
+        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hickory[\s,.:;!?-]*\s*",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return "" if alias_match is not None else None
 
 
 def _listen_for_wake_word() -> None:

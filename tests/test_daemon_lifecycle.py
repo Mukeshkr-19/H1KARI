@@ -455,6 +455,32 @@ def test_wake_phrase_requires_explicit_hikari_form():
     assert daemon._is_wake_phrase("this has hikar somewhere") is False
 
 
+def test_observed_whisper_hickory_alias_is_standalone_and_owner_gated(monkeypatch):
+    assert daemon._is_wake_phrase("hickory") is True
+    assert daemon._is_wake_phrase("Hey, Hickory!") is True
+    assert daemon._extract_wake_command("hickory tell me the time") is None
+    assert daemon._extract_wake_command("the hickory tree") is None
+
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.LISTENING
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "hickory",
+    )
+    verify = MagicMock(return_value=False)
+    speak = MagicMock()
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
+    monkeypatch.setattr(daemon, "speak", speak)
+
+    daemon._listen_for_wake_word()
+
+    verify.assert_called_once()
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    speak.assert_not_called()
+
+
 def test_wake_command_can_share_the_verified_owner_utterance():
     assert daemon._extract_wake_command("Hikari, who won the final?") == "who won the final?"
     assert daemon._extract_wake_command("Hey Hikari tell me the weather") == "tell me the weather"
