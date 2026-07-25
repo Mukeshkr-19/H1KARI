@@ -3,6 +3,10 @@
 This checklist is **required human release evidence**. It does **not** claim that
 representative-user testing has already been performed.
 
+Follow the exact setup, test cases, expected results, and evidence template in
+[`PHASE_5_MANUAL_TEST_GUIDE.md`](PHASE_5_MANUAL_TEST_GUIDE.md). Do not check an
+item here until its mapped manual test passes.
+
 Mark each item with date, tester, environment, and pass/fail notes.
 
 ## Environments

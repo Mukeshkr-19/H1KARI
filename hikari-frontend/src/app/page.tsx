@@ -2134,6 +2134,7 @@ export default function Home() {
   const phase5StateRef = useRef<Phase5State>(INITIAL_PHASE5_STATE);
   const [phase5TeachTopic, setPhase5TeachTopic] = useState("");
   const [phase5GuideGoal, setPhase5GuideGoal] = useState("");
+  const [phase5GuideConsequential, setPhase5GuideConsequential] = useState(false);
   const [phase5CarePrompt, setPhase5CarePrompt] = useState("");
   const [phase5ChildActorId, setPhase5ChildActorId] = useState("child-1");
   const [phase5HelperActorId, setPhase5HelperActorId] = useState("helper-1");
@@ -2203,6 +2204,7 @@ export default function Home() {
     applyPhase5State(INITIAL_PHASE5_STATE);
     setPhase5TeachTopic("");
     setPhase5GuideGoal("");
+    setPhase5GuideConsequential(false);
     setPhase5CarePrompt("");
   }, [applyPhase5State]);
 
@@ -3141,8 +3143,9 @@ export default function Home() {
       request_id: requestId,
       capability: "guide_my_hands",
       goal: phase5GuideGoal.trim(),
+      ...(phase5GuideConsequential ? { action: "execute_step" } : {}),
     });
-  }, [beginPhase5Request, sendPhase5, phase5GuideGoal]);
+  }, [beginPhase5Request, sendPhase5, phase5GuideGoal, phase5GuideConsequential]);
 
   const preparePhase5Care = useCallback(() => {
     const requestId = beginPhase5Request();
@@ -3710,12 +3713,14 @@ export default function Home() {
               isOwner={isPaired}
               teachTopic={phase5TeachTopic}
               guideGoal={phase5GuideGoal}
+              guideConsequential={phase5GuideConsequential}
               carePrompt={phase5CarePrompt}
               childActorId={phase5ChildActorId}
               helperActorId={phase5HelperActorId}
               helperExpiresAt={phase5HelperExpiresAt}
               onTeachTopicChange={setPhase5TeachTopic}
               onGuideGoalChange={setPhase5GuideGoal}
+              onGuideConsequentialChange={setPhase5GuideConsequential}
               onCarePromptChange={setPhase5CarePrompt}
               onChildActorIdChange={setPhase5ChildActorId}
               onHelperActorIdChange={setPhase5HelperActorId}

@@ -60,6 +60,7 @@ H1KARI/
 - `docs/PHASE_5_CONTRACTS.md` - Phase 5 authority, consent, child, and helper boundaries.
 - `docs/PHASE_5_PROTOCOL.md` - production WebSocket session and proposal protocol.
 - `docs/PHASE_5_ACCESSIBILITY_CHECKLIST.md` - required human accessibility release evidence.
+- `docs/PHASE_5_MANUAL_TEST_GUIDE.md` - exact Phase 5 manual test steps and expected results.
 - `docs/VOICE_COMPANION.md` - voice behavior, controls, privacy, and failure boundaries.
 - `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
 - `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.

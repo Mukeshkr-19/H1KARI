@@ -5,7 +5,9 @@ import type { Phase5State } from "@/utils/phase5/phase5State";
 export interface GuideHandsPanelProps {
   readonly state: Phase5State;
   readonly goal: string;
+  readonly consequential: boolean;
   readonly onGoalChange: (value: string) => void;
+  readonly onConsequentialChange: (value: boolean) => void;
   readonly onPrepare: () => void;
   readonly onConfirm: () => void;
   readonly disabled?: boolean;
@@ -14,7 +16,9 @@ export interface GuideHandsPanelProps {
 export function GuideHandsPanel({
   state,
   goal,
+  consequential,
   onGoalChange,
+  onConsequentialChange,
   onPrepare,
   onConfirm,
   disabled = false,
@@ -40,6 +44,16 @@ export function GuideHandsPanel({
           className="w-full bg-[#1a1a2e] border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 min-h-[88px]"
         />
       </div>
+      <label className="flex min-h-[44px] items-center gap-3 text-sm text-gray-300">
+        <input
+          type="checkbox"
+          checked={consequential}
+          onChange={(event) => onConsequentialChange(event.target.checked)}
+          disabled={disabled || state.submitLocked}
+          className="h-5 w-5 rounded border-gray-600 focus:ring-2 focus:ring-blue-400"
+        />
+        This guidance includes a consequential step that requires my approval
+      </label>
       <button
         type="button"
         onClick={onPrepare}

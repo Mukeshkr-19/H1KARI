@@ -13,12 +13,14 @@ export interface Phase5PanelProps {
   readonly isOwner: boolean;
   readonly teachTopic: string;
   readonly guideGoal: string;
+  readonly guideConsequential: boolean;
   readonly carePrompt: string;
   readonly childActorId: string;
   readonly helperActorId: string;
   readonly helperExpiresAt: string;
   readonly onTeachTopicChange: (value: string) => void;
   readonly onGuideGoalChange: (value: string) => void;
+  readonly onGuideConsequentialChange: (value: boolean) => void;
   readonly onCarePromptChange: (value: string) => void;
   readonly onChildActorIdChange: (value: string) => void;
   readonly onHelperActorIdChange: (value: string) => void;
@@ -122,7 +124,9 @@ export function Phase5Panel(props: Phase5PanelProps) {
       <GuideHandsPanel
         state={props.state}
         goal={props.guideGoal}
+        consequential={props.guideConsequential}
         onGoalChange={props.onGuideGoalChange}
+        onConsequentialChange={props.onGuideConsequentialChange}
         onPrepare={props.onPrepareGuide}
         onConfirm={props.onConfirmApproval}
         disabled={!props.isOwner}
