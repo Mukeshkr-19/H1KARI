@@ -55,7 +55,7 @@ def test_ci_workflow_source_contracts():
     assert "python scripts/public_artifact_scan.py" in content
     assert "python -m pytest tests/test_protocol_v1.py -q" in content
     assert "npm ci" in content
-    assert "npm audit --audit-level=moderate" in content
+    assert "npm audit --omit=dev --audit-level=moderate" in content
     assert "npm run test:unit" in content
     assert "npm run lint" in content
     assert "npm run build" in content

@@ -2,7 +2,7 @@
 
 Status: generated audit input; not a final release notice or legal approval
 Source: `hikari-frontend/package-lock.json`
-Lock SHA-256: `c4ce5af84589839b8375a41aa86d4dd380269351e71b9e11ba9d2d1c91ac8b75`
+Lock SHA-256: `e148d1303b14f6e304542bc1396b3b143458da204cc095194fbd5452bdae6ab9`
 Package entries: 406
 
 Regenerate with `python scripts/frontend_third_party.py`. Verify with `python scripts/frontend_third_party.py --check`.
@@ -385,7 +385,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/minipass` | `minipass` | 7.1.2 | ISC |
 | `node_modules/minizlib` | `minizlib` | 3.1.0 | MIT |
 | `node_modules/ms` | `ms` | 2.1.3 | MIT |
-| `node_modules/nanoid` | `nanoid` | 3.3.15 | MIT |
+| `node_modules/nanoid` | `nanoid` | 3.3.16 | MIT |
 | `node_modules/napi-postinstall` | `napi-postinstall` | 0.3.2 | MIT |
 | `node_modules/natural-compare` | `natural-compare` | 1.4.0 | MIT |
 | `node_modules/next` | `next` | 15.5.21 | MIT |
@@ -408,7 +408,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/picocolors` | `picocolors` | 1.1.1 | ISC |
 | `node_modules/picomatch` | `picomatch` | 2.3.2 | MIT |
 | `node_modules/possible-typed-array-names` | `possible-typed-array-names` | 1.1.0 | MIT |
-| `node_modules/postcss` | `postcss` | 8.5.16 | MIT |
+| `node_modules/postcss` | `postcss` | 8.5.23 | MIT |
 | `node_modules/prelude-ls` | `prelude-ls` | 1.2.1 | MIT |
 | `node_modules/prop-types` | `prop-types` | 15.8.1 | MIT |
 | `node_modules/punycode` | `punycode` | 2.3.1 | MIT |
@@ -454,7 +454,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/supports-preserve-symlinks-flag` | `supports-preserve-symlinks-flag` | 1.0.0 | MIT |
 | `node_modules/tailwindcss` | `tailwindcss` | 4.1.11 | MIT |
 | `node_modules/tapable` | `tapable` | 2.2.2 | MIT |
-| `node_modules/tar` | `tar` | 7.5.19 | BlueOak-1.0.0 |
+| `node_modules/tar` | `tar` | 7.5.22 | BlueOak-1.0.0 |
 | `node_modules/tinyglobby` | `tinyglobby` | 0.2.14 | MIT |
 | `node_modules/tinyglobby/node_modules/fdir` | `fdir` | 6.4.6 | MIT |
 | `node_modules/tinyglobby/node_modules/picomatch` | `picomatch` | 4.0.4 | MIT |
