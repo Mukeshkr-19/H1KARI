@@ -114,6 +114,8 @@ def is_declarative_memory_statement(text: str) -> bool:
         r"\bmy\s+fav(?:ou?rite)?\s+[a-z][a-z\s-]{1,40}\s+is\b",
         r"\bi\s+study\s+(?:at|in)\b",
         r"\bremember\s+(?:this|that)\b",
+        r"\b(?:save|store|add|put)\s+(?:this|that)\s+"
+        r"(?:as\s+(?:a\s+)?memory|(?:in|to)\s+(?:my\s+)?(?:brain|memory))\b",
         r"\b(?:return\s+)?flight\b",
         r"\b(?:started|reached|arrive|arrival)\b",
     )

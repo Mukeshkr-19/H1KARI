@@ -81,6 +81,38 @@ def test_remember_this_skips_ask(episode_db):
     assert episode_db.get_active_accepted_memories(limit=5)
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "Remember this in my brain: My sister's name is Maya.",
+        "My sister's name is Maya, save this as a memory.",
+        "My sister's name is Maya. Remember this in my brain.",
+    ],
+)
+def test_explicit_brain_commands_save_family_name_and_recall_name_only(
+    episode_db, statement: str
+):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    assert orch.process_input(statement) == "Got it."
+    memories = episode_db.get_active_accepted_memories(limit=5)
+    assert len(memories) == 1
+    assert (memories[0].metadata or {}).get("person") == "Maya"
+    assert orch.process_input("what's my sister's name?") == "Maya"
+
+
+def test_save_this_as_memory_is_anaphoric_command():
+    from core.orchestrator import HIKARI_Orchestrator
+
+    assert HIKARI_Orchestrator._is_anaphoric_memory_command(
+        "save this as a memory"
+    )
+    assert HIKARI_Orchestrator._is_anaphoric_memory_command(
+        "remember this in my brain"
+    )
+
+
 def test_teach_long_term_helper(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))

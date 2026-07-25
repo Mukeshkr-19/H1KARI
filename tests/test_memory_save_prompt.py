@@ -103,3 +103,16 @@ def test_scope_question_is_voice_friendly():
     assert "session only" not in q.lower()
     assert q == 'Got it - "I live in City A".'
     assert is_explicit_remember_command("remember this: I prefer tea") is True
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "save this as a memory",
+        "save this to my brain",
+        "remember this in my brain",
+        "store that in memory",
+    ],
+)
+def test_explicit_brain_save_phrases(phrase: str):
+    assert is_explicit_remember_command(phrase)

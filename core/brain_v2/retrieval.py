@@ -364,11 +364,39 @@ class BrainV2Retrieval:
         if top.score < _SEMANTIC_MIN_SCORE:
             return self._no_reviewed_memory_reply(intent, query)
 
+        family_name = self._answer_family_name_query(query, semantic)
+        if family_name:
+            return family_name
+
         from core.brain_v2.natural_replies import format_reviewed_memory_recall
 
         prefix_yes = intent == INTENT_FAMILY_PERSON and "know" in query.lower()
         body = self._statement_from_hit(top)
         return format_reviewed_memory_recall(body, prefix_yes=prefix_yes)
+
+    def _answer_family_name_query(
+        self,
+        query: str,
+        hits: List[BrainV2MemoryHit],
+    ) -> Optional[str]:
+        """Answer direct household name questions with only the saved name."""
+        if not re.search(r"\bname\b", query or "", re.I):
+            return None
+        requested = requested_relations(query)
+        if not requested:
+            return None
+        accepted_by_id = self._accepted_by_memory_id()
+        for hit in hits:
+            memory_id = str((hit.metadata or {}).get("memory_id") or "")
+            memory = accepted_by_id.get(memory_id)
+            if not memory:
+                continue
+            meta = memory.metadata or {}
+            relation = str(meta.get("relation") or "").casefold()
+            person = str(meta.get("person") or "").strip()
+            if relation in requested and person:
+                return person
+        return None
 
     def best_stable_home_place(self) -> Optional[str]:
         """Best-effort stable home city label from accepted memories."""

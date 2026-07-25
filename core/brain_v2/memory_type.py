@@ -354,9 +354,23 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
             rel = "girlfriend"
         meta["relation"] = rel
 
+    name_declaration = re.search(
+        r"\bmy\s+(?P<relation>girlfriend|gf|partner|sister|brother|wife|husband|boyfriend)"
+        r"(?:'s)?\s+(?:full\s+)?name(?:d)?\s+is\s+"
+        r"(?P<person>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})"
+        r"(?=\s*(?:[,.;!?]|$))",
+        text,
+        re.I,
+    )
+    if name_declaration:
+        relation = name_declaration.group("relation").lower()
+        meta["relation"] = "girlfriend" if relation == "gf" else relation
+        meta["person"] = _title_person_name(name_declaration.group("person"))
+        return meta
+
     m2 = re.search(
         r"\bmy\s+(?:girlfriend|gf|partner|sister|brother|wife|husband|boyfriend)\s+"
-        r"([A-Z][a-z]{2,})",
+        r"(?!(?:name|named|is)\b)([A-Z][a-z]{2,})",
         text,
         re.I,
     )

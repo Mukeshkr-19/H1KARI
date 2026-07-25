@@ -474,11 +474,12 @@ def process(text):
 
 
 def is_stop_command(text: str) -> bool:
-    """Check if user wants to go back to listening mode"""
-    text_lower = text.lower().strip()
-    stop_phrases = [
+    """Return True only for an explicit command to resume wake-word listening."""
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    stop_phrases = {
         "bye",
         "goodbye",
+        "good bye",
         "exit",
         "stop",
         "go to sleep",
@@ -491,8 +492,8 @@ def is_stop_command(text: str) -> bool:
         "thanks",
         "okay goodbye",
         "see you later",
-    ]
-    return any(phrase in text_lower for phrase in stop_phrases)
+    }
+    return normalized in stop_phrases
 
 
 def _is_wake_phrase(text: str) -> bool:
@@ -518,6 +519,8 @@ def _extract_wake_command(text: str) -> str | None:
 def _listen_for_wake_word() -> None:
     global hikari_state
 
+    if hikari_state != HikariState.LISTENING:
+        return
     print("💤 ", end="\r", flush=True)
     with sr.Microphone() as source:
         r.adjust_for_ambient_noise(source, duration=0.5)
@@ -547,6 +550,8 @@ def _listen_for_wake_word() -> None:
 def _listen_for_active_command() -> None:
     global hikari_state
 
+    if hikari_state != HikariState.ACTIVE:
+        return
     print("👂 ", end="\r", flush=True)
     with sr.Microphone() as source:
         audio = r.listen(source, timeout=8, phrase_time_limit=30)
@@ -563,7 +568,6 @@ def _listen_for_active_command() -> None:
         speak("What should I have said?")
         return
     if is_stop_command(text):
-        speak("Talk to you later!")
         hikari_state = HikariState.LISTENING
         print("💤 Going to sleep... (still listening for 'hikari')\n")
         return

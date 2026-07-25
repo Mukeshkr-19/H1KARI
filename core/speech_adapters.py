@@ -302,16 +302,14 @@ class FasterWhisperSTTAdapter:
         model = self._load_model()
         options: dict = {"language": "en", "beam_size": 1}
         if mode == "wake":
-            # Wake phrases are commonly shorter than Whisper's default
-            # no-speech filter expects. Decode them without that filter, while
-            # retaining exact wake-phrase matching and speaker verification at
-            # the daemon boundary.
+            # Never prime the decoder with the wake word. A target hotword or
+            # prompt can turn owner speech, speaker echo, or room noise into a
+            # false activation. Keep normal no-speech filtering and require VAD;
+            # the daemon still applies exact wake matching and speaker auth.
             options.update(
                 condition_on_previous_text=False,
-                hotwords="HIKARI",
-                initial_prompt="HIKARI.",
-                no_speech_threshold=None,
                 without_timestamps=True,
+                vad_filter=True,
             )
         elif mode == "interrupt":
             # Unlike wake recognition, interruption decoding must not be
@@ -332,7 +330,7 @@ class FasterWhisperSTTAdapter:
         return self._transcribe(audio, mode="normal")
 
     def transcribe_short_utterance(self, audio: CapturedAudio) -> str:
-        """Transcribe a short local wake phrase without default no-speech filtering."""
+        """Transcribe a short local wake phrase without target-word prompting."""
         return self._transcribe(audio, mode="wake")
 
     def transcribe_interrupt_utterance(self, audio: CapturedAudio) -> str:

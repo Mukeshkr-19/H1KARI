@@ -286,7 +286,7 @@ def test_bare_stop_cannot_interrupt_speech(monkeypatch):
     process.terminate.assert_not_called()
 
 
-def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
+def test_stop_command_returns_active_daemon_to_silent_wake_listening(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
     daemon.hikari_state = daemon.HikariState.ACTIVE
@@ -298,7 +298,67 @@ def test_stop_command_returns_active_daemon_to_listening(monkeypatch):
     daemon._listen_for_active_command()
 
     assert daemon.hikari_state == daemon.HikariState.LISTENING
-    speak.assert_called_once_with("Talk to you later!")
+    speak.assert_not_called()
+
+
+def test_good_bye_variant_returns_to_silent_wake_listening(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    monkeypatch.setattr(daemon, "verify_speaker", lambda _audio: True)
+    monkeypatch.setattr(daemon, "recognize_audio", lambda _audio: "good bye")
+    speak = MagicMock()
+    process = MagicMock()
+    monkeypatch.setattr(daemon, "speak", speak)
+    monkeypatch.setattr(daemon, "process", process)
+
+    daemon._listen_for_active_command()
+
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    speak.assert_not_called()
+    process.assert_not_called()
+
+
+def test_non_wake_transcript_never_verifies_or_activates(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+    daemon.hikari_state = daemon.HikariState.LISTENING
+    monkeypatch.setattr(
+        daemon,
+        "recognize_audio",
+        lambda _audio, *, short_utterance=False: "ordinary conversation",
+    )
+    verify = MagicMock(return_value=True)
+    speak = MagicMock()
+    monkeypatch.setattr(daemon, "verify_speaker", verify)
+    monkeypatch.setattr(daemon, "speak", speak)
+
+    daemon._listen_for_wake_word()
+
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    verify.assert_not_called()
+    speak.assert_not_called()
+
+
+def test_listener_functions_fail_closed_outside_their_state(monkeypatch):
+    daemon.sr = _speech_module()
+    daemon.r = MagicMock()
+
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    daemon._listen_for_wake_word()
+    daemon.r.listen.assert_not_called()
+
+    daemon.hikari_state = daemon.HikariState.LISTENING
+    daemon._listen_for_active_command()
+    daemon.r.listen.assert_not_called()
+
+
+def test_stop_command_requires_an_explicit_full_utterance():
+    assert daemon.is_stop_command("goodbye") is True
+    assert daemon.is_stop_command("Good bye!") is True
+    assert daemon.is_stop_command("okay goodbye") is True
+    assert daemon.is_stop_command("please stop by the store") is False
+    assert daemon.is_stop_command("thanks for explaining that") is False
 
 
 def test_main_registers_shutdown_signals_before_listening(monkeypatch):

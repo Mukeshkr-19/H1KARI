@@ -328,10 +328,8 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
         "language": "en",
         "beam_size": 1,
         "condition_on_previous_text": False,
-        "hotwords": "HIKARI",
-        "initial_prompt": "HIKARI.",
-        "no_speech_threshold": None,
         "without_timestamps": True,
+        "vad_filter": True,
     }
 
 

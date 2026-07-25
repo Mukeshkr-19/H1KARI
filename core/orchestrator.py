@@ -1599,9 +1599,30 @@ class HIKARI_Orchestrator:
         if visit_answer and is_guest_visit_recall_question(user_input):
             return visit_answer
         v2_answer = self._try_brain_v2_recall_answer(user_input)
-        if not self._is_brain_v2_authoritative_personal_recall_answer(v2_answer):
+        if not (
+            self._is_brain_v2_authoritative_personal_recall_answer(v2_answer)
+            or self._is_concise_family_name_answer(user_input, v2_answer)
+        ):
             return self._brain_v2_no_reviewed_message(user_input)
         return v2_answer or self._brain_v2_no_reviewed_message(user_input)
+
+    @staticmethod
+    def _is_concise_family_name_answer(
+        user_input: str, answer: Optional[str]
+    ) -> bool:
+        """Authorize a bare name only for a direct reviewed family-name query."""
+        if not answer or not re.search(r"\bname\b", user_input or "", re.I):
+            return False
+        from core.brain_v2.recall_intent import requested_relations
+
+        if not requested_relations(user_input):
+            return False
+        return bool(
+            re.fullmatch(
+                r"[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3}",
+                answer.strip(),
+            )
+        )
 
     def _try_brain_v2_recall_answer(self, user_input: str) -> Optional[str]:
         if not self.brain_v2:
@@ -1846,8 +1867,9 @@ class HIKARI_Orchestrator:
         return bool(
             re.fullmatch(
                 r"(?:please\s+)?(?:remember|save|store|add|had|put)\s+"
-                r"(?:this|that|it)(?:\s+(?:to|in)\s+(?:my\s+)?"
-                r"(?:memory|brain)(?:\s+database)?)?(?:\s+too)?",
+                r"(?:this|that|it)(?:(?:\s+(?:to|in)\s+(?:my\s+)?"
+                r"(?:memory|brain)(?:\s+database)?)|"
+                r"(?:\s+as\s+(?:a\s+)?memory))?(?:\s+too)?",
                 normalized,
             )
             or re.fullmatch(

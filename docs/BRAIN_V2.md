@@ -96,6 +96,8 @@ Rejected patterns include: assistant filler (“okay”, “got it”), vague st
 | Promote to neural memory | **Manual + explicit** — only with `--brain-v2-accept <id> --confirm-promote PROMOTE` (exact, case-sensitive). All other accept paths stay Brain v2-only. |
 | Retrieval in prompts | Accepted memories for semantic layer; pending/rejected never semantic truth |
 
+Durable-memory phrasing supports `Remember this: <fact>`, `Remember this in my brain: <fact>`, and `Save this as a memory: <fact>`. The last two also work as standalone follow-ups to the most recent eligible owner statement.
+
 ## Review CLI
 
 ```bash

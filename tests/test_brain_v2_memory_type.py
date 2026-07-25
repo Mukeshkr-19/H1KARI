@@ -78,6 +78,20 @@ def test_infer_memory_type(statement, expected_type):
         assert inferred.candidate_type == expected_type
 
 
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "My sister's name is Maya.",
+        "my sister name is maya.",
+    ],
+)
+def test_family_name_inference_uses_declared_name(statement):
+    inferred = infer_memory_type(statement)
+    assert inferred.candidate_type == "relation"
+    assert inferred.metadata.get("relation") == "sister"
+    assert inferred.metadata.get("person") == "Maya"
+
+
 def test_degree_statement_normalizes_to_education():
     normalized = normalize_user_education_statement(
         "I am doing my bachelors in computer science in university at City A."

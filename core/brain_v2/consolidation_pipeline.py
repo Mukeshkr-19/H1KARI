@@ -28,9 +28,6 @@ from core.brain_v2.schemas import (
     TranscriptSegment,
 )
 
-_REMEMBER = re.compile(
-    r"\bremember\s+(?:this|that)\b[:\s,-]*(.+)", re.I
-)
 _IDENTITY = re.compile(r"\bmy\s+name\s+is\s+([A-Za-z][\w\s'-]{1,60})", re.I)
 _CALL_ME = re.compile(
     r"\b(?:you can\s+)?call\s+me\s+([A-Za-z][\w'-]*(?:\s+[A-Z])?)\b",
@@ -243,15 +240,20 @@ class EpisodeConsolidationPipeline:
 
         found: List[Tuple[str, str, float, Optional[dict]]] = []
 
-        m = _REMEMBER.search(text)
-        if m:
-            content = (m.group(1) or "").strip().rstrip(".")
-            statement = content if len(content) >= 8 else text
+        from core.brain_v2.owner_auto_trust import (
+            is_explicit_remember_command,
+            strip_explicit_memory_command,
+        )
+
+        explicit_remember = is_explicit_remember_command(text)
+        if explicit_remember:
+            statement = strip_explicit_memory_command(text).strip()
             inferred = infer_memory_type(statement, explicit_remember=True)
             extra = {"explicit_remember": True, **inferred.metadata}
             found.append(
                 (statement, inferred.candidate_type, inferred.confidence, extra)
             )
+            text = statement
 
         m_call = _CALL_ME.search(text)
         if m_call:

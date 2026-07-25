@@ -27,7 +27,32 @@ _THIRD_PARTY_EDUCATION = re.compile(
     re.I,
 )
 
-_EXPLICIT_REMEMBER = re.compile(r"\bremember\s+(?:this|that)\b", re.I)
+_EXPLICIT_REMEMBER = re.compile(
+    r"\b(?:"
+    r"remember\s+(?:this|that)(?:\s+(?:in|to)\s+(?:my\s+)?(?:brain|memory))?|"
+    r"(?:save|store|add|put)\s+(?:this|that)\s+"
+    r"(?:as\s+(?:a\s+)?memory|(?:in|to)\s+(?:my\s+)?(?:brain|memory))"
+    r")\b",
+    re.I,
+)
+
+_EXPLICIT_MEMORY_PREFIX = re.compile(
+    r"^\s*(?:please\s+)?(?:"
+    r"remember\s+(?:this|that)(?:\s+(?:in|to)\s+(?:my\s+)?(?:brain|memory))?|"
+    r"(?:save|store|add|put)\s+(?:this|that)\s+"
+    r"(?:as\s+(?:a\s+)?memory|(?:in|to)\s+(?:my\s+)?(?:brain|memory))"
+    r")(?:\s*[:;,\-]\s*|\s+)(?P<body>.+?)\s*$",
+    re.I,
+)
+
+_EXPLICIT_MEMORY_SUFFIX = re.compile(
+    r"^(?P<body>.+?)(?:\s*[,;.\-]\s*|\s+)(?:please\s+)?(?:"
+    r"remember\s+(?:this|that)(?:\s+(?:in|to)\s+(?:my\s+)?(?:brain|memory))?|"
+    r"(?:save|store|add|put)\s+(?:this|that)\s+"
+    r"(?:as\s+(?:a\s+)?memory|(?:in|to)\s+(?:my\s+)?(?:brain|memory))"
+    r")\s*[.!?]*\s*$",
+    re.I,
+)
 
 
 def is_explicit_remember_command(text: str) -> bool:
@@ -36,6 +61,18 @@ def is_explicit_remember_command(text: str) -> bool:
     if is_memory_rejection_statement(text):
         return False
     return bool(_EXPLICIT_REMEMBER.search(text or ""))
+
+
+def strip_explicit_memory_command(text: str) -> str:
+    """Return the owner-authored fact without a leading/trailing save command."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    for pattern in (_EXPLICIT_MEMORY_PREFIX, _EXPLICIT_MEMORY_SUFFIX):
+        match = pattern.match(raw)
+        if match:
+            return match.group("body").strip()
+    return raw
 
 
 def _quality_eligible(meta: dict, user_text: str) -> bool:
