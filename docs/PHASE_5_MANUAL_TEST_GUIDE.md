@@ -31,7 +31,7 @@ the evidence.
 From the H1KARI repository:
 
 ```bash
-cd /Users/sanjay/Documents/HIKARI-projects/H1KARI
+cd path/to/H1KARI
 .venv/bin/python -m pytest \
   tests/test_phase5_contracts.py \
   tests/test_phase5_policy.py \
@@ -63,7 +63,7 @@ Use synthetic text only, such as `photosynthesis`, `replace a light bulb`, and
 Terminal 1:
 
 ```bash
-cd /Users/sanjay/Documents/HIKARI-projects/H1KARI
+cd path/to/H1KARI
 npm run server
 ```
 
@@ -73,7 +73,7 @@ publish it.
 Terminal 2:
 
 ```bash
-cd /Users/sanjay/Documents/HIKARI-projects/H1KARI/hikari-frontend
+cd path/to/H1KARI/hikari-frontend
 npm run dev
 ```
 
