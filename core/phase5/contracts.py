@@ -462,9 +462,10 @@ CAPABILITY_REQUIRES_APPROVAL: frozenset[Capability] = frozenset({
 ACTOR_PROHIBITED: dict[Phase5Actor, frozenset[Capability]] = {
     Phase5Actor.GUEST: frozenset(Capability),
     Phase5Actor.SYSTEM: frozenset(Capability),
+    # Child mode may request supportive, child-scoped Care, but it always
+    # requires explicit owner approval (see evaluate_phase5_request).
     Phase5Actor.CHILD: frozenset({
         Capability.TRUSTED_HELPER_ACCESS,
-        Capability.CARE,
     }),
 }
 

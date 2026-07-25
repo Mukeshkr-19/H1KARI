@@ -77,6 +77,37 @@ from core.pairing import PairingRuntime
 from core.visual_transfer import VisualTransferRuntime
 from core.vision import VisionRuntime
 
+from core.action_policy import Actor
+from core.phase5.bootstrap import Phase5BootstrapError, Phase5Subsystem, create_phase5_subsystem
+from core.phase5.contracts import (
+    Capability,
+    Outcome,
+    Phase5Actor,
+    Phase5ActorContext,
+    ScopeConstraint,
+)
+from core.phase5.capability_service import CapabilityExecutionRequest
+from core.phase5.runtime_guard import Phase5RuntimeContext, Phase5RuntimeRequest
+from core.phase5.session_lifecycle import (
+    AuthoritySource,
+    SessionActivationRequest,
+    SessionAuthoritySnapshot,
+    SessionState,
+    SessionType,
+)
+from core.phase5.transport import (
+    PHASE5_CLIENT_MESSAGE_TYPES,
+    build_approval_required_message,
+    build_capability_proposal_message,
+    build_helper_grants_message,
+    build_phase5_error,
+    outcome_to_error_code,
+    session_to_update_message,
+)
+
+_PHASE5_PENDING_APPROVAL_TTL_SECONDS = 300.0
+_PHASE5_MAX_PENDING_APPROVALS_PER_CONNECTION = 32
+
 
 class _EmptyPreparationRegistry:
     """No-op registry stand-in when a prepare registry was not injected."""
@@ -161,6 +192,7 @@ class WebSocketServer:
         handoff_transport: Optional[HandoffTransportAdapter] = None,
         visual_transfer_runtime: Optional[VisualTransferRuntime] = None,
         vision_runtime: Optional[VisionRuntime] = None,
+        phase5_subsystem: Optional[Phase5Subsystem] = None,
     ):
         self.orchestrator = orchestrator
         self.host = host
@@ -210,6 +242,9 @@ class WebSocketServer:
         self._scheduled_runner_task: asyncio.Task | None = None
         self._phase4_sweeper_task: asyncio.Task | None = None
         self._scheduled_runner = None
+        self._phase5_subsystem: Phase5Subsystem | None = phase5_subsystem
+        self._phase5_bootstrap_failed = False
+        self._phase5_pending_approvals: Dict[str, Dict[str, dict]] = {}
 
     def _voice_companion_enabled(self) -> bool:
         return is_voice_companion_enabled()
@@ -513,6 +548,7 @@ class WebSocketServer:
                     self._document_jobs.pop(key, None)
             self._connection_tokens.pop(client_key, None)
             self._paired_client_ids.discard(client_key)
+            self._phase5_pending_approvals.pop(client_key, None)
             self._pair_attempts.pop(client_key, None)
             self.device_info.pop(client_key, None)
             self._companion_bridges.pop(client_key, None)
@@ -1140,6 +1176,605 @@ class WebSocketServer:
             )
             await self._send_phase4_message(websocket, vision_result)
 
+
+    def _get_phase5_subsystem(self) -> Phase5Subsystem | None:
+        """Lazy Phase 5 composition. Fail closed when bootstrap is unavailable."""
+        if self._phase5_subsystem is not None:
+            return self._phase5_subsystem
+        if self._phase5_bootstrap_failed:
+            return None
+        try:
+            self._phase5_subsystem = create_phase5_subsystem()
+        except Phase5BootstrapError:
+            self._phase5_bootstrap_failed = True
+            return None
+        except Exception:
+            self._phase5_bootstrap_failed = True
+            return None
+        return self._phase5_subsystem
+
+    async def _send_phase5_message(self, websocket, message: dict) -> None:
+        error = validate_server_message(message)
+        if error is not None:
+            request_id = message.get("request_id")
+            if not isinstance(request_id, str) or not request_id:
+                request_id = "invalid-request"
+            message = build_phase5_error(request_id=request_id, code="internal_error")
+            if validate_server_message(message) is not None:
+                message = {
+                    "type": "phase5_error",
+                    "request_id": "invalid-request",
+                    "protocol_version": 1,
+                    "code": "internal_error",
+                }
+        await websocket.send(json.dumps(message))
+
+    def _phase5_request_id(self, data: dict) -> str:
+        request_id = data.get("request_id")
+        if isinstance(request_id, str) and re.fullmatch(
+            r"^[a-z0-9][a-z0-9_.-]{0,79}$", request_id
+        ):
+            return request_id
+        return "invalid-request"
+
+    def _queue_phase5_approval(
+        self,
+        websocket,
+        request_id: str,
+        pending: dict,
+        now: float,
+    ) -> str | None:
+        """Store one bounded, expiring approval request for this connection."""
+        client_key = str(id(websocket))
+        pending_map = self._phase5_pending_approvals.setdefault(client_key, {})
+        for key, value in tuple(pending_map.items()):
+            if float(value.get("expires_at", 0.0)) <= now:
+                pending_map.pop(key, None)
+        if request_id in pending_map:
+            return "duplicate_request"
+        if len(pending_map) >= _PHASE5_MAX_PENDING_APPROVALS_PER_CONNECTION:
+            return "unavailable"
+        pending["expires_at"] = now + _PHASE5_PENDING_APPROVAL_TTL_SECONDS
+        pending_map[request_id] = pending
+        return None
+
+    async def _handle_phase5_control(self, websocket, data: dict) -> None:
+        """Route Phase 5 frames through server-derived identity and fail-closed services."""
+        request_id = self._phase5_request_id(data)
+        context = self._derive_actor_context(websocket)
+        actor = context.actor_context
+
+        # Guests / unpaired / non-loopback never receive Phase 5 authority.
+        if actor.actor is not Actor.OWNER or not context.is_paired:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="unauthorized"),
+            )
+            return
+
+        subsystem = self._get_phase5_subsystem()
+        if subsystem is None:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="unavailable"),
+            )
+            return
+
+        msg_type = data.get("type")
+        try:
+            if msg_type == "phase5_session_activate":
+                await self._phase5_session_activate(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_session_status":
+                await self._phase5_session_status(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_session_close":
+                await self._phase5_session_transition(
+                    websocket, data, actor, subsystem, SessionState.CLOSED
+                )
+            elif msg_type == "phase5_session_lock":
+                await self._phase5_session_transition(
+                    websocket, data, actor, subsystem, SessionState.LOCKED
+                )
+            elif msg_type == "phase5_session_revoke":
+                await self._phase5_session_transition(
+                    websocket, data, actor, subsystem, SessionState.REVOKED
+                )
+            elif msg_type == "phase5_capability_prepare":
+                await self._phase5_capability_prepare(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_capability_confirm":
+                await self._phase5_capability_confirm(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_helper_grant_create":
+                await self._phase5_helper_grant_create(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_helper_grant_list":
+                await self._phase5_helper_grant_list(websocket, data, actor, subsystem)
+            elif msg_type == "phase5_helper_grant_revoke":
+                await self._phase5_helper_grant_revoke(websocket, data, actor, subsystem)
+            else:
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code="invalid_request"),
+                )
+        except Exception:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="internal_error"),
+            )
+
+    async def _phase5_session_activate(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        runtime = subsystem.runtime_service
+        if runtime is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+
+        session_type = SessionType(str(data["session_type"]))
+        capabilities = tuple(Capability(value) for value in data["capabilities"])
+        expires_at = float(data["expires_at"])
+        owner_actor_id = actor.actor_id
+        session_actor_id = owner_actor_id
+        grant = None
+        evidence = None
+        source = AuthoritySource.OWNER_DIRECT
+
+        if session_type is SessionType.CHILD:
+            session_actor_id = str(data.get("session_actor_id") or "")
+            evidence = data.get("activation_evidence")
+            if not session_actor_id or not evidence:
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code="invalid_request"),
+                )
+                return
+            source = AuthoritySource.CHILD_ACTIVATION
+        elif session_type is SessionType.TRUSTED_HELPER:
+            session_actor_id = str(data.get("session_actor_id") or "")
+            grant_id = data.get("grant_id")
+            if not session_actor_id or not isinstance(grant_id, str):
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code="invalid_request"),
+                )
+                return
+            grant = subsystem.policy_service.get_helper_grant(grant_id)
+            if grant is None:
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code="not_found"),
+                )
+                return
+            source = AuthoritySource.HELPER_GRANT
+
+        authority = SessionAuthoritySnapshot(
+            source=source,
+            owner_actor_id=owner_actor_id,
+            grant=grant,
+            activation_evidence=evidence if isinstance(evidence, str) else None,
+        )
+        activation = SessionActivationRequest(
+            request_id=request_id,
+            session_type=session_type,
+            owner_actor_id=owner_actor_id,
+            session_actor_id=session_actor_id,
+            requested_capabilities=capabilities,
+            requested_expires_at=expires_at,
+            authority_snapshot=authority,
+        )
+        decision = await asyncio.to_thread(runtime.activate_session, actor, activation)
+        if decision.outcome is Outcome.ALLOW and decision.session is not None:
+            await self._send_phase5_message(
+                websocket,
+                session_to_update_message(request_id=request_id, session=decision.session),
+            )
+            return
+        code = outcome_to_error_code(decision.outcome)
+        await self._send_phase5_message(
+            websocket, build_phase5_error(request_id=request_id, code=code)
+        )
+
+    async def _phase5_session_status(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        runtime = subsystem.runtime_service
+        if runtime is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+        session_id = str(data["session_id"])
+        session = await asyncio.to_thread(
+            runtime.get_session_status, session_id, actor.actor_id
+        )
+        if session is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="not_found")
+            )
+            return
+        await self._send_phase5_message(
+            websocket,
+            session_to_update_message(request_id=request_id, session=session),
+        )
+
+    async def _phase5_session_transition(
+        self, websocket, data, actor, subsystem, to_state: SessionState
+    ) -> None:
+        request_id = self._phase5_request_id(data)
+        runtime = subsystem.runtime_service
+        if runtime is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+        session_id = str(data["session_id"])
+        authority = SessionAuthoritySnapshot(
+            source=AuthoritySource.OWNER_DIRECT,
+            owner_actor_id=actor.actor_id,
+        )
+        decision = await asyncio.to_thread(
+            runtime.transition_session,
+            session_id,
+            to_state,
+            actor.actor_id,
+            authority,
+        )
+        if decision.outcome is Outcome.ALLOW and decision.session is not None:
+            await self._send_phase5_message(
+                websocket,
+                session_to_update_message(request_id=request_id, session=decision.session),
+            )
+            return
+        code = outcome_to_error_code(decision.outcome)
+        reason_value = getattr(getattr(decision, "reason", None), "value", "")
+        if isinstance(reason_value, str) and "missing" in reason_value:
+            code = "not_found"
+        await self._send_phase5_message(
+            websocket, build_phase5_error(request_id=request_id, code=code)
+        )
+
+    async def _phase5_capability_prepare(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        runtime = subsystem.runtime_service
+        capability_service = subsystem.capability_service
+        if runtime is None or capability_service is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+
+        capability = Capability(str(data["capability"]))
+        action = data.get("action") if isinstance(data.get("action"), str) and data.get("action") else None
+        resource = data.get("resource") if isinstance(data.get("resource"), str) and data.get("resource") else None
+        data_subject = data.get("data_subject") if isinstance(data.get("data_subject"), str) and data.get("data_subject") else None
+        rt_request = Phase5RuntimeRequest(
+            request_id=request_id,
+            capability=capability,
+            context=Phase5RuntimeContext(actor_context=actor, source="websocket"),
+            action=action,
+            resource=resource,
+            data_subject=data_subject,
+            user_initiated=True,
+            now=float(subsystem.policy_service.clock()),
+        )
+        decision = await asyncio.to_thread(runtime.authorize, rt_request)
+        if decision.outcome is Outcome.REQUIRE_APPROVAL or decision.approval_required:
+            pending = {
+                "capability": capability.value,
+                "topic": data.get("topic"),
+                "goal": data.get("goal"),
+                "care_prompt": data.get("care_prompt"),
+                "action": data.get("action"),
+                "resource": data.get("resource"),
+                "data_subject": data.get("data_subject"),
+                "actor_id": actor.actor_id,
+                "session_id": actor.session_id,
+            }
+            queue_error = self._queue_phase5_approval(
+                websocket, request_id, pending, rt_request.now
+            )
+            if queue_error is not None:
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code=queue_error),
+                )
+                return
+            await self._send_phase5_message(
+                websocket,
+                build_approval_required_message(
+                    request_id=request_id,
+                    pending_request_id=request_id,
+                    capability=capability,
+                ),
+            )
+            return
+        if decision.outcome is not Outcome.ALLOW:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(
+                    request_id=request_id,
+                    code=outcome_to_error_code(decision.outcome),
+                ),
+            )
+            return
+
+        phase5_actor = Phase5ActorContext(
+            actor_id=actor.actor_id,
+            actor=Phase5Actor.OWNER,
+            session_id=actor.session_id,
+            source="websocket",
+        )
+        exec_request = CapabilityExecutionRequest(
+            request_id=request_id,
+            actor=phase5_actor,
+            capability=capability,
+            action=rt_request.action,
+            resource=rt_request.resource,
+            data_subject=rt_request.data_subject,
+            topic=data.get("topic") if isinstance(data.get("topic"), str) else None,
+            goal=data.get("goal") if isinstance(data.get("goal"), str) else None,
+            care_prompt=data.get("care_prompt") if isinstance(data.get("care_prompt"), str) else None,
+        )
+        prepared = await asyncio.to_thread(capability_service.prepare, exec_request, decision)
+        if prepared.outcome is Outcome.REQUIRE_APPROVAL or (
+            prepared.approval_required and prepared.outcome is not Outcome.ALLOW
+        ):
+            pending = {
+                "capability": capability.value,
+                "topic": data.get("topic"),
+                "goal": data.get("goal"),
+                "care_prompt": data.get("care_prompt"),
+                "action": data.get("action"),
+                "resource": data.get("resource"),
+                "data_subject": data.get("data_subject"),
+                "actor_id": actor.actor_id,
+                "session_id": actor.session_id,
+            }
+            queue_error = self._queue_phase5_approval(
+                websocket, request_id, pending, rt_request.now
+            )
+            if queue_error is not None:
+                await self._send_phase5_message(
+                    websocket,
+                    build_phase5_error(request_id=request_id, code=queue_error),
+                )
+                return
+            await self._send_phase5_message(
+                websocket,
+                build_approval_required_message(
+                    request_id=request_id,
+                    pending_request_id=request_id,
+                    capability=capability,
+                ),
+            )
+            return
+        if prepared.outcome is not Outcome.ALLOW:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(
+                    request_id=request_id,
+                    code=outcome_to_error_code(prepared.outcome),
+                ),
+            )
+            return
+        await self._send_phase5_message(
+            websocket,
+            build_capability_proposal_message(
+                request_id=request_id,
+                capability=capability,
+                decision=prepared,
+            ),
+        )
+
+    async def _phase5_capability_confirm(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        pending_request_id = str(data["pending_request_id"])
+        client_key = str(id(websocket))
+        pending_map = self._phase5_pending_approvals.get(client_key, {})
+        pending = pending_map.pop(pending_request_id, None)
+        if pending is None:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="stale_request"),
+            )
+            return
+        now = float(subsystem.policy_service.clock())
+        if float(pending.get("expires_at", 0.0)) <= now:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="stale_request"),
+            )
+            return
+        if pending.get("actor_id") != actor.actor_id:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="unauthorized"),
+            )
+            return
+
+        capability = Capability(str(pending["capability"]))
+        try:
+            await asyncio.to_thread(
+                lambda: subsystem.policy_service.issue_owner_consent(
+                    owner_actor=actor,
+                    capability=capability,
+                    scope=ScopeConstraint(
+                        capability=capability,
+                        data_subject=pending.get("data_subject"),
+                        resource_pattern=pending.get("resource"),
+                        allowed_actions=(pending["action"],)
+                        if isinstance(pending.get("action"), str) and pending["action"]
+                        else (),
+                    ),
+                    expires_at=now + _PHASE5_PENDING_APPROVAL_TTL_SECONDS,
+                    consent_id=("consent-" + pending_request_id)[:80],
+                )
+            )
+        except Exception:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(request_id=request_id, code="denied"),
+            )
+            return
+
+        runtime = subsystem.runtime_service
+        capability_service = subsystem.capability_service
+        if runtime is None or capability_service is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+
+        action = pending.get("action") if isinstance(pending.get("action"), str) and pending.get("action") else None
+        resource = pending.get("resource") if isinstance(pending.get("resource"), str) and pending.get("resource") else None
+        data_subject = pending.get("data_subject") if isinstance(pending.get("data_subject"), str) and pending.get("data_subject") else None
+        rt_request = Phase5RuntimeRequest(
+            request_id=pending_request_id,
+            capability=capability,
+            context=Phase5RuntimeContext(actor_context=actor, source="websocket"),
+            action=action,
+            resource=resource,
+            data_subject=data_subject,
+            user_initiated=True,
+            now=float(subsystem.policy_service.clock()),
+        )
+        decision = await asyncio.to_thread(runtime.authorize, rt_request)
+        if decision.outcome is Outcome.REQUIRE_APPROVAL:
+            await self._send_phase5_message(
+                websocket,
+                build_approval_required_message(
+                    request_id=request_id,
+                    pending_request_id=pending_request_id,
+                    capability=capability,
+                ),
+            )
+            self._phase5_pending_approvals.setdefault(client_key, {})[pending_request_id] = pending
+            return
+        if decision.outcome is not Outcome.ALLOW:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(
+                    request_id=request_id,
+                    code=outcome_to_error_code(decision.outcome),
+                ),
+            )
+            return
+
+        phase5_actor = Phase5ActorContext(
+            actor_id=actor.actor_id,
+            actor=Phase5Actor.OWNER,
+            session_id=actor.session_id,
+            source="websocket",
+        )
+        exec_request = CapabilityExecutionRequest(
+            request_id=pending_request_id,
+            actor=phase5_actor,
+            capability=capability,
+            action=rt_request.action,
+            resource=rt_request.resource,
+            data_subject=rt_request.data_subject,
+            topic=pending.get("topic") if isinstance(pending.get("topic"), str) else None,
+            goal=pending.get("goal") if isinstance(pending.get("goal"), str) else None,
+            care_prompt=pending.get("care_prompt") if isinstance(pending.get("care_prompt"), str) else None,
+        )
+        prepared = await asyncio.to_thread(capability_service.prepare, exec_request, decision)
+        if prepared.outcome is not Outcome.ALLOW:
+            await self._send_phase5_message(
+                websocket,
+                build_phase5_error(
+                    request_id=request_id,
+                    code=outcome_to_error_code(prepared.outcome),
+                ),
+            )
+            return
+        await self._send_phase5_message(
+            websocket,
+            build_capability_proposal_message(
+                request_id=request_id,
+                capability=capability,
+                decision=prepared,
+            ),
+        )
+
+    async def _phase5_helper_grant_create(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        if actor.actor is not Actor.OWNER:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unauthorized")
+            )
+            return
+        capability = Capability(str(data["capability"]))
+        allowed = data.get("allowed_actions") or []
+        scope = ScopeConstraint(
+            capability=capability,
+            data_subject=data.get("data_subject") if isinstance(data.get("data_subject"), str) else None,
+            resource_pattern=data.get("resource_pattern") if isinstance(data.get("resource_pattern"), str) else None,
+            allowed_actions=tuple(allowed) if isinstance(allowed, list) else (),
+        )
+        try:
+            grant = await asyncio.to_thread(
+                lambda: subsystem.policy_service.issue_helper_grant(
+                    owner_actor=actor,
+                    helper_actor_id=str(data["helper_actor_id"]),
+                    capability=capability,
+                    scope=scope,
+                    expires_at=float(data["expires_at"]),
+                    grant_id=("grant-" + request_id)[:80],
+                )
+            )
+        except Exception:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="denied")
+            )
+            return
+        await self._send_phase5_message(
+            websocket,
+            build_helper_grants_message(request_id=request_id, grants=[grant]),
+        )
+
+    async def _phase5_helper_grant_list(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        if actor.actor is not Actor.OWNER:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unauthorized")
+            )
+            return
+        grants = await asyncio.to_thread(
+            subsystem.policy_service.phase5_grants.list_for_owner, actor.actor_id
+        )
+        await self._send_phase5_message(
+            websocket,
+            build_helper_grants_message(request_id=request_id, grants=grants),
+        )
+
+    async def _phase5_helper_grant_revoke(self, websocket, data, actor, subsystem) -> None:
+        request_id = self._phase5_request_id(data)
+        if actor.actor is not Actor.OWNER:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unauthorized")
+            )
+            return
+        grant_id = str(data["grant_id"])
+        runtime = subsystem.runtime_service
+        if runtime is None:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="unavailable")
+            )
+            return
+        revoked = await asyncio.to_thread(
+            runtime.revoke_helper_access, grant_id, actor.actor_id
+        )
+        if not revoked:
+            await self._send_phase5_message(
+                websocket, build_phase5_error(request_id=request_id, code="not_found")
+            )
+            return
+        grants = await asyncio.to_thread(
+            subsystem.policy_service.phase5_grants.list_for_owner, actor.actor_id
+        )
+        await self._send_phase5_message(
+            websocket,
+            build_helper_grants_message(request_id=request_id, grants=grants),
+        )
+
+
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
         try:
@@ -1163,6 +1798,20 @@ class WebSocketServer:
 
             msg_type = data.get("type", "")
             client_id = str(id(websocket))
+
+            if msg_type in PHASE5_CLIENT_MESSAGE_TYPES:
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    await self._send_phase5_message(
+                        websocket,
+                        build_phase5_error(
+                            request_id=self._phase5_request_id(data),
+                            code="invalid_request",
+                        ),
+                    )
+                    return
+                await self._handle_phase5_control(websocket, data)
+                return
 
             if msg_type in {
                 "pairing_prepare",

@@ -82,6 +82,16 @@ import {
   parsePhase4ServerMessage,
   type Phase4ServerMessage,
 } from "@/utils/phase4/phase4Protocol";
+import { Phase5Panel } from "@/components/phase5/Phase5Panel";
+import {
+  encodePhase5ClientMessage,
+  parsePhase5ServerMessage,
+} from "@/utils/phase5/phase5Protocol";
+import {
+  INITIAL_PHASE5_STATE,
+  reducePhase5State,
+  type Phase5State,
+} from "@/utils/phase5/phase5State";
 import {
   createInitialProposalLifecycleState,
   reduceProposalLifecycle,
@@ -2119,6 +2129,45 @@ export default function Home() {
     ws.send(JSON.stringify(encoded));
   }, [reminderFields, isProductivityPreparePending]);
 
+
+  const [phase5State, setPhase5State] = useState<Phase5State>(INITIAL_PHASE5_STATE);
+  const phase5StateRef = useRef<Phase5State>(INITIAL_PHASE5_STATE);
+  const [phase5TeachTopic, setPhase5TeachTopic] = useState("");
+  const [phase5GuideGoal, setPhase5GuideGoal] = useState("");
+  const [phase5CarePrompt, setPhase5CarePrompt] = useState("");
+  const [phase5ChildActorId, setPhase5ChildActorId] = useState("child-1");
+  const [phase5HelperActorId, setPhase5HelperActorId] = useState("helper-1");
+  const [phase5HelperExpiresAt, setPhase5HelperExpiresAt] = useState(() =>
+    String(Math.floor(Date.now() / 1000) + 3600),
+  );
+
+  const applyPhase5State = useCallback((next: Phase5State) => {
+    phase5StateRef.current = next;
+    setPhase5State(next);
+  }, []);
+
+  const sendPhase5 = useCallback((type: string, fields: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    ws.send(encodePhase5ClientMessage(type, fields));
+  }, []);
+
+  const beginPhase5Request = useCallback((status?: Phase5State["status"]) => {
+    const requestId = createCanonicalRequestId("p5");
+    const next = reducePhase5State(phase5StateRef.current, {
+      type: "phase5/begin_request",
+      requestId,
+      status,
+    });
+    if (next === phase5StateRef.current && next.submitLocked) {
+      return null;
+    }
+    applyPhase5State(next);
+    return requestId;
+  }, [applyPhase5State]);
+
   const resetReminderForm = useCallback(() => {
     if (isProductivityPreparePending()) {
       return;
@@ -2151,7 +2200,11 @@ export default function Home() {
     visionAnalysisStateRef.current = initVision;
     setVisionAnalysisState(initVision);
     visionRequestIdRef.current = null;
-  }, []);
+    applyPhase5State(INITIAL_PHASE5_STATE);
+    setPhase5TeachTopic("");
+    setPhase5GuideGoal("");
+    setPhase5CarePrompt("");
+  }, [applyPhase5State]);
 
   const applyPhase4ServerMessage = useCallback(
     (msg: Phase4ServerMessage) => {
@@ -2825,6 +2878,16 @@ export default function Home() {
     };
 
     ws.onmessage = (event) => {
+      const phase5Message = parsePhase5ServerMessage(event.data);
+      if (phase5Message) {
+        applyPhase5State(
+          reducePhase5State(phase5StateRef.current, {
+            type: "phase5/apply_server",
+            message: phase5Message,
+          }),
+        );
+        return;
+      }
       const phase4Message = parsePhase4ServerMessage(event.data);
       if (phase4Message) {
         applyPhase4ServerMessage(phase4Message);
@@ -3024,7 +3087,112 @@ export default function Home() {
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState, applyPhase4ServerMessage, resetPhase4State]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState, applyPhase4ServerMessage, resetPhase4State, applyPhase5State]);
+
+
+  const activatePhase5OwnerSession = useCallback(() => {
+    const requestId = beginPhase5Request("activating");
+    if (!requestId) return;
+    sendPhase5("phase5_session_activate", {
+      request_id: requestId,
+      session_type: "owner",
+      capabilities: ["teach_me", "guide_my_hands", "care", "child_mode", "trusted_helper_access"],
+      expires_at: Math.floor(Date.now() / 1000) + 3600,
+    });
+  }, [beginPhase5Request, sendPhase5]);
+
+  const activatePhase5ChildSession = useCallback(() => {
+    const requestId = beginPhase5Request("activating");
+    if (!requestId) return;
+    sendPhase5("phase5_session_activate", {
+      request_id: requestId,
+      session_type: "child",
+      session_actor_id: phase5ChildActorId.trim(),
+      activation_evidence: "owner-activated-child",
+      capabilities: ["child_mode", "teach_me"],
+      expires_at: Math.floor(Date.now() / 1000) + 1800,
+    });
+  }, [beginPhase5Request, sendPhase5, phase5ChildActorId]);
+
+  const closePhase5Session = useCallback(() => {
+    if (!phase5StateRef.current.sessionId) return;
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_session_close", {
+      request_id: requestId,
+      session_id: phase5StateRef.current.sessionId,
+    });
+  }, [beginPhase5Request, sendPhase5]);
+
+  const preparePhase5Teach = useCallback(() => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_capability_prepare", {
+      request_id: requestId,
+      capability: "teach_me",
+      topic: phase5TeachTopic.trim(),
+    });
+  }, [beginPhase5Request, sendPhase5, phase5TeachTopic]);
+
+  const preparePhase5Guide = useCallback(() => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_capability_prepare", {
+      request_id: requestId,
+      capability: "guide_my_hands",
+      goal: phase5GuideGoal.trim(),
+    });
+  }, [beginPhase5Request, sendPhase5, phase5GuideGoal]);
+
+  const preparePhase5Care = useCallback(() => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_capability_prepare", {
+      request_id: requestId,
+      capability: "care",
+      care_prompt: phase5CarePrompt.trim(),
+    });
+  }, [beginPhase5Request, sendPhase5, phase5CarePrompt]);
+
+  const confirmPhase5Approval = useCallback(() => {
+    const pending = phase5StateRef.current.pendingRequestId;
+    if (!pending) return;
+    const requestId = beginPhase5Request("approval_required");
+    if (!requestId) return;
+    sendPhase5("phase5_capability_confirm", {
+      request_id: requestId,
+      pending_request_id: pending,
+      acknowledged: true,
+    });
+  }, [beginPhase5Request, sendPhase5]);
+
+  const createPhase5HelperGrant = useCallback(() => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    const expires = Number(phase5HelperExpiresAt);
+    if (!Number.isFinite(expires)) return;
+    sendPhase5("phase5_helper_grant_create", {
+      request_id: requestId,
+      helper_actor_id: phase5HelperActorId.trim(),
+      capability: "teach_me",
+      expires_at: expires,
+    });
+  }, [beginPhase5Request, sendPhase5, phase5HelperActorId, phase5HelperExpiresAt]);
+
+  const listPhase5HelperGrants = useCallback(() => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_helper_grant_list", { request_id: requestId });
+  }, [beginPhase5Request, sendPhase5]);
+
+  const revokePhase5HelperGrant = useCallback((grantId: string) => {
+    const requestId = beginPhase5Request();
+    if (!requestId) return;
+    sendPhase5("phase5_helper_grant_revoke", {
+      request_id: requestId,
+      grant_id: grantId,
+    });
+  }, [beginPhase5Request, sendPhase5]);
 
   const addMessage = (text: string, role: "user" | "ai") => {
     setMessages((prev) => [
@@ -3535,6 +3703,33 @@ export default function Home() {
               state={visionAnalysisState}
               onStartAnalysis={startVisionAnalysisAction}
               onCancelAnalysis={cancelVisionAnalysisAction}
+            />
+
+            <Phase5Panel
+              state={phase5State}
+              isOwner={isPaired}
+              teachTopic={phase5TeachTopic}
+              guideGoal={phase5GuideGoal}
+              carePrompt={phase5CarePrompt}
+              childActorId={phase5ChildActorId}
+              helperActorId={phase5HelperActorId}
+              helperExpiresAt={phase5HelperExpiresAt}
+              onTeachTopicChange={setPhase5TeachTopic}
+              onGuideGoalChange={setPhase5GuideGoal}
+              onCarePromptChange={setPhase5CarePrompt}
+              onChildActorIdChange={setPhase5ChildActorId}
+              onHelperActorIdChange={setPhase5HelperActorId}
+              onHelperExpiresAtChange={setPhase5HelperExpiresAt}
+              onActivateOwnerSession={activatePhase5OwnerSession}
+              onActivateChildSession={activatePhase5ChildSession}
+              onCloseSession={closePhase5Session}
+              onPrepareTeach={preparePhase5Teach}
+              onPrepareGuide={preparePhase5Guide}
+              onPrepareCare={preparePhase5Care}
+              onConfirmApproval={confirmPhase5Approval}
+              onCreateHelperGrant={createPhase5HelperGrant}
+              onListHelperGrants={listPhase5HelperGrants}
+              onRevokeHelperGrant={revokePhase5HelperGrant}
             />
             {handoffState.status === "accepted" &&
               visionAnalysisState.status === "awaiting_image" && (

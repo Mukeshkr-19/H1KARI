@@ -268,7 +268,21 @@ def test_actor_prohibited() -> None:
     assert ACTOR_PROHIBITED[Phase5Actor.GUEST] == frozenset(Capability)
     assert ACTOR_PROHIBITED[Phase5Actor.SYSTEM] == frozenset(Capability)
     assert Capability.TRUSTED_HELPER_ACCESS in ACTOR_PROHIBITED[Phase5Actor.CHILD]
-    assert Capability.CARE in ACTOR_PROHIBITED[Phase5Actor.CHILD]
+    # Child Care is allowed when child-scoped, but requires owner approval.
+    assert Capability.CARE not in ACTOR_PROHIBITED[Phase5Actor.CHILD]
+
+
+def test_child_authority_matrix() -> None:
+    # Trusted helper access is always denied for a child.
+    assert Capability.TRUSTED_HELPER_ACCESS in ACTOR_PROHIBITED[Phase5Actor.CHILD]
+    # Child Mode configuration weakening is not a capability; it is blocked
+    # behaviorally in the evaluator and runtime guard.
+    # Child Teach Me is allowed when child-scoped.
+    assert Capability.TEACH_ME not in ACTOR_PROHIBITED[Phase5Actor.CHILD]
+    # Child Guide My Hands is allowed but requires approval (runtime guard).
+    assert Capability.GUIDE_MY_HANDS not in ACTOR_PROHIBITED[Phase5Actor.CHILD]
+    # Child Care is allowed when child-scoped but requires approval.
+    assert Capability.CARE not in ACTOR_PROHIBITED[Phase5Actor.CHILD]
 
 
 # --- evaluate_phase5_request Tests --------------------------------------------

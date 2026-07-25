@@ -75,6 +75,16 @@ def test_protocol_v1_declares_exact_message_directions():
         "scheduled_job_pause",
         "scheduled_job_resume",
         "scheduled_job_cancel",
+        "phase5_session_activate",
+        "phase5_session_status",
+        "phase5_session_close",
+        "phase5_session_lock",
+        "phase5_session_revoke",
+        "phase5_capability_prepare",
+        "phase5_capability_confirm",
+        "phase5_helper_grant_create",
+        "phase5_helper_grant_list",
+        "phase5_helper_grant_revoke",
     }
 
 
@@ -165,12 +175,17 @@ def test_scheduled_result_messages_are_bounded():
         "productivity_error",
         "productivity_research_result",
         "productivity_calendar_result",
-            "scheduled_jobs",
-            "scheduled_job_update",
-            "scheduled_job_error",
-            "scheduled_job_research_result",
-            "scheduled_job_calendar_result",
-        }
+        "scheduled_jobs",
+        "scheduled_job_update",
+        "scheduled_job_error",
+        "scheduled_job_research_result",
+        "scheduled_job_calendar_result",
+        "phase5_session_update",
+        "phase5_capability_proposal",
+        "phase5_approval_required",
+        "phase5_helper_grants",
+        "phase5_error",
+    }
 
 
 @pytest.mark.parametrize(

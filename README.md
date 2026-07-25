@@ -57,6 +57,9 @@ H1KARI/
 - `docs/PHASE_1_COMPLETION.md` - safe companion kernel completion record.
 - `docs/PHASE_2_COMPLETION.md` - voice companion completion record.
 - `docs/PHASE_3_COMPLETION.md` - safe productivity tools completion record.
+- `docs/PHASE_5_CONTRACTS.md` - Phase 5 authority, consent, child, and helper boundaries.
+- `docs/PHASE_5_PROTOCOL.md` - production WebSocket session and proposal protocol.
+- `docs/PHASE_5_ACCESSIBILITY_CHECKLIST.md` - required human accessibility release evidence.
 - `docs/VOICE_COMPANION.md` - voice behavior, controls, privacy, and failure boundaries.
 - `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
 - `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.

@@ -40,6 +40,10 @@ from core.brain_statements import (
     is_task_or_action_statement,
 )
 from core.action_policy import Actor, ActorContext, validate_actor_context
+
+# Phase 5 capability proposals and session authority are handled exclusively
+# at the WebSocket server / Phase5RuntimeService boundary. The orchestrator
+# must not execute Phase 5 tools, elevate guest authority, or bypass approval.
 from core.brain_service import BrainService
 from core.brain_v2 import BrainV2Coordinator
 from core.conversation_context import (

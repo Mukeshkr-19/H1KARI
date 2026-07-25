@@ -37,10 +37,15 @@ This package defines authority, consent, approval, expiration, revocation, scope
 | Actor \ Capability | teach_me | guide_my_hands | care | child_mode | trusted_helper_access |
 |--------------------|----------|----------------|------|------------|----------------------|
 | OWNER | ALLOW | REQUIRE_APPROVAL | REQUIRE_APPROVAL | ALLOW | REQUIRE_APPROVAL |
-| CHILD | DENY by default | DENY by default | DENY | DENY | DENY |
+| CHILD | ALLOW (child-scoped) | REQUIRE_APPROVAL | REQUIRE_APPROVAL | ALLOW | DENY |
 | TRUSTED_HELPER | GRANT_REQUIRED | GRANT_REQUIRED | GRANT_REQUIRED | DENY | DENY |
 | GUEST | DENY | DENY | DENY | DENY | DENY |
 | SYSTEM | DENY | DENY | DENY | DENY | DENY |
+
+**Notes:**
+- `CHILD` capabilities are limited to child-scoped subjects and actions.  Access to owner/private memory, purchases, external communication, dangerous instructions, and policy weakening remains hard-denied.
+- `CHILD` *Teach Me* is allowed for child-scoped, safe educational requests.
+- `CHILD` *Guide My Hands* and `CHILD` *Care* require explicit owner approval before producing executable or consequential output.
 
 **Legend:**
 - `ALLOW` — Permitted without additional approval
