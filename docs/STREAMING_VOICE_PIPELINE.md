@@ -1,81 +1,51 @@
-# Streaming Voice Pipeline Foundations
+# Streaming Voice Pipeline
 
-HIKARI-native, pure foundations for streaming voice. This package does **not**
-claim live VAD, live AEC, daemon integration, or production full-duplex audio.
+## Canonical runtime
 
-Package: `core/streaming_voice/`
+**Production authority:** `core.voice_streaming.runtime.VoiceStreamingRuntime`
+
+This is the daemon-facing runtime already used by `services/hikari_daemon.py`.
+It owns wake/sleep/turn gating via `VoiceStreamStateMachine` before any
+`process()` / orchestrator call.
+
+**Compatibility facade:** `core.streaming_voice.TurnStateMachine`
+
+Bounded contracts (AEC negotiation, barge-in correlation, backpressure,
+metadata VAD, transcript segments) live under `core/streaming_voice/`.
+Turn/wake APIs there **delegate** to `VoiceStreamingRuntime` and must not keep
+independent mutable wake/sleep authority.
+
+There is no third voice runtime.
 
 ## Guarantees
 
-- Injected monotonic clock only (no wall-clock side effects).
-- Imports and constructors perform no filesystem, microphone, network, model,
-  process, or database I/O.
-- No raw audio persistence; frames and segments are metadata/text only.
-- Fail-closed reason codes; content-free `repr` surfaces.
-- Clocks, IDs, models, audio backends, transports, persistence, and executors
-  remain Mira-owned injection points.
+- While sleeping / wake-listening, ordinary speech never reaches the orchestrator.
+- Wake requires verified wake evidence and speaker verification at the daemon boundary.
+- Same-utterance `Hikari, <command>` executes once after wake + speaker checks.
+- Exact sleep phrases return to wake-listening without `process()` or `speak()`.
+- Wake grants no tool, memory, or action authority.
+- No raw audio in reprs, metrics summaries, or protocol-facing state.
+- Missing/unverified AEC selects honest half duplex; never claims active AEC
+  without negotiated evidence.
+- Cancellation clears transcript, interruption, and response correlation state.
 
-## Transcript segments
+## VAD / AEC truthfulness
 
-`TranscriptSegment` is frozen with:
+SpeechRecognition in the daemon provides complete utterances, not live
+frame-level VAD. Frame/VAD engines in `voice_streaming` are deterministic
+contracts for injected measurements — not a claim of production mic VAD.
+AEC modes are capability contracts / echo policy only — not live DSP.
 
-- `segment_id`, `utterance_id`, `session_id`
-- `SpeakerCategory`
-- monotonic `start_mono` / `end_mono` (`end >= start`, finite, non-negative)
-- `SegmentStatus` partial/final
-- bounded `ConfidenceCategory` and bounded text
-- stable `sequence` ordering via `SegmentLedger` (duplicate/replay/out-of-order rejection)
+## Daemon gating flow
 
-## VAD state machine
+1. Capture + STT (daemon)
+2. Wake extract / speaker verify (daemon)
+3. `VoiceStreamingRuntime.process_utterance(...)` (canonical gate)
+4. Only `action == process_command` may call `process()`
+5. `silent_goodbye` returns to wake-listening without orchestrator or speech
 
-States: `IDLE` → `POSSIBLE_SPEECH` → `SPEAKING` → `ENDING` → `COMPLETE` /
-`CANCELLED`.
+## Mira-owned next steps
 
-`VadStateMachine` supports debounce, minimum speech duration, silence end-of-turn
-timeout, maximum utterance duration, bounded pre-roll metadata, stale/out-of-order
-frame rejection, and `cancel()` from any active state.
-The machine binds to the first frame's session, rejects cross-session frames,
-and fails closed when replay history reaches its hard bound.
-
-## Full-duplex turn state
-
-States: `SLEEPING`, `WAKE_CANDIDATE`, `LISTENING`, `USER_SPEAKING`,
-`ASSISTANT_THINKING`, `ASSISTANT_SPEAKING`, `INTERRUPTED`, `DRAINING`, `CLOSED`.
-
-Exact transition graph is exported by `transition_table()`. Stale utterance /
-response correlation is rejected.
-Interruption timestamps are checked against the injected clock; future and stale
-events cannot cancel active speech.
-
-## Wake / sleep authority
-
-- Sleeping audio may only create a bounded `WAKE_CANDIDATE`.
-- Ordinary speech while sleeping cannot reach orchestration.
-- Wake requires caller-supplied wake **and** speaker-policy evidence.
-- `goodbye()` returns to `SLEEPING`; wake detector remains available while
-  responses stay suppressed until another valid wake.
-- Wake grants no tool or memory authority.
-
-## Interruption / barge-in
-
-`BargeInController` correlates interruptions to the active assistant utterance,
-rejects stale/duplicate/noise events, cancels only the active utterance, and
-completes through bounded drain.
-
-## AEC capability contract
-
-`AecNegotiator` models `AVAILABLE` / `DEGRADED` / `UNAVAILABLE` / `FAILED`.
-Unavailable or degraded AEC falls back to half duplex. The contract never falsely
-claims echo cancellation is active (requires `AVAILABLE` + negotiated).
-
-## Buffering / backpressure
-
-`BoundedVoiceBuffer` enforces hard frame/byte/time caps with deterministic
-drop-oldest policy, dropped-frame counters, and content-free latency summaries.
-
-## Mira integration points (not wired here)
-
-- Inject audio backend and monotonic clock into `VadStateMachine` / `TurnStateMachine`.
-- Supply `WakeEvidence` from existing wake-word + speaker-verification modules.
-- Map turn transitions into conversation session and orchestrator gates.
-- Negotiate AEC with the platform audio stack before enabling full duplex.
+- Platform AEC verification hooks into `report_aec_status` / `EchoCapability`
+- Optional frame-level VAD backend injection (honest availability flags)
+- Frontend accessibility binding to `get_accessibility_state()`

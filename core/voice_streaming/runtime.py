@@ -75,6 +75,9 @@ def extract_wake_command(text: str) -> Optional[str]:
       - "" for bare wake activation (e.g. "Hikari")
       - trailing command for same-utterance wake (e.g. "Hey Hikari, what time is it?" -> "what time is it?")
       - None if no wake word match
+
+    The reviewed local Whisper spelling "Hickory" is accepted only as a
+    standalone bare wake alias (no same-utterance command), matching the daemon.
     """
     if not isinstance(text, str):
         return None
@@ -83,9 +86,14 @@ def extract_wake_command(text: str) -> Optional[str]:
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    if match is None:
-        return None
-    return match.group(1).strip()
+    if match is not None:
+        return match.group(1).strip()
+    alias_match = re.fullmatch(
+        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hickory[\s,.:;!?-]*\s*",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return "" if alias_match is not None else None
 
 
 def is_wake_phrase(text: str) -> bool:
@@ -180,6 +188,14 @@ class VoiceStreamingRuntime:
         self._echo_capability: EchoCapability = self.config.echo_capability
         self._last_monotonic_ns: int = 0
         self._runtime_events: List[VoiceRuntimeEvent] = []
+        from core.streaming_voice.aec import AecNegotiator, AecStatus
+        self._aec_negotiator = AecNegotiator()
+        self._seen_utterance_keys: set[str] = set()
+        self._max_utterance_keys = max(16, min(self.config.max_history, 256))
+        self._active_response_id: Optional[str] = None
+        self._cancelled = False
+        # Honest default: no verified AEC until platform reports evidence.
+        self._aec_negotiator.report(AecStatus.UNAVAILABLE)
 
     @property
     def state(self) -> VoiceStreamState:
@@ -340,14 +356,31 @@ class VoiceStreamingRuntime:
         text: str,
         *,
         is_verified_speaker: bool,
+        utterance_id: Optional[str] = None,
         monotonic_ns: Optional[int] = None,
         is_short: bool = False,
     ) -> Dict[str, Any]:
         """Daemon compatibility turn adapter for captured text utterances.
 
-        Enforces wake-word invariant, speaker verification, goodbye invariant, and state machine transitions.
+        Enforces wake-word invariant, speaker verification, goodbye invariant, and
+        state-machine transitions. ``utterance_id`` is an optional transport
+        correlation identifier; replay protection is applied only when it is
+        supplied, because identical words in later turns are valid speech.
         """
+        if utterance_id is not None:
+            if (
+                not isinstance(utterance_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", utterance_id)
+            ):
+                return {"action": "ignore", "reason": "invalid_utterance_id"}
         ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
+
+        if self.state == VoiceStreamState.ASSISTANT_SPEAKING:
+            # Assistant playback cannot become ordinary user speech.
+            return {"action": "ignore", "reason": "assistant_playback_active"}
+
+        if self.state in (VoiceStreamState.INTERRUPTING, VoiceStreamState.INTERRUPTED):
+            return {"action": "ignore", "reason": "interruption_in_progress"}
 
         # 1. PASSIVE WAKE LISTENING MODE
         if self.is_wake_listening:
@@ -402,6 +435,11 @@ class VoiceStreamingRuntime:
                     monotonic_ns=t5,
                     reason="Command forwarded to thinking",
                 )
+                if utterance_id is not None and not self._remember_utterance_key(
+                    f"utterance:{utterance_id}"
+                ):
+                    self.reset_to_wake_listening(self.now_ns())
+                    return {"action": "ignore", "reason": "duplicate_utterance"}
                 self._emit_event("process_same_utterance_command", {}, t5)
                 return {
                     "action": "process_command",
@@ -461,6 +499,10 @@ class VoiceStreamingRuntime:
                 monotonic_ns=t4,
                 reason="Active command forwarded to thinking",
             )
+            if utterance_id is not None and not self._remember_utterance_key(
+                f"utterance:{utterance_id}"
+            ):
+                return {"action": "ignore", "reason": "duplicate_utterance"}
             self._emit_event("process_active_command", {}, t4)
             return {
                 "action": "process_command",
@@ -506,6 +548,10 @@ class VoiceStreamingRuntime:
     ) -> bool:
         """Request barge-in during assistant playback. Fails closed if unauthenticated."""
         ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
+        now = self.now_ns()
+        if ts > now + 1_000_000_000 or (self._last_monotonic_ns and ts + 30_000_000_000 < self._last_monotonic_ns):
+            self._emit_event("interruption_stale_or_future", {}, now)
+            return False
         req = InterruptionRequest(
             stream_id=self.stream_id,
             request_id=request_id,
@@ -553,6 +599,8 @@ class VoiceStreamingRuntime:
         ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
         self.accumulator.reset()
         self.vad_engine.reset()
+        self.state_machine.active_interruption_request = None
+        self._active_response_id = None
         return self.state_machine.transition_to(
             VoiceStreamState.WAKE_LISTENING,
             event_type="reset_to_wake_listening",
@@ -567,12 +615,97 @@ class VoiceStreamingRuntime:
         self.vad_engine.reset()
         self.state_machine.reset(ts)
         self._runtime_events.clear()
+        self._seen_utterance_keys.clear()
+        self._active_response_id = None
+        self._cancelled = False
 
     def close(self) -> None:
         """Close runtime pipeline and state machine."""
         self.pipeline.close()
         self.vad_engine.close()
         self.reset_to_wake_listening()
+
+    def allows_orchestrator_process(self) -> bool:
+        """True only when the canonical runtime is in an active command path."""
+        if self._cancelled:
+            return False
+        return self.state in (
+            VoiceStreamState.ACTIVE_LISTENING,
+            VoiceStreamState.USER_SPEAKING,
+            VoiceStreamState.FINALIZING_USER_TURN,
+            VoiceStreamState.THINKING,
+            VoiceStreamState.ASSISTANT_SPEAKING,
+            VoiceStreamState.INTERRUPTING,
+            VoiceStreamState.INTERRUPTED,
+        )
+
+    def duplex_mode(self) -> str:
+        """Honest duplex mode from echo policy + bounded AEC negotiator."""
+        from core.streaming_voice.contracts import DuplexMode as StreamingDuplexMode
+        decision = self.evaluate_echo_policy()
+        aec = self._aec_negotiator.capability
+        if decision.full_duplex_safe and aec.echo_cancellation_active:
+            return StreamingDuplexMode.FULL_DUPLEX.value
+        return StreamingDuplexMode.HALF_DUPLEX.value
+
+    def echo_cancellation_active(self) -> bool:
+        """Never true without verified negotiated AEC evidence."""
+        return self._aec_negotiator.capability.echo_cancellation_active
+
+    def report_aec_status(self, status, *, vendor_label: str = "none") -> None:
+        self._aec_negotiator.report(status, vendor_label=vendor_label)
+        negotiated = self._aec_negotiator.negotiate()
+        if negotiated.accepted:
+            self.set_echo_capability(
+                EchoCapability(native_aec_available=True, native_aec_verified=True)
+            )
+        else:
+            self.set_echo_capability(EchoCapability())
+
+    def _remember_utterance_key(self, key: str) -> bool:
+        if key in self._seen_utterance_keys:
+            return False
+        if len(self._seen_utterance_keys) >= self._max_utterance_keys:
+            # Deterministic eviction of an arbitrary oldest-inserted key is not
+            # available on set; clear and fail closed for this insert.
+            self._seen_utterance_keys.clear()
+            return False
+        self._seen_utterance_keys.add(key)
+        return True
+
+    def cancel_active(self, monotonic_ns: Optional[int] = None) -> bool:
+        """Cancel listening/thinking/speaking/draining and clear volatile state."""
+        ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
+        self._cancelled = True
+        self._active_response_id = None
+        self.accumulator.reset()
+        self.vad_engine.reset()
+        self.state_machine.active_interruption_request = None
+        ok = self.state_machine.transition_to(
+            VoiceStreamState.WAKE_LISTENING,
+            event_type="cancel_active",
+            monotonic_ns=ts,
+            reason="Cancellation cleared active voice state",
+        )
+        if not ok:
+            self.state_machine.reset(ts)
+            ok = self.state_machine.start_wake_listening(self.now_ns())
+        self._cancelled = False
+        self._emit_event("cancel_active", {}, ts)
+        return ok
+
+    def content_free_summary(self) -> Dict[str, Any]:
+        """State summary without transcript text or audio bytes."""
+        return {
+            "stream_id": self.stream_id,
+            "state": self.state.value,
+            "wake_listening": self.is_wake_listening,
+            "active_listening": self.is_active_listening,
+            "duplex_mode": self.duplex_mode(),
+            "echo_cancellation_active": self.echo_cancellation_active(),
+            "history_count": len(self._runtime_events),
+            "vad_state": self.vad_engine.current_state.value,
+        }
 
     def get_accessibility_state(self) -> AccessibilityState:
         return self.state_machine.get_accessibility_state()

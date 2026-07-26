@@ -85,6 +85,8 @@ def test_protocol_v1_declares_exact_message_directions():
         "phase5_helper_grant_create",
         "phase5_helper_grant_list",
         "phase5_helper_grant_revoke",
+        "phase6_integration_list_request",
+        "phase6_home_assistant_confirm_request",
     }
 
 
@@ -185,6 +187,16 @@ def test_scheduled_result_messages_are_bounded():
         "phase5_approval_required",
         "phase5_helper_grants",
         "phase5_error",
+        "phase6_integration_status",
+        "phase6_agent_run_update",
+        "phase6_time_sense_update",
+        "phase6_repo_intel_update",
+        "phase6_skill_evolution_update",
+        "phase6_home_assistant_proposal",
+        "phase6_encrypted_sync_update",
+        "phase6_remote_worker_update",
+        "phase6_model_eval_update",
+        "phase6_error",
     }
 
 

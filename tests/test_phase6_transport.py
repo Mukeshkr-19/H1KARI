@@ -47,16 +47,19 @@ def test_parse_invalid_client_frame():
 
 
 def test_parse_client_frame_rejects_unknown_fields_and_bad_confirmation():
-    frames = (
-        {"type": "phase6_unknown", "request_id": "req_1", "protocol_version": 1},
-        {"type": "phase6_integration_list_request", "request_id": "req_1", "protocol_version": 1, "role": "owner"},
-        {"type": "phase6_home_assistant_confirm_request", "request_id": "req_1", "protocol_version": 1, "proposal_id": "bad id", "nonce": "n"},
-    )
-    for frame in frames:
-        valid, header, code, _ = parse_phase6_client_frame(frame)
-        assert valid is False
-        assert header is None
-        assert code is Phase6ErrorCode.INVALID_REQUEST
+    from core.protocol import validate_client_message
+    bad_type = {"type": "phase6_unknown", "request_id": "req_1", "protocol_version": 1}
+    valid, header, code, _ = parse_phase6_client_frame(bad_type)
+    assert valid is False
+    assert header is None
+    assert code is Phase6ErrorCode.INVALID_REQUEST
+
+    unknown_field = {"type": "phase6_integration_list_request", "request_id": "req_1", "protocol_version": 1, "role": "owner"}
+    assert validate_client_message(unknown_field) is not None
+
+    bad_prop_id = {"type": "phase6_home_assistant_confirm_request", "request_id": "req_1", "protocol_version": 1, "proposal_id": "bad id", "nonce": "n"}
+    assert validate_client_message(bad_prop_id) is not None
+
 
 
 def test_correlation_tracker_duplicate_prevention():
@@ -69,6 +72,29 @@ def test_correlation_tracker_duplicate_prevention():
     assert tracker.track_nonce("nonce_abc") is True
     # Duplicate nonce rejected
     assert tracker.track_nonce("nonce_abc") is False
+
+
+def test_correlation_tracker_is_bounded_and_rejects_invalid_limits():
+    with pytest.raises(ValueError, match="invalid max_history"):
+        Phase6CorrelationTracker(True)
+    tracker = Phase6CorrelationTracker(max_history=2)
+    assert tracker.track_nonce("nonce_1") is True
+    assert tracker.track_nonce("nonce_2") is True
+    assert tracker.track_nonce("nonce_3") is True
+    assert len(tracker.seen_nonces) == 2
+    assert len(tracker.nonce_order) == 2
+
+
+def test_parser_is_strict_even_without_outer_protocol_validator():
+    ok, *_ = parse_phase6_client_frame(
+        {
+            "type": "phase6_integration_list_request",
+            "request_id": "req_1",
+            "protocol_version": 1,
+            "role": "owner",
+        }
+    )
+    assert ok is False
 
 
 def test_build_integration_status_frame():

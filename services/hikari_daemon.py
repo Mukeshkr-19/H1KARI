@@ -169,7 +169,37 @@ def _get_streaming_runtime():
     return _streaming_runtime
 
 
-# State machine for JARVIS-style behavior
+_time_sense_bridge = None
+
+
+def _get_time_sense_bridge():
+    """Advisory Time Sense bridge. Never speaks or schedules."""
+    global _time_sense_bridge
+    if _time_sense_bridge is None:
+        from datetime import datetime, timezone
+
+        from core.time_sense.runtime_bridge import TimeSenseRuntimeBridge
+
+        _time_sense_bridge = TimeSenseRuntimeBridge(lambda: datetime.now(timezone.utc))
+    return _time_sense_bridge
+
+
+def get_timing_advisory_snapshot():
+    """Expose content-free timing advisories without initiating speech."""
+    bridge = _get_time_sense_bridge()
+    return bridge.snapshot()
+
+
+def _sync_hikari_state_from_runtime(runtime) -> None:
+    """Derive legacy hikari_state from the single canonical voice runtime."""
+    global hikari_state
+    if runtime.is_wake_listening:
+        hikari_state = HikariState.LISTENING
+    elif runtime.is_active_listening or runtime.allows_orchestrator_process():
+        hikari_state = HikariState.ACTIVE
+
+
+# State machine for JARVIS-style behavior (projection of VoiceStreamingRuntime)
 class HikariState:
     LISTENING = "listening"  # Waiting for wake word
     ACTIVE = "active"  # Processing commands
@@ -548,7 +578,11 @@ def _extract_wake_command(text: str) -> str | None:
 def _listen_for_wake_word() -> None:
     global hikari_state
 
+    # Legacy loop routing remains fail-closed; canonical runtime gates process().
     if hikari_state != HikariState.LISTENING:
+        return
+    runtime = _get_streaming_runtime()
+    if not runtime.is_wake_listening:
         return
     print("💤 ", end="\r", flush=True)
     with sr.Microphone() as source:
@@ -563,8 +597,9 @@ def _listen_for_wake_word() -> None:
         print("❌ Voice not recognized, ignoring...\n")
         return
 
-    runtime = _get_streaming_runtime()
+    # Canonical runtime is the only authority before process().
     res = runtime.process_utterance(text, is_verified_speaker=True, is_short=True)
+    _sync_hikari_state_from_runtime(runtime)
     if res.get("action") == "ignore":
         return
 
@@ -573,6 +608,7 @@ def _listen_for_wake_word() -> None:
 
     if res.get("action") == "process_command":
         cmd = res["command"]
+        # Execute same-utterance wake command exactly once.
         response = process(cmd)
         if response:
             speak(response)
@@ -589,6 +625,10 @@ def _listen_for_active_command() -> None:
 
     if hikari_state != HikariState.ACTIVE:
         return
+    runtime = _get_streaming_runtime()
+    # Align canonical runtime when the owned loop is already ACTIVE.
+    if runtime.is_wake_listening:
+        runtime.start_active_listening()
     print("👂 ", end="\r", flush=True)
     with sr.Microphone() as source:
         audio = r.listen(source, timeout=8, phrase_time_limit=30)
@@ -605,15 +645,15 @@ def _listen_for_active_command() -> None:
         speak("What should I have said?")
         return
 
-    if is_stop_command(text):
+    # Single canonical gate: runtime decides goodbye vs process vs ignore.
+    result = runtime.process_utterance(text, is_verified_speaker=True)
+    _sync_hikari_state_from_runtime(runtime)
+
+    if result.get("action") == "silent_goodbye":
         hikari_state = HikariState.LISTENING
-        runtime = _get_streaming_runtime()
-        runtime.reset_to_wake_listening()
         print("💤 Going to sleep... (still listening for 'hikari')\n")
         return
 
-    runtime = _get_streaming_runtime()
-    result = runtime.process_utterance(text, is_verified_speaker=True)
     if result.get("action") != "process_command":
         return
 
@@ -656,15 +696,22 @@ def listen_always() -> None:
 
 def request_shutdown(_signum=None, _frame=None) -> None:
     """Ask the owned listener loop to stop at its next boundary."""
-    global daemon_running, _streaming_runtime
+    global daemon_running, _streaming_runtime, _time_sense_bridge
 
     daemon_running = False
     if _streaming_runtime is not None:
         try:
+            _streaming_runtime.cancel_active()
             _streaming_runtime.close()
         except Exception:
             pass
         _streaming_runtime = None
+    if _time_sense_bridge is not None:
+        try:
+            _time_sense_bridge.clear()
+        except Exception:
+            pass
+        _time_sense_bridge = None
 
 
 def main() -> int:

@@ -1,79 +1,26 @@
-# Time Sense Runtime Foundations
+# Time Sense Runtime
 
-Pure, injected-clock Time Sense foundations for conversation timing, job
-observations, stuck-notification backoff, and Mira adapter protocols.
+## Runtime bridge
 
-Package: `core/time_sense/`
+`core.time_sense.runtime_bridge.TimeSenseRuntimeBridge` consumes caller-supplied
+`ConversationTimingObservation` values and returns advisory
+`WAIT | RESPOND | CHECK_IN | SUMMARIZE | SUPPRESS` decisions.
 
-This document covers the **runtime policy** surface added alongside existing
-phrase interpretation, stuck detection, and background awareness. Time Sense
-never performs corrective actions, delivery, scheduling, or store I/O.
+It never schedules, retries, cancels, delivers, or speaks. It never stores
+transcript text. Tracked sessions and observation age are hard-bounded.
 
-## Conversation timing observations
+## Suppression
 
-`ConversationTimingObservation` captures:
+Proactive output is suppressed during sleep, quiet hours, child mode, privacy
+suppression, active user speech, active assistant speech, and recent dismissal.
 
-- pause age
-- last user speech / last assistant response ages
-- active vs sleeping
-- quiet hours
-- recent dismissal
-- child / privacy suppression
-- active speech flags
+## Daemon exposure
 
-## Conversational timing policy
+`services.hikari_daemon.get_timing_advisory_snapshot()` exposes advisories only.
+This slice must not begin unsolicited speaking from Time Sense advice.
 
-`evaluate_conversation_timing` returns one of:
+## Mira-owned next steps
 
-- `WAIT`
-- `RESPOND`
-- `CHECK_IN`
-- `SUMMARIZE`
-- `SUPPRESS`
-
-Decisions use supplied evidence only. Quiet hours, child mode, privacy
-suppression, sleeping state, active speech, and recent dismissal all force
-`SUPPRESS` with content-free reason codes.
-
-## Task / background-job observations
-
-`JobTimingObservation` carries job ID only plus:
-
-- state, age, heartbeat age
-- bounded completion estimate range
-- retry / attempt count
-- cancellation / resolution evidence codes
-
-No raw private payloads.
-
-## Stuck-task notification tracker
-
-`StuckNotificationTracker` applies:
-
-- minimum age
-- missed-heartbeat threshold
-- consecutive failure threshold
-- exponential notification backoff
-- deduplication
-- resolved / cancelled terminal states
-
-The tracker **never** retries, cancels, or repairs work.
-
-## Adapter protocols (Mira-owned)
-
-Defined in `core/time_sense/adapters.py`:
-
-- `ScheduledJobObservationSource` — scheduled jobs → `JobTimingObservation`
-- `ConversationSessionObservationSource` — sessions → timing + quiet hours
-- `StreamingVoiceObservationSource` — streaming voice → speech activity ages
-- `TaskProgressObservationSource` — existing stuck-detection observations
-
-Adapters describe supply contracts only; no DB or runtime I/O in this workstream.
-
-## Mira integration points (not wired here)
-
-- Conversation session runtime projects pause/speech ages into
-  `ConversationTimingObservation`.
-- Job scheduler emits `JobTimingObservation` heartbeats without payloads.
-- Streaming voice turn machine feeds `StreamingVoiceObservationSource`.
-- Notification delivery remains Mira-owned; Time Sense only advises.
+- Wire conversation session + job adapters to supply observations
+- Optional UI surfacing of advisories without auto-speak
+- Notification delivery remains Mira-owned (stuck notify tracker is advisory)

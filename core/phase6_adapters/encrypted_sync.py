@@ -1,16 +1,18 @@
 """Encrypted sync optional adapter with fail-closed storage protocol.
 
 This module composes the pure sync planner from ``core.phase6_ecosystem.encrypted_sync``
-with injected storage and crypto adapters.  Default construction leaves the
-adapter disabled.  It never inspects plaintext.
+with injected durable registries and atomic storage.  Default construction
+leaves the adapter disabled.  It never inspects plaintext.
 """
 
 from __future__ import annotations
 
 import hashlib
+import math
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import FrozenSet, Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple
 
 from core.phase6_ecosystem.encrypted_sync import (
     DeviceTrustRecord,
@@ -44,6 +46,11 @@ class EncryptedSyncAdapterReason(StrEnum):
     COMMIT_FAILED = "commit_failed"
     ROLLBACK_FAILED = "rollback_failed"
     NONCE_REPLAY = "nonce_replay"
+    STALE_TRANSACTION = "stale_transaction"
+    TRANSACTION_NOT_STAGED = "transaction_not_staged"
+    DIGEST_MISMATCH = "digest_mismatch"
+    ALREADY_COMMITTED = "already_committed"
+    ALREADY_ROLLED_BACK = "already_rolled_back"
 
 
 class EncryptedSyncAdapterOutcome(StrEnum):
@@ -53,6 +60,16 @@ class EncryptedSyncAdapterOutcome(StrEnum):
     CONFLICT = "conflict"
     DENY = "deny"
     UNAVAILABLE = "unavailable"
+
+
+class EncryptedSyncTransactionState(StrEnum):
+    """Durable transaction lifecycle states."""
+
+    PLANNED = "planned"
+    STAGED = "staged"
+    COMMITTED = "committed"
+    ROLLED_BACK = "rolled_back"
+    DENIED = "denied"
 
 
 @dataclass(frozen=True)
@@ -77,6 +94,7 @@ class EncryptedSyncAdapterConfig:
             ("max_version", self.max_version),
             ("max_devices", self.max_devices),
         ):
+            _reject_bool(value, name)
             if not isinstance(value, int) or value <= 0:
                 raise ValueError(f"invalid {name}")
 
@@ -97,17 +115,107 @@ class EncryptedSyncTransactionProposal:
         return "EncryptedSyncTransactionProposal()"
 
 
-class EncryptedSyncStorageInterface:
-    """Injected storage adapter interface (no real implementation)."""
+@dataclass(frozen=True)
+class EncryptedSyncTransactionRecord:
+    """Durable transaction state record."""
 
+    transaction_id: str
+    proposal: EncryptedSyncTransactionProposal
+    device_id: str
+    state: EncryptedSyncTransactionState
+    created_at: float
+
+    def __repr__(self) -> str:
+        return "EncryptedSyncTransactionRecord()"
+
+
+class EncryptedSyncStorageInterface(ABC):
+    """Injected atomic storage adapter interface (no real implementation)."""
+
+    @abstractmethod
     def stage(self, transaction_id: str, plan: SyncPlan) -> Tuple[bool, str]:
-        raise NotImplementedError("storage adapter is injected")
+        ...
 
+    @abstractmethod
     def commit(self, transaction_id: str) -> Tuple[bool, str]:
-        raise NotImplementedError("storage adapter is injected")
+        ...
 
+    @abstractmethod
     def rollback(self, transaction_id: str) -> Tuple[bool, str]:
-        raise NotImplementedError("storage adapter is injected")
+        ...
+
+
+class NonceReplayRegistry(ABC):
+    """Injected durable nonce registry (no real implementation)."""
+
+    @abstractmethod
+    def is_consumed(self, nonce: str) -> bool:
+        ...
+
+    @abstractmethod
+    def consume(self, nonce: str) -> bool:
+        ...
+
+
+class DeviceTrustRegistry(ABC):
+    """Injected durable device-trust registry (no real implementation)."""
+
+    @abstractmethod
+    def is_revoked(self, device_id: str) -> bool:
+        ...
+
+    def revoke(self, device_id: str) -> None:
+        """Default revocation hook. Subclasses may override."""
+        raise NotImplementedError("revoke must be provided by the injected registry")
+
+
+class TransactionRegistry(ABC):
+    """Injected durable transaction registry (no real implementation)."""
+
+    @abstractmethod
+    def get(self, transaction_id: str) -> Optional[EncryptedSyncTransactionRecord]:
+        ...
+
+    @abstractmethod
+    def put(self, record: EncryptedSyncTransactionRecord) -> bool:
+        ...
+
+
+class _InMemoryNonceRegistry(NonceReplayRegistry):
+    def __init__(self) -> None:
+        self._seen: set[str] = set()
+
+    def is_consumed(self, nonce: str) -> bool:
+        return nonce in self._seen
+
+    def consume(self, nonce: str) -> bool:
+        if nonce in self._seen:
+            return False
+        self._seen.add(nonce)
+        return True
+
+
+class _InMemoryDeviceRegistry(DeviceTrustRegistry):
+    def __init__(self) -> None:
+        self._revoked: set[str] = set()
+
+    def is_revoked(self, device_id: str) -> bool:
+        return device_id in self._revoked
+
+    def revoke(self, device_id: str) -> None:
+        self._revoked.add(device_id)
+
+
+class _InMemoryTransactionRegistry(TransactionRegistry):
+    def __init__(self) -> None:
+        self._records: dict[str, EncryptedSyncTransactionRecord] = {}
+
+    def get(self, transaction_id: str) -> Optional[EncryptedSyncTransactionRecord]:
+        return self._records.get(transaction_id)
+
+    def put(self, record: EncryptedSyncTransactionRecord) -> bool:
+        self._records[record.transaction_id] = record
+        return True
 
 
 class EncryptedSyncAdapter:
@@ -124,6 +232,9 @@ class EncryptedSyncAdapter:
         config: Optional[EncryptedSyncAdapterConfig] = None,
         encryption_provider: Optional[EncryptionProviderInterface] = None,
         storage: Optional[EncryptedSyncStorageInterface] = None,
+        nonce_registry: Optional[NonceReplayRegistry] = None,
+        device_registry: Optional[DeviceTrustRegistry] = None,
+        transaction_registry: Optional[TransactionRegistry] = None,
         clock: Optional[object] = None,
         id_factory: Optional[object] = None,
     ) -> None:
@@ -133,10 +244,9 @@ class EncryptedSyncAdapter:
         self._clock = clock
         self._id_factory = id_factory
         self._planner = EncryptedSyncPlanner()
-        self._consumed_nonces: set[str] = set()
-        self._revoked_devices: set[str] = set()
-        self._committed_transactions: set[str] = set()
-        self._staged_transactions: dict[str, EncryptedSyncTransactionProposal] = {}
+        self._nonce_registry = nonce_registry if nonce_registry is not None else _InMemoryNonceRegistry()
+        self._device_registry = device_registry if device_registry is not None else _InMemoryDeviceRegistry()
+        self._transaction_registry = transaction_registry if transaction_registry is not None else _InMemoryTransactionRegistry()
 
     @property
     def state(self) -> AdapterState:
@@ -146,7 +256,7 @@ class EncryptedSyncAdapter:
         if self._clock is None:
             raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
         now = self._clock() if callable(self._clock) else float(self._clock)
-        if not isinstance(now, (int, float)):
+        if not isinstance(now, (int, float)) or isinstance(now, bool):
             raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
         return float(now)
 
@@ -188,33 +298,50 @@ class EncryptedSyncAdapter:
         device_trust: DeviceTrustRecord,
         nonce: str,
     ) -> EncryptedSyncTransactionProposal:
-        """Generate a sync plan and stage it atomically."""
+        """Generate a sync plan, stage it atomically, and return a proposal."""
         if self.state is AdapterState.DISABLED:
             raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
         assert self._config is not None
-        if self._encryption_provider is None or self._storage is None:
+        if self._encryption_provider is None:
             raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
-        if device_trust.device_id in self._revoked_devices:
-            raise AdapterException(AdapterReason.INVALID_INPUT)
+        if self._storage is None:
+            raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
+        now = self._now()
+
+        # Device revocation recheck before staging.
+        if self._device_registry.is_revoked(device_trust.device_id):
+            raise AdapterException(AdapterReason.INVALID_INPUT, EncryptedSyncAdapterReason.REVOKED_DEVICE)
+
         bound = self._check_bounds(local_manifest, remote_manifest)
         if bound is not EncryptedSyncAdapterReason.OK:
-            raise AdapterException(AdapterReason.INVALID_INPUT)
-        if nonce in self._consumed_nonces:
-            raise AdapterException(AdapterReason.INVALID_INPUT)
-        self._consumed_nonces.add(nonce)
+            raise AdapterException(AdapterReason.INVALID_INPUT, bound)
+
+        # Durable nonce consumption.
+        if self._nonce_registry.is_consumed(nonce):
+            raise AdapterException(AdapterReason.INVALID_INPUT, EncryptedSyncAdapterReason.REPLAY_DETECTED)
+        if not self._nonce_registry.consume(nonce):
+            raise AdapterException(AdapterReason.INVALID_INPUT, EncryptedSyncAdapterReason.REPLAY_DETECTED)
+
         decision = self._planner.generate_sync_plan(
             plan_id=plan_id,
             local_manifest=local_manifest,
             remote_manifest=remote_manifest,
             device_trust=device_trust,
             encryption_provider=self._encryption_provider,
-            now=self._now(),
+            now=now,
         )
-        if decision.outcome is not SyncOutcome.ALLOW or decision.plan is None or decision.plan.conflicts:
+        if decision.outcome is not SyncOutcome.ALLOW or decision.plan is None:
+            # Conflicts surface as DENY before any staging.
             raise AdapterException(
                 AdapterReason.POLICY_DENIED,
                 self._map_sync_reason(decision.reason),
             )
+        if decision.plan.conflicts:
+            raise AdapterException(
+                AdapterReason.POLICY_DENIED,
+                EncryptedSyncAdapterReason.CONFLICTS_DETECTED,
+            )
+
         transaction_id = self._next_id()
         content_digest = self._digest_plan(decision.plan)
         proposal = EncryptedSyncTransactionProposal(
@@ -223,10 +350,29 @@ class EncryptedSyncAdapter:
             commit_digest="sha256." + content_digest,
             rollback_digest="sha256." + hashlib.sha256((content_digest + ":rollback").encode("utf-8")).hexdigest(),
         )
+
+        # Log the planned state before attempting atomic storage staging.
+        planned_record = EncryptedSyncTransactionRecord(
+            transaction_id=transaction_id,
+            proposal=proposal,
+            device_id=device_trust.device_id,
+            state=EncryptedSyncTransactionState.PLANNED,
+            created_at=now,
+        )
+        self._transaction_registry.put(planned_record)
+
         ok, _ = self._storage.stage(transaction_id, decision.plan)
         if not ok:
-            raise AdapterException(AdapterReason.MISSING_DEPENDENCY)
-        self._staged_transactions[transaction_id] = proposal
+            raise AdapterException(AdapterReason.MISSING_DEPENDENCY, EncryptedSyncAdapterReason.STAGING_FAILED)
+
+        staged_record = EncryptedSyncTransactionRecord(
+            transaction_id=transaction_id,
+            proposal=proposal,
+            device_id=device_trust.device_id,
+            state=EncryptedSyncTransactionState.STAGED,
+            created_at=now,
+        )
+        self._transaction_registry.put(staged_record)
         return proposal
 
     def commit(self, proposal: EncryptedSyncTransactionProposal) -> EncryptedSyncAdapterOutcome:
@@ -235,30 +381,67 @@ class EncryptedSyncAdapter:
             return EncryptedSyncAdapterOutcome.UNAVAILABLE
         if self._storage is None:
             return EncryptedSyncAdapterOutcome.UNAVAILABLE
-        expected = self._staged_transactions.get(proposal.transaction_id)
-        if expected != proposal or proposal.transaction_id in self._committed_transactions:
+
+        record = self._transaction_registry.get(proposal.transaction_id)
+        if record is None or record.proposal != proposal:
             return EncryptedSyncAdapterOutcome.DENY
+        if record.state is EncryptedSyncTransactionState.COMMITTED:
+            return EncryptedSyncAdapterOutcome.DENY
+        if record.state is EncryptedSyncTransactionState.ROLLED_BACK:
+            return EncryptedSyncAdapterOutcome.DENY
+        if record.state is not EncryptedSyncTransactionState.STAGED:
+            return EncryptedSyncAdapterOutcome.DENY
+
+        # Recompute and compare commit digest.
         digest = self._digest_plan(proposal.plan)
         if proposal.commit_digest != "sha256." + digest:
             return EncryptedSyncAdapterOutcome.DENY
+
+        # Device revocation recheck before commit.
+        if self._device_registry.is_revoked(record.device_id):
+            return EncryptedSyncAdapterOutcome.DENY
+
         ok, _ = self._storage.commit(proposal.transaction_id)
         if not ok:
             return EncryptedSyncAdapterOutcome.DENY
-        self._committed_transactions.add(proposal.transaction_id)
+
+        self._transaction_registry.put(
+            EncryptedSyncTransactionRecord(
+                transaction_id=proposal.transaction_id,
+                proposal=proposal,
+                device_id=record.device_id,
+                state=EncryptedSyncTransactionState.COMMITTED,
+                created_at=record.created_at,
+            )
+        )
         return EncryptedSyncAdapterOutcome.ALLOW
 
     def rollback(self, proposal: EncryptedSyncTransactionProposal) -> EncryptedSyncAdapterOutcome:
-        """Rollback a staged sync transaction."""
+        """Rollback a staged or committed sync transaction."""
         if self.state is AdapterState.DISABLED:
             return EncryptedSyncAdapterOutcome.UNAVAILABLE
         if self._storage is None:
             return EncryptedSyncAdapterOutcome.UNAVAILABLE
-        expected = self._staged_transactions.get(proposal.transaction_id)
-        if expected != proposal:
+
+        record = self._transaction_registry.get(proposal.transaction_id)
+        if record is None or record.proposal != proposal:
             return EncryptedSyncAdapterOutcome.DENY
+        if record.state not in (EncryptedSyncTransactionState.STAGED, EncryptedSyncTransactionState.COMMITTED):
+            return EncryptedSyncAdapterOutcome.DENY
+
         ok, _ = self._storage.rollback(proposal.transaction_id)
         if not ok:
             return EncryptedSyncAdapterOutcome.DENY
+
+        self._transaction_registry.put(
+            EncryptedSyncTransactionRecord(
+                transaction_id=proposal.transaction_id,
+                proposal=proposal,
+                device_id=record.device_id,
+                state=EncryptedSyncTransactionState.ROLLED_BACK,
+                created_at=record.created_at,
+            )
+        )
         return EncryptedSyncAdapterOutcome.ALLOW
 
     def _map_sync_reason(self, reason: SyncReason) -> EncryptedSyncAdapterReason:
@@ -271,7 +454,20 @@ class EncryptedSyncAdapter:
         }.get(reason, EncryptedSyncAdapterReason.INVALID_CONFIGURATION)
 
     def revoke_device(self, device_id: str) -> None:
-        self._revoked_devices.add(device_id)
+        """Revoke a device through the injected registry.
+
+        Callers with a custom registry should revoke directly on that registry.
+        This convenience method delegates when the registry supports it.
+        """
+        try:
+            self._device_registry.revoke(device_id)
+        except NotImplementedError as exc:
+            raise AdapterException(AdapterReason.INVALID_CONFIGURATION, EncryptedSyncAdapterReason.INVALID_CONFIGURATION) from exc
 
     def __repr__(self) -> str:
         return "EncryptedSyncAdapter()"
+
+
+def _reject_bool(value: object, name: str) -> None:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must not be a boolean")

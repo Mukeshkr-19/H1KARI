@@ -34,10 +34,16 @@ from core.phase6_adapters.home_assistant import HomeAssistantAdapterReason, Home
 from core.phase6_adapters.encrypted_sync import EncryptedSyncAdapterReason, EncryptedSyncAdapterOutcome, EncryptedSyncStorageInterface, EncryptedSyncTransactionProposal
 from core.phase6_adapters.remote_worker import RemoteWorkerAdapterOutcome
 from core.phase6_adapters.skill_staging import (
+    ArchiveEntry,
+    ArchiveEntryKind,
+    ArchiveEntryReaderInterface,
     SkillStagingAdapterReason,
     SkillStagingAdapterOutcome,
 )
-from core.phase6_adapters.measured_routing import MeasuredRoutingAdapterOutcome
+from core.phase6_adapters.measured_routing import (
+    CanaryState,
+    MeasuredRoutingAdapterOutcome,
+)
 
 from core.phase6_ecosystem.home_assistant import (
     HomeAssistantCapabilityManifest,
@@ -114,15 +120,44 @@ class FakeHAConfig:
         )
 
 
-class FakeHATransport(HomeAssistantTransportInterface):
-    def execute_authorized_plan(self, proposal):
-        return type("Observation", (), {
-            "observation_id": "obs1",
-            "proposal_id": proposal.proposal_id,
-            "success": True,
-            "result_evidence": "ok",
-            "observed_at": 0.0,
-        })()
+from core.phase6_adapters.home_assistant import (
+    HomeAssistantTransportContract,
+    HomeAssistantTransportRequest,
+    HomeAssistantTransportEvidence,
+)
+from core.phase6_adapters.remote_worker import (
+    CancellationAcknowledgement,
+    LocalAuthorizerInterface,
+    NonceStoreInterface,
+    RemoteWorkerJobState,
+)
+from core.phase6_adapters.encrypted_sync import (
+    DeviceTrustRegistry,
+    NonceReplayRegistry,
+    TransactionRegistry,
+    EncryptedSyncTransactionState,
+)
+
+
+class FakeHATransport(HomeAssistantTransportContract):
+    def __init__(self, final_url: Optional[str] = None, resolved_host: Optional[str] = None, failure: Optional[str] = None):
+        self.final_url = final_url or "https://hass.local:8123/api/"
+        self.resolved_host = resolved_host or "hass.local"
+        self.failure = failure
+
+    def execute_request(self, request: HomeAssistantTransportRequest) -> HomeAssistantTransportEvidence:
+        return HomeAssistantTransportEvidence(
+            observation_id="obs1",
+            proposal_id=request.proposal_id,
+            final_url=self.final_url,
+            resolved_host=self.resolved_host,
+            response_byte_count=2,
+            elapsed_seconds=0.01,
+            success_category=None if self.failure else "ok",
+            failure_category=self.failure,
+            idempotency_contract_proven=False,
+            observed_at=0.0,
+        )
 
 
 class FakeAuditor:
@@ -158,11 +193,23 @@ class FakeSyncStorage(EncryptedSyncStorageInterface):
 
 
 class FakeArchiveReader:
-    def __init__(self, entries):
+    def __init__(self, entries: dict[str, bytes]) -> None:
         self.entries = entries
 
-    def read_entries(self, archive_bytes):
-        return self.entries
+    def read_entries(self, archive_bytes: bytes) -> tuple[ArchiveEntry, ...]:
+        return tuple(
+            ArchiveEntry(
+                normalized_path=path,
+                kind=ArchiveEntryKind.REGULAR,
+                content=content,
+                uncompressed_size=len(content),
+                compressed_size=len(content),
+                mode=0o644,
+                executable=False,
+                link_target=None,
+            )
+            for path, content in self.entries.items()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -757,11 +804,9 @@ def test_skill_staging_permission_widening_detected() -> None:
     assert exc_info.value.detail is SkillStagingAdapterReason.PERMISSION_WIDENING
 
 
-def test_measured_routing_flap_requires_confirmation() -> None:
+def test_measured_routing_canary_lifecycle_and_rollback() -> None:
     config = MeasuredRoutingAdapterConfig(require_canary_confirmation=False)
     adapter = MeasuredRoutingAdapter(config=config, clock=FakeClock())
-    # Use REMOTE_OK as the upper bound so a remote candidate can legitimately
-    # overtake a local gateway and trigger a flap.
     scenario = EvaluationScenario(
         scenario_id="s1",
         required_capabilities=(ModelCapability.TEXT_GEN,),
@@ -805,12 +850,15 @@ def test_measured_routing_flap_requires_confirmation() -> None:
             measured_at=0.0,
         ),
     }
-    # First evaluation: local wins
+    # Evaluation alone does not update incumbent; it proposes a canary.
     result1 = adapter.evaluate(scenario, [local, remote], measurements)
     assert result1.outcome is MeasuredRoutingAdapterOutcome.RECOMMEND
     assert result1.recommendation.winning_candidate.candidate_id == "local1"
-    assert result1.canary.requires_confirmation is False
-    # Second evaluation with remote scoring better => flap
+    assert result1.canary_state is CanaryState.CANARY_PROPOSED
+    # Confirm the canary to make local the incumbent.
+    confirmed = adapter.confirm_canary(result1.canary.proposal_id)
+    assert confirmed.canary_state is CanaryState.CONFIRMED
+    # Remote overtakes -> flap detected, rollback candidate is previous incumbent.
     measurements2 = {
         "local1": ModelMeasurement(
             candidate_id="local1",
@@ -837,11 +885,15 @@ def test_measured_routing_flap_requires_confirmation() -> None:
     assert result2.outcome is MeasuredRoutingAdapterOutcome.RECOMMEND
     assert result2.canary.requires_confirmation is True
     assert result2.rollback_candidate_id == "local1"
+    # Failed canary restores previous route.
+    failed = adapter.record_canary_failure(result2.canary.proposal_id)
+    assert failed.canary_state is CanaryState.CANARY_FAILED
+    assert failed.rollback_candidate_id == "local1"
 
 
 def test_ha_transport_exception_is_caught() -> None:
-    class FailingTransport(HomeAssistantTransportInterface):
-        def execute_authorized_plan(self, proposal):
+    class FailingTransport(HomeAssistantTransportContract):
+        def execute_request(self, request: HomeAssistantTransportRequest) -> HomeAssistantTransportEvidence:
             raise RuntimeError("transport failure")
 
     config = FakeHAConfig.build()
@@ -907,9 +959,9 @@ def test_encrypted_sync_nonce_not_consumed_on_revoked_device() -> None:
 def test_ha_missing_audit_fails_before_transport() -> None:
     class CountingTransport(FakeHATransport):
         calls = 0
-        def execute_authorized_plan(self, proposal):
+        def execute_request(self, request: HomeAssistantTransportRequest) -> HomeAssistantTransportEvidence:
             self.calls += 1
-            return super().execute_authorized_plan(proposal)
+            return super().execute_request(request)
     transport = CountingTransport()
     ha = HomeAssistantAdapter(config=FakeHAConfig.build(), clock=FakeClock(), id_factory=FakeIdFactory(), transport=transport)
     actor = ActorContext(actor_id="owner.1", actor=Actor.OWNER, session_id="s1")

@@ -104,6 +104,22 @@ from core.phase5.transport import (
     outcome_to_error_code,
     session_to_update_message,
 )
+from core.phase6_transport import (
+    PHASE6_CLIENT_MESSAGE_TYPES,
+    Phase6CorrelationTracker,
+    Phase6ErrorCode,
+    build_agent_run_frame,
+    build_encrypted_sync_frame,
+    build_error_frame,
+    build_home_assistant_proposal_frame,
+    build_integration_status_frame,
+    build_model_eval_frame,
+    build_remote_worker_frame,
+    build_repo_intel_frame,
+    build_skill_evolution_frame,
+    build_time_sense_frame,
+)
+
 
 _PHASE5_PENDING_APPROVAL_TTL_SECONDS = 300.0
 _PHASE5_MAX_PENDING_APPROVALS_PER_CONNECTION = 32
@@ -193,6 +209,7 @@ class WebSocketServer:
         visual_transfer_runtime: Optional[VisualTransferRuntime] = None,
         vision_runtime: Optional[VisionRuntime] = None,
         phase5_subsystem: Optional[Phase5Subsystem] = None,
+        phase6_subsystem: Any = None,
     ):
         self.orchestrator = orchestrator
         self.host = host
@@ -245,6 +262,9 @@ class WebSocketServer:
         self._phase5_subsystem: Phase5Subsystem | None = phase5_subsystem
         self._phase5_bootstrap_failed = False
         self._phase5_pending_approvals: Dict[str, Dict[str, dict]] = {}
+        self._phase6_subsystem = phase6_subsystem
+        self._phase6_pending_proposals: Dict[str, Dict[str, dict]] = {}
+        self._phase6_trackers: Dict[str, Phase6CorrelationTracker] = {}
 
     def _voice_companion_enabled(self) -> bool:
         return is_voice_companion_enabled()
@@ -549,6 +569,8 @@ class WebSocketServer:
             self._connection_tokens.pop(client_key, None)
             self._paired_client_ids.discard(client_key)
             self._phase5_pending_approvals.pop(client_key, None)
+            self._phase6_pending_proposals.pop(client_key, None)
+            self._phase6_trackers.pop(client_key, None)
             self._pair_attempts.pop(client_key, None)
             self.device_info.pop(client_key, None)
             self._companion_bridges.pop(client_key, None)
@@ -1774,6 +1796,165 @@ class WebSocketServer:
             build_helper_grants_message(request_id=request_id, grants=grants),
         )
 
+    def _get_phase6_tracker(self, client_key: str) -> Phase6CorrelationTracker:
+        tracker = self._phase6_trackers.get(client_key)
+        if tracker is None:
+            tracker = Phase6CorrelationTracker()
+            self._phase6_trackers[client_key] = tracker
+        return tracker
+
+    async def _send_phase6_message(self, websocket, message: dict) -> None:
+        validation_error = validate_server_message(message)
+        if validation_error:
+            request_id = message.get("request_id") if isinstance(message, dict) else None
+            if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id):
+                request_id = "invalid-request"
+            message = build_error_frame(request_id=request_id, code=Phase6ErrorCode.INTERNAL_ERROR)
+        try:
+            await websocket.send(json.dumps(message))
+        except Exception:
+            pass
+
+    def queue_phase6_proposal(self, client_key: str, proposal: dict) -> bool:
+        if (
+            not isinstance(client_key, str)
+            or not client_key
+            or not isinstance(proposal, dict)
+            or proposal.get("type") != "phase6_home_assistant_proposal"
+            or validate_server_message(proposal) is not None
+        ):
+            return False
+        pending_map = self._phase6_pending_proposals.setdefault(client_key, {})
+        if len(pending_map) >= 32:
+            oldest_id = next(iter(pending_map))
+            pending_map.pop(oldest_id, None)
+        proposal_id = proposal.get("proposal_id")
+        if isinstance(proposal_id, str):
+            pending_map[proposal_id] = dict(proposal)
+            return True
+        return False
+
+    async def _handle_phase6_control(self, websocket, data: dict) -> None:
+        request_id = data.get("request_id")
+        if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id):
+            request_id = "invalid-request"
+
+        context = self._derive_actor_context(websocket)
+        actor = context.actor_context
+
+        if not context.is_paired or actor.actor is not Actor.OWNER:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAUTHORIZED),
+            )
+            return
+
+        client_key = str(id(websocket))
+        tracker = self._get_phase6_tracker(client_key)
+
+        if not tracker.track_request(request_id):
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.DUPLICATE_REQUEST),
+            )
+            return
+
+        msg_type = data.get("type")
+        try:
+            if msg_type == "phase6_integration_list_request":
+                await self._phase6_integration_list(websocket, data, request_id, client_key)
+            elif msg_type == "phase6_home_assistant_confirm_request":
+                await self._phase6_home_assistant_confirm(websocket, data, request_id, client_key)
+            else:
+                await self._send_phase6_message(
+                    websocket,
+                    build_error_frame(request_id=request_id, code=Phase6ErrorCode.INVALID_REQUEST),
+                )
+        except Exception:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.INTERNAL_ERROR),
+            )
+
+    async def _phase6_integration_list(self, websocket, data: dict, request_id: str, client_key: str) -> None:
+        ha_status = "unavailable"
+        sync_status = "unavailable"
+        worker_status = "unavailable"
+        skill_status = "unavailable"
+        model_status = "unavailable"
+
+        if self._phase6_subsystem is not None:
+            ha_status = "ready" if getattr(self._phase6_subsystem, "home_assistant_enabled", False) else "disabled"
+            sync_status = "ready" if getattr(self._phase6_subsystem, "encrypted_sync_enabled", False) else "disabled"
+            worker_status = "ready" if getattr(self._phase6_subsystem, "remote_workers_enabled", False) else "disabled"
+            skill_status = "ready" if getattr(self._phase6_subsystem, "skill_staging_enabled", False) else "disabled"
+            model_status = "ready" if getattr(self._phase6_subsystem, "measured_routing_enabled", False) else "disabled"
+
+        integrations = [
+            ("home_assistant", "Home Assistant", ha_status, "Entity control plane"),
+            ("encrypted_sync", "Encrypted Sync", sync_status, "Manifest sync planner"),
+            ("remote_workers", "Remote Workers", worker_status, "Isolated job telemetry"),
+            ("skill_evolution", "Skill Evolution", skill_status, "Reviewed skill packages"),
+            ("model_evaluation", "Model Evaluation", model_status, "Local model routing"),
+        ]
+        for int_id, name, status, summary in integrations:
+            await self._send_phase6_message(
+                websocket,
+                build_integration_status_frame(
+                    request_id=request_id,
+                    integration_id=int_id,
+                    name=name,
+                    status=status,
+                    details_summary=summary,
+                ),
+            )
+
+    async def _phase6_home_assistant_confirm(self, websocket, data: dict, request_id: str, client_key: str) -> None:
+        proposal_id = data.get("proposal_id")
+        nonce = data.get("nonce")
+
+        pending_map = self._phase6_pending_proposals.get(client_key, {})
+        proposal = pending_map.get(proposal_id)
+
+        if not proposal or proposal.get("nonce") != nonce:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.STALE_REQUEST),
+            )
+            return
+
+        tracker = self._get_phase6_tracker(client_key)
+        if not tracker.track_nonce(nonce):
+            pending_map.pop(proposal_id, None)
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.STALE_REQUEST),
+            )
+            return
+
+        expires_at = proposal.get("expires_at", 0)
+        if time.time() > expires_at:
+            pending_map.pop(proposal_id, None)
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.EXPIRED),
+            )
+            return
+
+        # One-time consumption
+        pending_map.pop(proposal_id, None)
+
+        if self._phase6_subsystem is None:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
+            )
+            return
+
+        await self._send_phase6_message(
+            websocket,
+            build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
+        )
 
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""
@@ -1811,6 +1992,23 @@ class WebSocketServer:
                     )
                     return
                 await self._handle_phase5_control(websocket, data)
+                return
+
+            if msg_type in PHASE6_CLIENT_MESSAGE_TYPES:
+                validation_error = validate_client_message(data)
+                if validation_error:
+                    request_id = data.get("request_id") if isinstance(data, dict) else None
+                    if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id):
+                        request_id = "invalid-request"
+                    await self._send_phase6_message(
+                        websocket,
+                        build_error_frame(
+                            request_id=request_id,
+                            code=Phase6ErrorCode.INVALID_REQUEST,
+                        ),
+                    )
+                    return
+                await self._handle_phase6_control(websocket, data)
                 return
 
             if msg_type in {

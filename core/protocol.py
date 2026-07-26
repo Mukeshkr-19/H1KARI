@@ -21,11 +21,14 @@ PROTOCOL_VERSION = int(PROTOCOL_SCHEMA["version"])
 CLIENT_MESSAGES = PROTOCOL_SCHEMA["client_to_server"]
 SERVER_MESSAGES = PROTOCOL_SCHEMA["server_to_client"]
 
-# Phase 5 frames are registered in-process so hikari-v1.json remains the
-# Phase 1-4 baseline while validators see the Phase 5 allowlist.
+# Phase 5 & Phase 6 frames are registered in-process so hikari-v1.json remains the
+# Phase 1-4 baseline while validators see the Phase 5/6 allowlists.
 from core.phase5.transport import register_phase5_protocol  # noqa: E402
+from core.phase6_transport import register_phase6_protocol  # noqa: E402
 
 register_phase5_protocol(CLIENT_MESSAGES, SERVER_MESSAGES)
+register_phase6_protocol(CLIENT_MESSAGES, SERVER_MESSAGES)
+
 
 
 def _matches_type(value: Any, expected: str) -> bool:

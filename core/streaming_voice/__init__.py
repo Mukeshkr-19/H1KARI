@@ -1,8 +1,10 @@
-"""HIKARI streaming-voice foundations.
+"""HIKARI streaming-voice bounded contracts and compatibility facade.
 
-Pure, injected-clock contracts for timestamped segments, deterministic VAD,
-full-duplex turn control, wake/sleep authority, barge-in, AEC capability
-negotiation, and bounded backpressure.
+Canonical production wake/sleep/turn authority is
+``core.voice_streaming.runtime.VoiceStreamingRuntime`` (daemon-facing).
+``TurnStateMachine`` delegates to that runtime so the packages cannot
+disagree. Pure helpers (AEC negotiation, barge-in correlation, bounded
+buffers, transcript segment contracts, metadata VAD) remain here.
 
 No live microphone, DSP, model, network, filesystem, or daemon wiring.
 """

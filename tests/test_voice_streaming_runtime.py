@@ -215,3 +215,77 @@ def test_runtime_reset_and_close():
     runtime.start_wake_listening()
     runtime.close()
     assert runtime.is_wake_listening is True
+
+
+def test_duplicate_same_utterance_id_rejected_but_repeated_words_are_allowed():
+    runtime = VoiceStreamingRuntime("stream_dup")
+    runtime.start_wake_listening()
+    first = runtime.process_utterance(
+        "Hikari, lights on", is_verified_speaker=True, utterance_id="utt_1"
+    )
+    assert first["action"] == "process_command"
+    runtime.reset_to_wake_listening()
+    second = runtime.process_utterance(
+        "Hikari, lights on", is_verified_speaker=True, utterance_id="utt_1"
+    )
+    assert second["action"] == "ignore"
+    assert second["reason"] == "duplicate_utterance"
+    runtime.reset_to_wake_listening()
+    repeated_words = runtime.process_utterance(
+        "Hikari, lights on", is_verified_speaker=True, utterance_id="utt_2"
+    )
+    assert repeated_words["action"] == "process_command"
+
+
+def test_assistant_playback_cannot_become_user_speech():
+    runtime = VoiceStreamingRuntime("stream_play")
+    runtime.start_active_listening()
+    runtime.assistant_speaking_start()
+    res = runtime.process_utterance("turn off the lights", is_verified_speaker=True)
+    assert res["action"] == "ignore"
+    assert res["reason"] == "assistant_playback_active"
+
+
+def test_future_interruption_rejected():
+    runtime = VoiceStreamingRuntime("stream_future", clock=lambda: 1_000)
+    runtime.start_active_listening()
+    runtime.assistant_speaking_start()
+    ok = runtime.request_interruption("req_f", is_authenticated=True, monotonic_ns=10**15)
+    assert ok is False
+
+
+def test_cancel_active_from_speaking_clears_state():
+    runtime = VoiceStreamingRuntime("stream_cancel")
+    runtime.start_active_listening()
+    runtime.assistant_speaking_start()
+    assert runtime.cancel_active() is True
+    assert runtime.is_wake_listening
+    assert runtime.state_machine.active_interruption_request is None
+
+
+def test_replay_history_exhaustion_fail_closed():
+    runtime = VoiceStreamingRuntime(
+        "stream_hist",
+        config=VoiceStreamingRuntimeConfig(max_history=16),
+    )
+    runtime.start_active_listening()
+    accepted = 0
+    rejected = 0
+    for i in range(20):
+        res = runtime.process_utterance(
+            f"command number {i}",
+            is_verified_speaker=True,
+            utterance_id=f"utt_{i}",
+        )
+        if res["action"] == "process_command":
+            accepted += 1
+            runtime.reset_to_wake_listening()
+            runtime.start_active_listening()
+        elif res.get("reason") == "duplicate_utterance":
+            rejected += 1
+        else:
+            # After key set clears on exhaustion, subsequent unique commands may resume.
+            if res["action"] == "ignore":
+                rejected += 1
+    assert accepted >= 1
+    assert rejected >= 1

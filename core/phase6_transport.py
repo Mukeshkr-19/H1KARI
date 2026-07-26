@@ -8,6 +8,7 @@ evaluation without executing actions or mutating state.
 
 from __future__ import annotations
 
+import copy
 import math
 import re
 from dataclasses import dataclass
@@ -80,10 +81,273 @@ SKILL_EVOLUTION_STATES = frozenset({
 HOME_ASSISTANT_RISKS = frozenset({"low", "medium", "high", "critical"})
 
 PRIVACY_CLASSES = frozenset({"local_only", "gateway_ok", "remote_ok"})
-PHASE6_CLIENT_FIELDS: Mapping[str, frozenset[str]] = {
-    "phase6_integration_list_request": frozenset({"type", "request_id", "protocol_version"}),
-    "phase6_home_assistant_confirm_request": frozenset({"type", "request_id", "protocol_version", "proposal_id", "nonce"}),
+
+PHASE6_CLIENT_MESSAGE_TYPES = frozenset({
+    "phase6_integration_list_request",
+    "phase6_home_assistant_confirm_request",
+})
+
+PHASE6_SERVER_MESSAGE_TYPES = frozenset({
+    "phase6_integration_status",
+    "phase6_agent_run_update",
+    "phase6_time_sense_update",
+    "phase6_repo_intel_update",
+    "phase6_skill_evolution_update",
+    "phase6_home_assistant_proposal",
+    "phase6_encrypted_sync_update",
+    "phase6_remote_worker_update",
+    "phase6_model_eval_update",
+    "phase6_error",
+})
+
+# Protocol schema definitions for core/protocol.py validation
+_CANONICAL_ID_SPEC = {
+    "type": "string",
+    "max_length": 80,
+    "pattern": r"^[a-z0-9][a-z0-9_.-]{0,79}$",
 }
+_SAFE_TEXT_64 = {
+    "type": "string",
+    "min_length": 1,
+    "max_length": 64,
+    "forbid_controls": True,
+    "forbid_unicode_format": True,
+}
+_SAFE_TEXT_128 = {
+    "type": "string",
+    "min_length": 1,
+    "max_length": 128,
+    "forbid_controls": True,
+    "forbid_unicode_format": True,
+}
+_SAFE_TEXT_512 = {
+    "type": "string",
+    "min_length": 1,
+    "max_length": 512,
+    "forbid_controls": True,
+    "forbid_unicode_format": True,
+}
+
+PHASE6_CLIENT_MESSAGE_SPECS: dict[str, Any] = {
+    "phase6_integration_list_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+        },
+        "optional": {},
+    },
+    "phase6_home_assistant_confirm_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "proposal_id": _CANONICAL_ID_SPEC,
+            "nonce": {
+                "type": "string",
+                "min_length": 1,
+                "max_length": 80,
+                "forbid_controls": True,
+                "forbid_unicode_format": True,
+            },
+        },
+        "optional": {},
+    },
+}
+
+PHASE6_SERVER_MESSAGE_SPECS: dict[str, Any] = {
+    "phase6_integration_status": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "integration_id": _CANONICAL_ID_SPEC,
+            "name": _SAFE_TEXT_128,
+            "status": {
+                "type": "string",
+                "enum": list(INTEGRATION_STATUSES),
+            },
+        },
+        "optional": {
+            "details_summary": _SAFE_TEXT_512,
+        },
+    },
+    "phase6_agent_run_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "run_id": _CANONICAL_ID_SPEC,
+            "state": {
+                "type": "string",
+                "enum": list(AGENT_RUN_STATES),
+            },
+            "step_count": {"type": "integer", "minimum": 0},
+            "action_count": {"type": "integer", "minimum": 0},
+            "budget_limit": {"type": "integer", "minimum": 0},
+            "safe_summary": _SAFE_TEXT_512,
+        },
+        "optional": {},
+    },
+    "phase6_time_sense_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "task_age_seconds": {"type": "number", "finite": True, "minimum": 0},
+            "heartbeat_status": _SAFE_TEXT_64,
+            "next_allowed_checkin": {"type": "number", "finite": True},
+            "suppression_state": _SAFE_TEXT_64,
+            "background_status": _SAFE_TEXT_64,
+        },
+        "optional": {
+            "stuck_reason": _SAFE_TEXT_512,
+        },
+    },
+    "phase6_repo_intel_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "scan_state": _SAFE_TEXT_64,
+            "query_summary": _SAFE_TEXT_128,
+            "hit_count": {"type": "integer", "minimum": 0},
+            "results": {
+                "type": "array",
+                "max_items": MAX_ITEMS_COUNT,
+                "items": {
+                    "type": "object",
+                    "exact_keys": True,
+                    "required": {
+                        "path": {
+                            "type": "string",
+                            "min_length": 1,
+                            "max_length": 256,
+                            "forbid_controls": True,
+                            "forbid_unicode_format": True,
+                        },
+                        "line": {"type": "integer", "minimum": 0},
+                        "score": {"type": "number", "finite": True},
+                        "provenance": _SAFE_TEXT_128,
+                    },
+                    "optional": {
+                        "symbol": _SAFE_TEXT_128,
+                    },
+                },
+            },
+        },
+        "optional": {},
+    },
+    "phase6_skill_evolution_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "package_id": _CANONICAL_ID_SPEC,
+            "version": _SAFE_TEXT_64,
+            "state": {
+                "type": "string",
+                "enum": list(SKILL_EVOLUTION_STATES),
+            },
+            "permissions_summary": {
+                "type": "array",
+                "max_items": MAX_ITEMS_COUNT,
+                "items": _SAFE_TEXT_128,
+            },
+            "rollback_ready": {"type": "boolean"},
+            "allows_auto_install": {"type": "boolean", "equals": False},
+        },
+        "optional": {},
+    },
+    "phase6_home_assistant_proposal": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "proposal_id": _CANONICAL_ID_SPEC,
+            "entity_id": _SAFE_TEXT_128,
+            "domain": _SAFE_TEXT_128,
+            "service": _SAFE_TEXT_128,
+            "risk": {
+                "type": "string",
+                "enum": list(HOME_ASSISTANT_RISKS),
+            },
+            "effect_summary": _SAFE_TEXT_512,
+            "expires_at": {"type": "number", "finite": True},
+            "nonce": {
+                "type": "string",
+                "min_length": 1,
+                "max_length": 80,
+                "forbid_controls": True,
+                "forbid_unicode_format": True,
+            },
+        },
+        "optional": {},
+    },
+    "phase6_encrypted_sync_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "enabled": {"type": "boolean"},
+            "configured": {"type": "boolean"},
+            "status": _SAFE_TEXT_64,
+            "conflict_count": {"type": "integer", "minimum": 0},
+            "exposes_plaintext": {"type": "boolean", "equals": False},
+        },
+        "optional": {},
+    },
+    "phase6_remote_worker_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "job_id": _CANONICAL_ID_SPEC,
+            "worker_id": _CANONICAL_ID_SPEC,
+            "state": _SAFE_TEXT_64,
+            "has_evidence": {"type": "boolean"},
+            "quarantined": {"type": "boolean"},
+            "verified_local_authority": {"type": "boolean", "equals": False},
+        },
+        "optional": {},
+    },
+    "phase6_model_eval_update": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "candidate_id": _CANONICAL_ID_SPEC,
+            "privacy_class": {
+                "type": "string",
+                "enum": list(PRIVACY_CLASSES),
+            },
+            "capabilities": {
+                "type": "array",
+                "max_items": MAX_ITEMS_COUNT,
+                "items": _SAFE_TEXT_64,
+            },
+            "quality_score": {"type": "number", "finite": True},
+            "safety_score": {"type": "number", "finite": True},
+            "latency_ms": {"type": "number", "finite": True},
+            "recommendation": _SAFE_TEXT_128,
+        },
+        "optional": {
+            "rejection_reason": _SAFE_TEXT_128,
+        },
+    },
+    "phase6_error": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "code": {
+                "type": "string",
+                "enum": [c.value for c in Phase6ErrorCode],
+            },
+            "message": _SAFE_TEXT_512,
+        },
+        "optional": {},
+    },
+}
+
+
+def register_phase6_protocol(
+    client_messages: dict[str, Any],
+    server_messages: dict[str, Any],
+) -> None:
+    """Merge Phase 6 specs into existing protocol registries without replacing them."""
+    for name, spec in PHASE6_CLIENT_MESSAGE_SPECS.items():
+        client_messages[name] = copy.deepcopy(spec)
+    for name, spec in PHASE6_SERVER_MESSAGE_SPECS.items():
+        server_messages[name] = copy.deepcopy(spec)
 
 
 def _is_valid_id(value: Any) -> bool:
@@ -126,27 +390,32 @@ def parse_phase6_client_frame(data: Mapping[str, Any]) -> Tuple[bool, Optional[P
     request_id = data.get("request_id")
     proto_ver = data.get("protocol_version")
 
-    if not isinstance(msg_type, str) or msg_type not in PHASE6_CLIENT_FIELDS:
+    if not isinstance(msg_type, str) or msg_type not in PHASE6_CLIENT_MESSAGE_TYPES:
         return False, None, Phase6ErrorCode.INVALID_REQUEST, "invalid frame type"
     if not _is_valid_id(request_id):
         return False, None, Phase6ErrorCode.INVALID_REQUEST, "invalid request_id"
     if proto_ver != PROTOCOL_VERSION:
         return False, None, Phase6ErrorCode.INVALID_REQUEST, "unsupported protocol version"
-    if set(data) != PHASE6_CLIENT_FIELDS[msg_type]:
+    spec = PHASE6_CLIENT_MESSAGE_SPECS[msg_type]
+    expected = {"type", *spec["required"], *spec["optional"]}
+    if set(data) != expected:
         return False, None, Phase6ErrorCode.INVALID_REQUEST, "unexpected or missing fields"
     if msg_type == "phase6_home_assistant_confirm_request":
-        if not _is_valid_id(data.get("proposal_id")) or not _is_safe_text(data.get("nonce"), max_len=80):
+        if not _is_valid_id(data.get("proposal_id")) or not _is_safe_text(
+            data.get("nonce"), max_len=80
+        ):
             return False, None, Phase6ErrorCode.INVALID_REQUEST, "invalid confirmation fields"
 
     header = Phase6FrameHeader(type=msg_type, request_id=request_id, protocol_version=PROTOCOL_VERSION)
     return True, header, Phase6ErrorCode.INVALID_REQUEST, "ok"
 
 
+
 class Phase6CorrelationTracker:
     """Track request IDs and nonces to prevent duplicate or stale submissions."""
 
     def __init__(self, max_history: int = 256):
-        if not isinstance(max_history, int) or not 1 <= max_history <= 4096:
+        if type(max_history) is not int or not 1 <= max_history <= 4096:
             raise ValueError("invalid max_history")
         self.max_history = max_history
         self.seen_request_ids: set[str] = set()
@@ -296,7 +565,7 @@ def build_repo_intel_frame(
     if not _is_non_negative_int(hit_count):
         raise ValueError("invalid hit_count")
     if len(results) > MAX_ITEMS_COUNT or hit_count != len(results):
-        raise ValueError("results count exceeds maximum")
+        raise ValueError("results count mismatch or exceeds maximum")
 
     clean_results = []
     for r in results:
@@ -313,13 +582,15 @@ def build_repo_intel_frame(
         if not _is_finite_num(score) or not 0.0 <= score <= 1.0 or not _is_safe_text(provenance, max_len=128):
             raise ValueError("invalid result score or provenance")
 
-        clean_results.append({
+        clean_result = {
             "path": path,
             "line": line,
-            "symbol": symbol,
             "score": float(score),
             "provenance": provenance,
-        })
+        }
+        if symbol is not None:
+            clean_result["symbol"] = symbol
+        clean_results.append(clean_result)
 
     return {
         "type": "phase6_repo_intel_update",
@@ -381,7 +652,9 @@ def build_home_assistant_proposal_frame(
 ) -> Mapping[str, Any]:
     if not _is_valid_id(request_id) or not _is_valid_id(proposal_id):
         raise ValueError("invalid identifier")
-    if not all(_is_safe_text(value, max_len=128) for value in (entity_id, domain, service)):
+    if not all(
+        _is_safe_text(value, max_len=128) for value in (entity_id, domain, service)
+    ):
         raise ValueError("invalid Home Assistant identifier")
     if "*" in entity_id or "*" in domain or "*" in service:
         raise ValueError("wildcards prohibited")
