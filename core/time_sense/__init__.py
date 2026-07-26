@@ -8,6 +8,10 @@ Public surface:
 - :func:`build_awareness` and :class:`AwarenessBuilder` — bounded background
   work awareness snapshots.
 - :func:`recommend_notification` — quiet-hours-aware notification advice.
+- :mod:`core.time_sense.session_policy` — conversation timing policy.
+- :mod:`core.time_sense.job_observations` — job timing observations.
+- :mod:`core.time_sense.stuck_notify` — stuck notification backoff/dedupe.
+- :mod:`core.time_sense.adapters` — Mira integration protocols (no I/O).
 
 Time Sense never mutates task or job objects, never schedules, delivers,
 retries, or cancels work, and never touches the wall clock. A caller-supplied
@@ -16,6 +20,12 @@ reference datetime is the only time source.
 
 from __future__ import annotations
 
+from core.time_sense.adapters import (
+    ConversationSessionObservationSource,
+    ScheduledJobObservationSource,
+    StreamingVoiceObservationSource,
+    TaskProgressObservationSource,
+)
 from core.time_sense.background_awareness import (
     AwarenessBuilder,
     build_awareness,
@@ -38,16 +48,26 @@ from core.time_sense.contracts import (
     TemporalPrecision,
     TimeReference,
 )
+from core.time_sense.conversation_timing import interpret_time_phrase
+from core.time_sense.job_observations import JobObservationState, JobTimingObservation
+from core.time_sense.session_policy import (
+    ConversationTimingObservation,
+    TimingAction,
+    TimingPolicyConfig,
+    TimingPolicyDecision,
+    TimingReason,
+    evaluate_conversation_timing,
+)
 from core.time_sense.stuck_detection import (
     StuckDetector,
     StuckDetectorConfig,
     assess_stuck,
 )
-
-# Conversation_timing is the module that owns ``interpret_time_phrase``. We
-# re-export it through ``stuck_detection``'s module path for discoverability,
-# but the canonical home is ``conversation_timing``.
-from core.time_sense.conversation_timing import interpret_time_phrase
+from core.time_sense.stuck_notify import (
+    StuckNotifyConfig,
+    StuckNotifyDecision,
+    StuckNotificationTracker,
+)
 
 __all__ = [
     "DEFAULT_MAX_FUTURE_HORIZON",
@@ -56,20 +76,35 @@ __all__ = [
     "AwarenessBuilder",
     "AwarenessSnapshot",
     "BackgroundActivity",
+    "ConversationSessionObservationSource",
+    "ConversationTimingObservation",
+    "JobObservationState",
+    "JobTimingObservation",
     "NotificationAdvice",
     "NotificationRecommendation",
     "QuietHoursContext",
+    "ScheduledJobObservationSource",
+    "StreamingVoiceObservationSource",
     "StuckAssessment",
     "StuckDetector",
     "StuckDetectorConfig",
+    "StuckNotifyConfig",
+    "StuckNotifyDecision",
+    "StuckNotificationTracker",
     "StuckReason",
     "TaskProgressObservation",
+    "TaskProgressObservationSource",
     "TaskProgressState",
     "TemporalInterpretation",
     "TemporalPrecision",
     "TimeReference",
+    "TimingAction",
+    "TimingPolicyConfig",
+    "TimingPolicyDecision",
+    "TimingReason",
     "assess_stuck",
     "build_awareness",
+    "evaluate_conversation_timing",
     "interpret_time_phrase",
     "recommend_notification",
 ]
