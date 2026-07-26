@@ -357,6 +357,11 @@ Outcome: advanced repository, home, skill, remote-worker, and evaluation capabil
 
 Work includes repository intelligence, Git/sandbox workflows, signed skill packages, Home Assistant, optional encrypted sync, optional remote workers, and measured local-model routing.
 
+Completion evidence: `docs/PHASE_6_COMPLETION.md`. Optional live transports and
+device-specific deployments remain disabled until separately configured and
+accepted; the completion evidence covers the audited core contracts, safe
+runtime facade, automated release gates, and explicit authority boundaries.
+
 ## 12. Future integrations register
 
 Every entry below is a candidate or study source until it passes Section 13. Names identify upstream ideas; they do not authorize code copying or a dependency.

@@ -40,6 +40,7 @@ from core.brain_statements import (
     is_task_or_action_statement,
 )
 from core.action_policy import Actor, ActorContext, validate_actor_context
+from core.phase6_runtime import Phase6Runtime, create_phase6_runtime
 
 # Phase 5 capability proposals and session authority are handled exclusively
 # at the WebSocket server / Phase5RuntimeService boundary. The orchestrator
@@ -106,10 +107,14 @@ WAKE_WORDS = ["hikari", "hey hikari", "okay hikari", "hi hikari"]
 class HIKARI_Orchestrator:
     """Central brain of HIKARI - coordinates everything"""
 
-    def __init__(self):
+    def __init__(self, *, phase6_runtime: Optional[Phase6Runtime] = None):
         debug("[HIKARI] Initializing brain...")
         self.authenticated = False
         self.codename_auth = CodenameAuth()
+        # Phase 6 defaults to read-only analysis and pure policy planning.
+        # All execution, transport, installation, and router mutation flags are
+        # disabled unless an embedding runtime explicitly injects otherwise.
+        self.phase6 = phase6_runtime or create_phase6_runtime()
 
         # Core memory
         self.memory = get_memory()
