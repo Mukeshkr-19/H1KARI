@@ -1,6 +1,6 @@
 # H1KARI Quick Start
 
-This guide matches the current repo layout as of May 19, 2026.
+This guide matches the current repo layout as of July 27, 2026.
 
 ## 1. Go To The Repo
 
@@ -43,6 +43,8 @@ Edit the ignored local `.env` file and add at least one key. Runtime
 
 ```text
 GOOGLE_AI_STUDIO_KEY=your-key-here
+# GEMINI_API_KEY is an accepted alias.
+# GEMINI_API_KEY=your-key-here
 GROQ_API_KEY=your-key-here
 ```
 

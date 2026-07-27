@@ -130,9 +130,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "GROQ_API_KEY",
         "base_url": "https://api.groq.com/openai/v1",
         "models": {
-            "fast": "llama-3.3-70b-versatile",
-            "balanced": "llama-3.3-70b-versatile",
-            "smart": "llama-3.3-70b-versatile",
+            "fast": "qwen/qwen3-32b",
+            "balanced": "qwen/qwen3-32b",
+            "smart": "openai/gpt-oss-120b",
+        },
+        "model_envs": {
+            "fast": "GROQ_FAST_MODEL",
+            "balanced": "GROQ_BALANCED_MODEL",
+            "smart": "GROQ_SMART_MODEL",
         },
         "rate_limit_rpm": 30,
         "max_tokens_per_min": 12000,
@@ -141,9 +146,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "OPENROUTER_API_KEY",
         "base_url": "https://openrouter.ai/api/v1",
         "models": {
-            "fast": "meta-llama/llama-3.3-70b-instruct:free",
-            "balanced": "meta-llama/llama-3.3-70b-instruct:free",
-            "smart": "deepseek/deepseek-r1:free",
+            "fast": "openrouter/free",
+            "balanced": "openrouter/free",
+            "smart": "openrouter/free",
+        },
+        "model_envs": {
+            "fast": "OPENROUTER_FAST_MODEL",
+            "balanced": "OPENROUTER_BALANCED_MODEL",
+            "smart": "OPENROUTER_SMART_MODEL",
         },
         "rate_limit_rpm": 20,
         "max_tokens_per_min": 50000,
@@ -152,9 +162,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "CEREBRAS_API_KEY",
         "base_url": "https://api.cerebras.ai/v1",
         "models": {
-            "fast": "llama-3.1-8b",
-            "balanced": "llama-3.1-8b",
-            "smart": "llama-3.1-8b",
+            "fast": "llama3.1-8b",
+            "balanced": "zai-glm-4.7",
+            "smart": "gpt-oss-120b",
+        },
+        "model_envs": {
+            "fast": "CEREBRAS_FAST_MODEL",
+            "balanced": "CEREBRAS_BALANCED_MODEL",
+            "smart": "CEREBRAS_SMART_MODEL",
         },
         "rate_limit_rpm": 30,
         "max_tokens_per_min": 60000,
@@ -163,9 +178,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "NVIDIA_API_KEY",
         "base_url": "https://integrate.api.nvidia.com/v1",
         "models": {
-            "fast": "meta/llama-3.3-70b-instruct",
-            "balanced": "meta/llama-3.3-70b-instruct",
-            "smart": "meta/llama-3.3-70b-instruct",
+            "fast": "nvidia/nemotron-3-nano-30b-a3b",
+            "balanced": "nvidia/nemotron-3-super-120b-a12b",
+            "smart": "nvidia/nemotron-3-ultra-550b-a55b",
+        },
+        "model_envs": {
+            "fast": "NVIDIA_FAST_MODEL",
+            "balanced": "NVIDIA_BALANCED_MODEL",
+            "smart": "NVIDIA_SMART_MODEL",
         },
         "rate_limit_rpm": 40,
         "max_tokens_per_min": 80000,
@@ -174,9 +194,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "COHERE_API_KEY",
         "base_url": None,
         "models": {
-            "fast": "command-r7b-12-2024",
-            "balanced": "command-r7b-12-2024",
-            "smart": "command-r7b-12-2024",
+            "fast": "command-a-plus-05-2026",
+            "balanced": "command-a-plus-05-2026",
+            "smart": "command-a-plus-05-2026",
+        },
+        "model_envs": {
+            "fast": "COHERE_FAST_MODEL",
+            "balanced": "COHERE_BALANCED_MODEL",
+            "smart": "COHERE_SMART_MODEL",
         },
         "rate_limit_rpm": 20,
         "max_tokens_per_min": 40000,
@@ -371,6 +396,27 @@ def _provider_model(provider: str, quality: str) -> Optional[str]:
     return value if _MODEL_ID.fullmatch(value) else None
 
 
+def _provider_api_key(provider: str) -> Optional[str]:
+    """Return a non-empty provider key without exposing or normalizing secrets."""
+    config = PROVIDER_CONFIGS.get(provider, {})
+    names = [config.get("api_key_env")]
+    if provider == "google":
+        names.append("GEMINI_API_KEY")
+    for name in names:
+        if not name:
+            continue
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def _litellm_model_name(provider: str, model: str) -> str:
+    """Build a LiteLLM model name without duplicating an embedded provider prefix."""
+    prefix = f"{provider}/"
+    return model if model.startswith(prefix) else f"{prefix}{model}"
+
+
 @dataclass
 class ProviderStatus:
     name: str
@@ -406,9 +452,7 @@ class AIRouter:
     def _init_providers(self):
         for name in FALLBACK_CHAIN:
             config = PROVIDER_CONFIGS[name]
-            api_key = (
-                os.getenv(config["api_key_env"]) if config.get("api_key_env") else None
-            )
+            api_key = _provider_api_key(name)
 
             # Ollama is always available (local). Local gateways require an
             # explicit bearer key, a valid loopback endpoint, and a model.
@@ -443,7 +487,7 @@ class AIRouter:
         # Ollama doesn't need an API key
         if config.get("local"):
             return "local"
-        return os.getenv(config["api_key_env"])
+        return _provider_api_key(provider)
 
     def _classify_task(self, user_input: str) -> str:
         lower = user_input.lower()
@@ -606,7 +650,7 @@ class AIRouter:
             if is_quiet():
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     response = litellm.completion(
-                        model=f"{provider}/{model}",
+                        model=_litellm_model_name(provider, model),
                         messages=messages,
                         max_tokens=max_tokens,
                         temperature=temperature,
@@ -616,7 +660,7 @@ class AIRouter:
                     )
             else:
                 response = litellm.completion(
-                    model=f"{provider}/{model}",
+                    model=_litellm_model_name(provider, model),
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
@@ -779,13 +823,12 @@ class AIRouter:
 
         try:
             response = requests.post(
-                "https://api.cohere.ai/v1/chat",
+                "https://api.cohere.ai/v2/chat",
                 json={
                     "model": model,
-                    "message": messages[-1]["content"],
+                    "messages": messages,
                     "max_tokens": max_tokens,
                     "temperature": 0.7,
-                    "preamble": messages[0]["content"] if messages else "",
                 },
                 headers={
                     "Authorization": f"Bearer {api_key}",
@@ -796,8 +839,19 @@ class AIRouter:
             )
             if response.status_code == 200:
                 result = _bounded_json_response(response)
-                if result is not None and isinstance(result.get("text"), str):
-                    return result["text"].strip()
+                message = result.get("message") if isinstance(result, dict) else None
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, list):
+                    return None
+                parts = [
+                    item.get("text", "")
+                    for item in content
+                    if isinstance(item, dict)
+                    and item.get("type") == "text"
+                    and isinstance(item.get("text"), str)
+                ]
+                text = "".join(parts).strip()
+                return text or None
             return None
         except Exception:
             _router_log("[ROUTER] Cohere request failed")
