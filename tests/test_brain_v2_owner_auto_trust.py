@@ -269,3 +269,49 @@ def test_anaphoric_remember_saves_prior_bare_fact(episode_db):
     assert "got it" in reply.lower() or "saved" in reply.lower()
     accepted = episode_db.get_active_accepted_memories(limit=10)
     assert any("testcoloramber" in m.statement.lower() for m in accepted)
+
+
+def test_anaphoric_remember_saves_prior_father_name(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(
+        scope,
+        "My father's name is TestPersonAlpha.",
+        "Got it - I noted that. Say 'remember this' if you want it saved right away.",
+    )
+    assert not episode_db.get_active_accepted_memories(limit=10)
+    reply = orch.process_input(
+        "Remember this in my brain.", source="voice", context=context
+    )
+    assert "got it" in reply.lower() or "saved" in reply.lower()
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    father = [
+        m
+        for m in accepted
+        if str((m.metadata or {}).get("relation") or "").lower() == "father"
+    ]
+    assert father
+    assert any(bool(str((m.metadata or {}).get("person") or "").strip()) for m in father)
+    assert any("testpersonalpha" in m.statement.lower() for m in accepted)
+
+
+def test_same_turn_remember_father_name_auto_accepts(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("text")
+    reply = orch.process_input(
+        "Remember this: My father's name is TestPersonAlpha.",
+        source="text",
+        context=context,
+    )
+    assert "got it" in reply.lower() or "saved" in reply.lower()
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    father = [
+        m
+        for m in accepted
+        if str((m.metadata or {}).get("relation") or "").lower() == "father"
+    ]
+    assert father
+    assert all(bool(str((m.metadata or {}).get("person") or "").strip()) for m in father)

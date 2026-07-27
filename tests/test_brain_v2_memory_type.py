@@ -93,6 +93,24 @@ def test_family_name_inference_uses_declared_name(statement):
     assert inferred.metadata.get("person") == "Maya"
 
 
+@pytest.mark.parametrize(
+    ("statement", "relation"),
+    [
+        ("My father's name is TestPersonAlpha.", "father"),
+        ("my father's name is testpersonalpha.", "father"),
+        ("My dad's name is TestPersonAlpha.", "father"),
+        ("My mother's name is TestPersonBeta.", "mother"),
+        ("my mom's name is testpersonbeta.", "mother"),
+    ],
+)
+def test_parent_name_inference_extracts_person(statement, relation):
+    inferred = infer_memory_type(statement, explicit_remember=True)
+    assert inferred.candidate_type == "relation"
+    assert inferred.metadata.get("relation") == relation
+    assert bool(inferred.metadata.get("person"))
+    assert str(inferred.metadata.get("person")).casefold().startswith("testperson")
+
+
 def test_degree_statement_normalizes_to_education():
     normalized = normalize_user_education_statement(
         "I am doing my bachelors in computer science in university at City A."

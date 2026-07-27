@@ -352,6 +352,23 @@ def _extract_declared_self_name(text: str) -> Optional[str]:
     return " ".join(piece.capitalize() for piece in raw.split())
 
 
+def _normalize_relation_label(relation: str) -> str:
+    rel = (relation or "").lower().strip()
+    if rel == "gf":
+        return "girlfriend"
+    if rel == "dad":
+        return "father"
+    if rel == "mom":
+        return "mother"
+    return rel
+
+
+_NAME_DECLARATION_RELATIONS = (
+    "girlfriend|gf|partner|sister|brother|friend|wife|husband|boyfriend|"
+    "dad|father|mom|mother"
+)
+
+
 def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
     meta: Dict[str, object] = {}
     if _looks_like_current_location_phrase(text, low):
@@ -359,13 +376,10 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
     rel_pattern = r"\bmy\s+(" + "|".join(_RELATION_ALIASES) + r")\b"
     m = re.search(rel_pattern, low)
     if m:
-        rel = m.group(1).lower()
-        if rel == "gf":
-            rel = "girlfriend"
-        meta["relation"] = rel
+        meta["relation"] = _normalize_relation_label(m.group(1))
 
     name_declaration = re.search(
-        r"\bmy\s+(?P<relation>girlfriend|gf|partner|sister|brother|friend|wife|husband|boyfriend)"
+        rf"\bmy\s+(?P<relation>{_NAME_DECLARATION_RELATIONS})"
         r"(?:'s)?\s+(?:full\s+)?name(?:d)?\s+is\s+"
         r"(?P<person>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})"
         r"(?=\s*(?:[,.;!?]|$))",
@@ -373,13 +387,14 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
         re.I,
     )
     if name_declaration:
-        relation = name_declaration.group("relation").lower()
-        meta["relation"] = "girlfriend" if relation == "gf" else relation
+        meta["relation"] = _normalize_relation_label(
+            name_declaration.group("relation")
+        )
         meta["person"] = _title_person_name(name_declaration.group("person"))
         return meta
 
     m2 = re.search(
-        r"\bmy\s+(?:girlfriend|gf|partner|sister|brother|friend|wife|husband|boyfriend)\s+"
+        rf"\bmy\s+(?:{_NAME_DECLARATION_RELATIONS})\s+"
         r"(?!(?:name|named|is)\b)([A-Z][a-z]{2,})",
         text,
         re.I,
@@ -389,17 +404,14 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
     if not meta.get("person") and meta.get("relation"):
         # "Madhu is my sister" → person=Madhu, relation=sister
         m3 = re.search(
-            r"\b([A-Z][a-z]+(?:\s+[A-Z])?)\s+is\s+my\s+"
-            r"(girlfriend|gf|partner|sister|brother|wife|husband|boyfriend)\b",
+            rf"\b([A-Z][a-z]+(?:\s+[A-Z])?)\s+is\s+my\s+"
+            rf"({_NAME_DECLARATION_RELATIONS})\b",
             text,
             re.I,
         )
         if m3:
             meta["person"] = m3.group(1).strip().title()
-            rel = m3.group(2).lower()
-            if rel == "gf":
-                rel = "girlfriend"
-            meta["relation"] = rel
+            meta["relation"] = _normalize_relation_label(m3.group(2))
         else:
             for name in extract_person_names(text):
                 meta["person"] = name
