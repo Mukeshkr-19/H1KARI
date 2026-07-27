@@ -194,40 +194,53 @@ def main() -> int:
 
     results.append(
         _run_scenario(
-            "bare_identity",
+            "bare_identity_episode_only",
             [
-                Turn("My name is Owner A.", _auto_saved_core, "bare my name is accepted"),
-                Turn("what is my name?", _has("owner a"), "recall bare identity"),
+                Turn(
+                    "My name is Owner A.",
+                    lambda r: "remember this" in r.lower() or "noted" in r.lower(),
+                    "bare my name is episode-only",
+                ),
+                Turn("what is my name?", _no_reviewed_memory_yet, "no durable bare identity"),
             ],
         )
     )
 
     results.append(
         _run_scenario(
-            "bare_preference",
+            "bare_preference_episode_only",
             [
-                Turn("I prefer Topic A.", _auto_saved_core, "bare preference accepted"),
-                Turn("what do you know about me?", _has("topic a"), "preference in profile"),
+                Turn(
+                    "I prefer Topic A.",
+                    lambda r: "remember this" in r.lower() or "noted" in r.lower(),
+                    "bare preference episode-only",
+                ),
             ],
         )
     )
 
     results.append(
         _run_scenario(
-            "bare_dislike",
+            "bare_dislike_episode_only",
             [
-                Turn("I don't like Topic B.", _auto_saved_core, "bare dislike accepted"),
-                Turn("what do you know about me?", _has("topic b"), "dislike in profile"),
+                Turn(
+                    "I don't like Topic B.",
+                    lambda r: "remember this" in r.lower() or "noted" in r.lower(),
+                    "bare dislike episode-only",
+                ),
             ],
         )
     )
 
     results.append(
         _run_scenario(
-            "bare_education",
+            "bare_education_episode_only",
             [
-                Turn("I study at School A.", _auto_saved_core, "bare education accepted"),
-                Turn("what do you know about me?", _has("school a"), "education in profile"),
+                Turn(
+                    "I study at School A.",
+                    lambda r: "remember this" in r.lower() or "noted" in r.lower(),
+                    "bare education episode-only",
+                ),
             ],
         )
     )
@@ -237,7 +250,7 @@ def main() -> int:
             "preferred_name",
             [
                 Turn(
-                    "you can call me Person C",
+                    "Remember this: you can call me Person C",
                     lambda r: _auto_saved_core(r) or "call you" in r.lower(),
                     "preferred name stored",
                 ),
@@ -258,7 +271,7 @@ def main() -> int:
             "legal_vs_preferred_name",
             [
                 Turn(
-                    "My real name is Owner Legal but call me Person C",
+                    "Remember this: My real name is Owner Legal but call me Person C",
                     _auto_saved_core,
                     "dual identity stored",
                 ),
@@ -281,7 +294,7 @@ def main() -> int:
             "degree_education",
             [
                 Turn(
-                    "I am doing my bachelors in Topic A at School A",
+                    "Remember this: I am doing my bachelors in Topic A at School A",
                     _auto_saved_core,
                     "degree statement saved",
                 ),
@@ -314,13 +327,17 @@ def main() -> int:
 
     results.append(
         _run_scenario(
-            "bare_stable_home",
+            "bare_stable_home_episode_only",
             [
-                Turn("I live in City A.", _auto_saved_core, "bare I live in accepted"),
+                Turn(
+                    "I live in City A.",
+                    lambda r: "remember this" in r.lower() or "noted" in r.lower(),
+                    "bare I live in episode-only",
+                ),
                 Turn(
                     "where do I live?",
-                    _has("city a"),
-                    "recall bare stable home",
+                    _no_reviewed_memory_yet,
+                    "no durable bare stable home",
                 ),
             ],
         )
@@ -372,9 +389,9 @@ def main() -> int:
             "relationship",
             [
                 Turn(
-                    "Person C is my sister",
+                    "Remember this: Person C is my sister",
                     _auto_saved_core,
-                    "sister auto saved",
+                    "sister saved with remember",
                 ),
                 Turn(
                     "who is my sister?",
@@ -605,14 +622,14 @@ def main() -> int:
             "memory_policy_quiet",
             [
                 Turn(
-                    "My real name is Owner Legal but you can call me Person C",
+                    "Remember this: My real name is Owner Legal but you can call me Person C",
                     _all_of(_quiet_memory_saved, _no_admin_memory_language),
-                    "identity saves without admin prompt",
+                    "identity saves with remember without admin prompt",
                 ),
                 Turn(
-                    "I live in City A.",
+                    "Remember this: I live in City A.",
                     _all_of(_quiet_memory_saved, _no_admin_memory_language),
-                    "home saves without admin prompt",
+                    "home saves with remember without admin prompt",
                 ),
                 Turn(
                     "I am in City B",

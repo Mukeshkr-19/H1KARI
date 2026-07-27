@@ -91,7 +91,10 @@ from core.brain_v2.natural_replies import (
     format_owner_reset_reply,
     format_session_location_ack,
 )
-from core.brain_v2.owner_auto_trust import is_explicit_remember_command
+from core.brain_v2.owner_auto_trust import (
+    is_explicit_remember_command,
+    strip_explicit_memory_command,
+)
 from core.family_memory import (
     format_family_memory_confirmation,
     ingest_family_statement,
@@ -759,7 +762,11 @@ class HIKARI_Orchestrator:
                     source,
                     metadata={"skip_candidate_extraction": True},
                 )
-            brain_memory_text = resolved_memory
+            # Prior bare facts are episode-only; wrap so durable remember path runs.
+            if not is_explicit_remember_command(resolved_memory):
+                brain_memory_text = f"Remember this: {resolved_memory}"
+            else:
+                brain_memory_text = resolved_memory
 
         if guest and getattr(self.speaker, "last_was_session_intro", False):
             guest_name = self.speaker.current_speaker or "guest"
@@ -855,10 +862,6 @@ class HIKARI_Orchestrator:
                 )
 
         if self._brain_v2_authority_enabled():
-            from core.brain_v2.owner_auto_trust import (
-                is_explicit_remember_command,
-                strip_explicit_memory_command,
-            )
             import re as _re_task
 
             treat_as_task = is_task_or_action_statement(brain_memory_text)
@@ -931,9 +934,14 @@ class HIKARI_Orchestrator:
                 "quality_reject",
                 "uncertain_hypothetical",
                 "weak_fact",
+                "no_explicit_remember",
             }:
                 if decision.reason == "casual_filler":
                     response = "Got it."
+                elif decision.reason == "no_explicit_remember":
+                    from core.brain_v2.natural_replies import format_owner_pending_note
+
+                    response = format_owner_pending_note()
                 else:
                     response = self._route_to_agent(lowered)
                     if not response:
@@ -1586,9 +1594,12 @@ class HIKARI_Orchestrator:
             return None
         if is_save_to_memory_confirmation(user_input):
             self._pending_memory_choice = None
+            statement = pending.statement
+            if not is_explicit_remember_command(statement):
+                statement = f"Remember this: {statement}"
             response = self._commit_owner_memory_declaration(
                 pending.statement,
-                pending.statement,
+                statement,
                 source,
             )
             return self._reply_and_record_brain_v2_turn(
@@ -1958,6 +1969,14 @@ class HIKARI_Orchestrator:
                 MemoryPolicyRoute.REVIEW_QUEUE,
             }:
                 return content
+            # Bare owner facts are episode-only until explicit remember; still
+            # eligible as the target of anaphoric "Remember this in my brain."
+            if (
+                decision.route == MemoryPolicyRoute.EPISODE_ONLY
+                and decision.reason == "no_explicit_remember"
+            ):
+                return content
+            continue
 
         # A bounded confirmation sentence is useful when speech recognition split
         # the owner's correction across turns. Do not treat arbitrary assistant text

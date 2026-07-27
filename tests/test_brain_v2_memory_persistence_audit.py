@@ -38,9 +38,9 @@ def test_explicit_remember_plan_body_not_discarded_as_task(episode_db):
 
 def test_sister_name_conflict_second_fact_pending(episode_db):
   coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
-  r1 = coord.ingest_trusted_owner_declaration("sess", "My sister's name is TestPersonAlpha.")
+  r1 = coord.ingest_trusted_owner_declaration("sess", "Remember this: My sister's name is TestPersonAlpha.")
   assert r1.get("status") == "accepted"
-  r2 = coord.ingest_trusted_owner_declaration("sess", "My sister's name is TestPersonBeta.")
+  r2 = coord.ingest_trusted_owner_declaration("sess", "Remember this: My sister's name is TestPersonBeta.")
   assert r2.get("status") == "pending_conflict"
   active = episode_db.get_active_accepted_memories(limit=20)
   persons = {

@@ -22,23 +22,29 @@ def episode_db(tmp_path):
     return EpisodeStore(db_path=tmp_path / "save_prompt.db")
 
 
-def test_core_preference_auto_saves_without_ask(episode_db):
+def test_core_preference_requires_remember_to_save(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("I prefer Topic A.")
+    bare = orch.process_input("I prefer Topic A.")
+    assert not _asks_save_scope(bare)
+    assert not episode_db.get_active_accepted_memories(limit=5)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
+
+    reply = orch.process_input("Remember this: I prefer Topic A.")
     assert not _asks_save_scope(reply)
     assert episode_db.get_active_accepted_memories(limit=5)
 
 
-def test_third_party_education_queues_without_save_scope_ask(episode_db):
+def test_third_party_education_without_remember_is_episode_only(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = orch.process_input("My partner Person B studies at School A.")
     assert not _asks_save_scope(reply)
-    assert "review" in reply.lower() or "noted" in reply.lower()
+    assert "remember this" in reply.lower() or "noted" in reply.lower()
     assert not episode_db.get_active_accepted_memories(limit=5)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
 
 
 def test_trip_city_stays_session_not_brain_v2(episode_db):

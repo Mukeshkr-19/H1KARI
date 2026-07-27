@@ -128,7 +128,8 @@ def _production_brain_v2(store) -> BrainV2Coordinator:
 
 def _accept(episode_db, statement: str, key: str):
     episode_id = episode_db.create_episode(key)
-    episode_db.add_turn(episode_id, statement, is_user=True)
+    turn = statement if statement.lower().startswith("remember this:") else f"Remember this: {statement}"
+    episode_db.add_turn(episode_id, turn, is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     MemoryReviewGate(episode_db).accept(candidates[0].candidate_id)
 

@@ -122,10 +122,13 @@ class BrainV2Coordinator:
     ) -> Dict[str, Any]:
         """Learn clear owner self-facts immediately, without touching legacy neural memory.
 
-        Only owner-scoped, low-ambiguity types are auto-accepted. A contradictory
-        singleton fact is retained as pending rather than silently replacing
-        reviewed truth.
+        Only explicit remember/save commands may create durable Brain v2 memories.
+        Owner-scoped, low-ambiguity types are then auto-accepted when safe. A
+        contradictory singleton fact is retained as pending rather than silently
+        replacing reviewed truth.
         """
+        if not is_explicit_remember_command(user_text):
+            return {"status": "not_candidate"}
         episode_id = self.store.create_episode(f"{session_id}:owner-disclosure")
         self.store.add_turn(episode_id, user_text, is_user=True, speaker_label="user")
         _structured, candidates = self.consolidation.process_episode(episode_id)

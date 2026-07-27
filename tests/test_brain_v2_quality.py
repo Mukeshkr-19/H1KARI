@@ -60,7 +60,7 @@ def test_family_fact_is_keep_candidate(episode_db):
     episode_id = episode_db.create_episode("fam")
     episode_db.add_turn(
         episode_id,
-        "My sister Maya studies at North Valley University.",
+        "Remember this: My sister Maya studies at North Valley University.",
         is_user=True,
     )
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
@@ -72,7 +72,7 @@ def test_hikari_decision_is_keep_candidate(episode_db):
     episode_id = episode_db.create_episode("dec")
     episode_db.add_turn(
         episode_id,
-        "For HIKARI we decided to keep Brain v2 review manual.",
+        "Remember this: For HIKARI we decided to keep Brain v2 review manual.",
         is_user=True,
     )
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
@@ -114,7 +114,7 @@ def test_explicit_remember_ranks_above_vague_declarative(episode_db):
 
 
 def test_duplicate_marked_against_accepted_memory(episode_db):
-    accepted_stmt = "I live in City B."
+    accepted_stmt = "Remember this: I live in City B."
     episode_id = episode_db.create_episode("dup-acc")
     episode_db.add_turn(episode_id, accepted_stmt, is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
@@ -129,7 +129,7 @@ def test_duplicate_marked_against_accepted_memory(episode_db):
 
 def test_accepted_memory_in_retrieval_with_source_note(episode_db):
     episode_id = episode_db.create_episode("ret")
-    episode_db.add_turn(episode_id, "My sister Maya studies at North Valley University.", is_user=True)
+    episode_db.add_turn(episode_id, "Remember this: My sister Maya studies at North Valley University.", is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     MemoryReviewGate(episode_db).accept(candidates[0].candidate_id)
 
@@ -153,7 +153,7 @@ def test_pending_not_semantic_truth(episode_db):
 
 def test_rejected_not_semantic_truth(episode_db):
     episode_id = episode_db.create_episode("rej")
-    episode_db.add_turn(episode_id, "My dad Rowan lives in Lake Town.", is_user=True)
+    episode_db.add_turn(episode_id, "Remember this: My dad Rowan lives in Lake Town.", is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     MemoryReviewGate(episode_db).reject(candidates[0].candidate_id)
 
@@ -258,7 +258,7 @@ def test_cli_accept_promote_success_message(episode_db, capsys):
 
     coord = BrainV2Coordinator(store=episode_db)
     episode_id = episode_db.create_episode("cli-promote-ok")
-    episode_db.add_turn(episode_id, "My name is Alex and I live in City B.")
+    episode_db.add_turn(episode_id, "Remember this: My name is Alex and I live in City B.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     coord.promoter.promote = MagicMock(return_value="brain_v2:abc123")
 
@@ -281,7 +281,7 @@ def test_cli_accept_promote_failed_message(episode_db, capsys):
 
     coord = BrainV2Coordinator(store=episode_db)
     episode_id = episode_db.create_episode("cli-promote-fail")
-    episode_db.add_turn(episode_id, "My name is Alex and I live in City B.")
+    episode_db.add_turn(episode_id, "Remember this: My name is Alex and I live in City B.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     coord.promoter.promote = MagicMock(return_value=None)
 

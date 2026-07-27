@@ -42,7 +42,8 @@ def _remember_candidate(episode_db, text: str):
 
 def _accept_turn(episode_db, statement: str, episode_key: str = "ep"):
     episode_id = episode_db.create_episode(episode_key)
-    episode_db.add_turn(episode_id, statement, is_user=True)
+    turn = statement if statement.lower().startswith("remember this:") else f"Remember this: {statement}"
+    episode_db.add_turn(episode_id, turn, is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     assert candidates
     MemoryReviewGate(episode_db).accept(candidates[0].candidate_id)

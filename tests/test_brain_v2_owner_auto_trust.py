@@ -1,4 +1,4 @@
-"""Owner auto-trust policy and session-location recall."""
+"""Owner explicit-remember durable storage and session-location recall."""
 
 from __future__ import annotations
 
@@ -54,26 +54,40 @@ def test_remember_this_plan_auto_accepted(episode_db):
     assert any("meeting" in m.statement.lower() for m in accepted)
 
 
-def test_owner_relation_auto_accepted(episode_db):
+def test_bare_owner_relation_is_episode_only_not_pending(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    reply = orch.process_input("My sister TestPersonAlpha lives in City B.")
+    assert "remember this" in reply.lower() or "noted" in reply.lower()
+    assert not episode_db.get_active_accepted_memories(limit=10)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
+    assert coord.ingest_trusted_owner_declaration(
+        "sess-rel-bare",
+        "My sister TestPersonAlpha lives in City B.",
+    )["status"] == "not_candidate"
+
+
+def test_remember_this_owner_relation_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
         "sess-rel",
-        "My sister Person A lives in City B.",
+        "Remember this: My sister TestPersonAlpha lives in City B.",
     )
     assert outcome["status"] == "accepted"
     accepted = episode_db.get_active_accepted_memories(limit=10)
-    assert any("person a" in m.statement.lower() for m in accepted)
+    assert any("testpersonalpha" in m.statement.lower() for m in accepted)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
 
 
 def test_favorite_slot_correction_retires_prior_value(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     first = coord.ingest_trusted_owner_declaration(
         "sess-favorite-1",
-        "My favorite artist is Lorde.",
+        "Remember this: My favorite artist is Lorde.",
     )
     second = coord.ingest_trusted_owner_declaration(
         "sess-favorite-2",
-        "My favorite artist is Lana Del Rey, not Lorde.",
+        "Remember this: My favorite artist is Lana Del Rey, not Lorde.",
     )
 
     assert first["status"] == "accepted"
@@ -95,11 +109,11 @@ def test_distinct_favorite_categories_coexist(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     coord.ingest_trusted_owner_declaration(
         "sess-favorite-artist",
-        "My favorite artist is Lana Del Rey.",
+        "Remember this: My favorite artist is Lana Del Rey.",
     )
     coord.ingest_trusted_owner_declaration(
         "sess-favorite-color",
-        "My favorite color is blue.",
+        "Remember this: My favorite color is blue.",
     )
 
     active = episode_db.get_active_accepted_memories(limit=20)
@@ -114,7 +128,7 @@ def test_identity_parser_drops_trailing_conversation_filler(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
         "sess-identity-filler",
-        "My name is Owner A but u can call me Person B okay?",
+        "Remember this: My name is Owner A but u can call me Person B okay?",
     )
 
     assert outcome["status"] == "accepted"
@@ -130,7 +144,7 @@ def test_owner_legal_and_preferred_name_stored_separately(episode_db):
 
     reply = _teach_long_term(
         orch,
-        "My real name is Owner A but I told you to call me Person B.",
+        "Remember this: My real name is Owner A but I told you to call me Person B.",
     )
     assert "got it" in reply.lower()
 
@@ -148,7 +162,7 @@ def test_real_name_query_does_not_return_preferred_only(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     coord.ingest_trusted_owner_declaration(
         "sess-pref-only",
-        "You can call me Person B.",
+        "Remember this: You can call me Person B.",
     )
     answer = coord.retrieval.answer_from_accepted("what is my real name?")
     assert answer
@@ -159,7 +173,7 @@ def test_owner_degree_statement_auto_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
         "sess-edu",
-        "I am doing my bachelors in computer science in university at City A.",
+        "Remember this: I am doing my bachelors in computer science in university at City A.",
     )
     assert outcome["status"] == "accepted"
     accepted = episode_db.get_active_accepted_memories(limit=10)
@@ -174,21 +188,31 @@ def test_owner_graduation_statement_auto_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
         "sess-grad",
-        "I am a rising senior and I will be graduating in May 2027.",
+        "Remember this: I am a rising senior and I will be graduating in May 2027.",
     )
     assert outcome["status"] == "accepted"
     accepted = episode_db.get_active_accepted_memories(limit=10)
     assert any("graduat" in m.statement.lower() for m in accepted)
 
 
-def test_partner_education_stays_review_gated(episode_db):
+def test_partner_education_without_remember_is_episode_only(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    reply = orch.process_input("My partner Person B studies at School A.")
+    assert "remember this" in reply.lower() or "noted" in reply.lower()
+    assert not episode_db.get_active_accepted_memories(limit=10)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
+
+
+def test_partner_education_with_remember_stays_review_gated(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     outcome = coord.ingest_trusted_owner_declaration(
         "sess-partner-edu",
-        "My partner Person B studies at School A.",
+        "Remember this: My partner Person B studies at School A.",
     )
     assert outcome["status"] == "pending_review"
     assert not episode_db.get_active_accepted_memories(limit=10)
+    assert episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
 
 
 def test_where_am_i_after_i_am_in_city(episode_db):
@@ -204,7 +228,7 @@ def test_where_am_i_after_i_am_in_city(episode_db):
 def test_auto_trusted_session_copy_does_not_create_duplicate_pending(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     session_id = coord.start_session()
-    user_text = "My name is Owner A."
+    user_text = "Remember this: My name is Owner A."
     outcome = coord.ingest_trusted_owner_declaration(session_id, user_text)
     assert outcome["status"] == "accepted"
 
@@ -219,3 +243,29 @@ def test_auto_trusted_session_copy_does_not_create_duplicate_pending(episode_db)
 
     pending = episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
     assert not any("owner a" in candidate.statement.lower() for candidate in pending)
+
+
+def test_bare_preference_does_not_create_candidates_on_consolidate(episode_db):
+    episode_id = episode_db.create_episode("bare-pref")
+    episode_db.add_turn(episode_id, "I prefer Topic A.", is_user=True)
+    _, candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)
+    assert candidates == []
+
+
+def test_anaphoric_remember_saves_prior_bare_fact(episode_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+    context = orch._default_local_owner_context("voice")
+    scope = orch._conversation_scope(context)
+    orch._conversation_engine().record_turn(
+        scope,
+        "My favorite color is TestColorAmber.",
+        "Got it - I noted that. Say 'remember this' if you want it saved right away.",
+    )
+    assert not episode_db.get_active_accepted_memories(limit=10)
+    reply = orch.process_input(
+        "Remember this in my brain.", source="voice", context=context
+    )
+    assert "got it" in reply.lower() or "saved" in reply.lower()
+    accepted = episode_db.get_active_accepted_memories(limit=10)
+    assert any("testcoloramber" in m.statement.lower() for m in accepted)

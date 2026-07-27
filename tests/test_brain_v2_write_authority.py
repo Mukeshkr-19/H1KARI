@@ -169,7 +169,7 @@ def test_identity_declaration_is_auto_trusted_before_recall(episode_db, neural_d
     )
     orch = _minimal_orchestrator(coord, brain)
 
-    reply = _teach_long_term(orch, "My name is Owner A.")
+    reply = _teach_long_term(orch, "Remember this: My name is Owner A.")
 
     assert "got it" in reply.lower()
     assert "do not have a reviewed memory" not in reply.lower()
@@ -196,7 +196,7 @@ def test_education_recall_routes_to_brain_v2_without_llm(episode_db, neural_db):
         return_value="I'm having trouble thinking right now."
     )
 
-    _teach_long_term(orch, "I am doing my bachelors in Topic A at School A.")
+    _teach_long_term(orch, "Remember this: I am doing my bachelors in Topic A at School A.")
     answer = orch.process_input("what do I study?")
 
     assert "topic a" in answer.lower()
@@ -219,13 +219,13 @@ def test_current_location_is_available_immediately_in_session(episode_db, neural
 
 def test_conflicting_owner_location_stays_pending(episode_db, neural_db):
     episode_id = episode_db.create_episode("existing-location")
-    episode_db.add_turn(episode_id, "I live in City A.", is_user=True)
+    episode_db.add_turn(episode_id, "Remember this: I live in City A.", is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     MemoryReviewGate(episode_db).accept(candidates[0].candidate_id)
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    save_reply = _teach_long_term(orch, "I live in City B.")
+    save_reply = _teach_long_term(orch, "Remember this: I live in City B.")
     assert (
         "different" in save_reply.lower()
         or "review" in save_reply.lower()
@@ -236,11 +236,22 @@ def test_conflicting_owner_location_stays_pending(episode_db, neural_db):
     assert any("city b" in candidate.statement.lower() for candidate in pending)
 
 
-def test_other_person_fact_remains_review_gated(episode_db, neural_db):
+def test_other_person_fact_without_remember_is_episode_only(episode_db, neural_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
     reply = orch.process_input("My partner Person B studies at School A.")
+    assert not _asks_save_scope(reply)
+    assert "remember this" in reply.lower() or "noted" in reply.lower()
+    assert not episode_db.get_active_accepted_memories(limit=10)
+    assert not episode_db.get_candidates(status=MemoryCandidateStatus.PENDING)
+
+
+def test_other_person_fact_with_remember_remains_review_gated(episode_db, neural_db):
+    coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
+    orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
+
+    reply = orch.process_input("Remember this: My partner Person B studies at School A.")
     assert not _asks_save_scope(reply)
     assert "review" in reply.lower() or "noted" in reply.lower()
     assert not episode_db.get_active_accepted_memories(limit=10)

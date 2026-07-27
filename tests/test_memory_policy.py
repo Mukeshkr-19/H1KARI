@@ -16,23 +16,48 @@ from core.brain_v2.memory_policy import (
 @pytest.mark.parametrize(
     ("text", "expected_route", "reason_fragment"),
     [
-        ("My name is Owner A.", MemoryPolicyRoute.ACTIVE_MEMORY, "owner_auto_trust"),
-        ("I live in City A.", MemoryPolicyRoute.ACTIVE_MEMORY, "owner_auto_trust"),
+        ("My name is Owner A.", MemoryPolicyRoute.EPISODE_ONLY, "no_explicit_remember"),
+        ("I live in City A.", MemoryPolicyRoute.EPISODE_ONLY, "no_explicit_remember"),
         (
             "My real name is Owner Legal but you can call me Person C.",
+            MemoryPolicyRoute.EPISODE_ONLY,
+            "no_explicit_remember",
+        ),
+        ("I prefer Topic A.", MemoryPolicyRoute.EPISODE_ONLY, "no_explicit_remember"),
+        ("Person C is my sister.", MemoryPolicyRoute.EPISODE_ONLY, "no_explicit_remember"),
+        (
+            "My partner Person B studies at School A.",
+            MemoryPolicyRoute.EPISODE_ONLY,
+            "no_explicit_remember",
+        ),
+        (
+            "Remember this: My name is Owner A.",
             MemoryPolicyRoute.ACTIVE_MEMORY,
             "owner_auto_trust",
         ),
-        ("I prefer Topic A.", MemoryPolicyRoute.ACTIVE_MEMORY, "owner_auto_trust"),
-        ("Person C is my sister.", MemoryPolicyRoute.ACTIVE_MEMORY, "owner_auto_trust"),
+        (
+            "Remember this: I live in City A.",
+            MemoryPolicyRoute.ACTIVE_MEMORY,
+            "owner_auto_trust",
+        ),
+        (
+            "Remember this: I prefer Topic A.",
+            MemoryPolicyRoute.ACTIVE_MEMORY,
+            "owner_auto_trust",
+        ),
+        (
+            "Remember this: Person C is my sister.",
+            MemoryPolicyRoute.ACTIVE_MEMORY,
+            "owner_auto_trust",
+        ),
+        (
+            "Remember this: My partner Person B studies at School A.",
+            MemoryPolicyRoute.REVIEW_QUEUE,
+            "explicit_remember_review",
+        ),
         ("I am in City B.", MemoryPolicyRoute.SESSION_MEMORY, "trip_or_current"),
         ("haha okay", MemoryPolicyRoute.EPISODE_ONLY, "casual_filler"),
         ("remind me to call Person C tomorrow.", MemoryPolicyRoute.TASK, "task_or_action"),
-        (
-            "My partner Person B studies at School A.",
-            MemoryPolicyRoute.REVIEW_QUEUE,
-            "needs_review",
-        ),
         (
             "I might move to City C next year.",
             MemoryPolicyRoute.EPISODE_ONLY,

@@ -137,7 +137,6 @@ def route_owner_utterance(
 
     from core.brain_v2.candidate_quality import (
         QUALITY_REJECT,
-        QUALITY_WEAK,
         classify_candidate,
     )
     from core.brain_v2.owner_auto_trust import is_owner_scoped_auto_trust_candidate
@@ -171,6 +170,17 @@ def route_owner_utterance(
         metadata=meta,
     )
 
+    # Durable Brain v2 storage requires an explicit remember/save command.
+    # Casual owner declarations stay episode-only (no pending queue, no accept).
+    if not explicit:
+        return MemoryPolicyDecision(
+            MemoryPolicyRoute.EPISODE_ONLY,
+            candidate_type=inferred.candidate_type,
+            reason="no_explicit_remember",
+            statement=raw,
+            inferred=inferred,
+        )
+
     if is_owner_scoped_auto_trust_candidate(candidate, fact_text):
         return MemoryPolicyDecision(
             MemoryPolicyRoute.ACTIVE_MEMORY,
@@ -180,28 +190,10 @@ def route_owner_utterance(
             inferred=inferred,
         )
 
-    if explicit:
-        return MemoryPolicyDecision(
-            MemoryPolicyRoute.REVIEW_QUEUE,
-            candidate_type=inferred.candidate_type,
-            reason="explicit_remember_review",
-            statement=raw,
-            inferred=inferred,
-        )
-
-    if quality.label == QUALITY_WEAK:
-        return MemoryPolicyDecision(
-            MemoryPolicyRoute.EPISODE_ONLY,
-            candidate_type=inferred.candidate_type,
-            reason="weak_fact",
-            statement=raw,
-            inferred=inferred,
-        )
-
     return MemoryPolicyDecision(
         MemoryPolicyRoute.REVIEW_QUEUE,
         candidate_type=inferred.candidate_type,
-        reason="needs_review",
+        reason="explicit_remember_review",
         statement=raw,
         inferred=inferred,
     )
@@ -239,10 +231,10 @@ def is_casual_episode_filler(text: str) -> bool:
 def policy_route_table() -> Dict[str, str]:
     """Human-readable policy summary for docs and tests."""
     return {
-        "identity / stable home / education / preference / clear relation": MemoryPolicyRoute.ACTIVE_MEMORY.value,
+        "Remember this: identity / home / education / preference / clear relation": MemoryPolicyRoute.ACTIVE_MEMORY.value,
         "trip or current city (I am in ...)": MemoryPolicyRoute.SESSION_MEMORY.value,
-        "casual chat / filler / vague / uncertain": MemoryPolicyRoute.EPISODE_ONLY.value,
+        "casual chat / filler / vague / uncertain / no remember command": MemoryPolicyRoute.EPISODE_ONLY.value,
         "reminders / open / schedule / code tasks": MemoryPolicyRoute.TASK.value,
-        "third-party or sensitive facts": MemoryPolicyRoute.REVIEW_QUEUE.value,
+        "Remember this: third-party or sensitive facts": MemoryPolicyRoute.REVIEW_QUEUE.value,
         "guest owner-fact attempts": MemoryPolicyRoute.REJECT.value,
     }

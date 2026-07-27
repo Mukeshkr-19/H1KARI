@@ -72,8 +72,8 @@ def test_duplicate_candidates_marked_not_deleted():
 
 def test_accept_duplicate_does_not_create_many_source_linked_memories(episode_db):
     episode_id = episode_db.create_episode("accept-dup")
-    episode_db.add_turn(episode_id, "I live in City B.")
-    episode_db.add_turn(episode_id, "I live in City B.")
+    episode_db.add_turn(episode_id, "Remember this: I live in City B.")
+    episode_db.add_turn(episode_id, "Remember this: I live in City B.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     gate = MemoryReviewGate(episode_db)
     for c in candidates:
@@ -84,8 +84,8 @@ def test_accept_duplicate_does_not_create_many_source_linked_memories(episode_db
 
 def test_rejected_and_pending_not_in_retrieval(episode_db):
     episode_id = episode_db.create_episode("rej-sess")
-    episode_db.add_turn(episode_id, "My dad Rowan lives in Lake Town.")
-    episode_db.add_turn(episode_id, "My mom Lina lives in Lake Town.")
+    episode_db.add_turn(episode_id, "Remember this: My dad Rowan lives in Lake Town.")
+    episode_db.add_turn(episode_id, "Remember this: My mom Lina lives in Lake Town.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     gate = MemoryReviewGate(episode_db)
 

@@ -58,7 +58,7 @@ def test_extract_memory_candidates(episode_db):
 
 def test_reject_and_accept_candidates(episode_db):
     episode_id = episode_db.create_episode("sess-3")
-    episode_db.add_turn(episode_id, "My dad's name is Rowan and he lives in Lake Town.")
+    episode_db.add_turn(episode_id, "Remember this: My dad's name is Rowan and he lives in Lake Town.")
     _, candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)
     assert len(candidates) >= 1
 
@@ -80,7 +80,7 @@ def test_reject_and_accept_candidates(episode_db):
 
 def test_retrieval_uses_accepted_not_raw_transcript(episode_db):
     episode_id = episode_db.create_episode("sess-4")
-    episode_db.add_turn(episode_id, "My sister Maya studies at North Valley University.")
+    episode_db.add_turn(episode_id, "Remember this: My sister Maya studies at North Valley University.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     gate = MemoryReviewGate(episode_db)
     for c in candidates:
@@ -96,7 +96,7 @@ def test_retrieval_uses_accepted_not_raw_transcript(episode_db):
 def test_duplicate_candidates_do_not_overwhelm_retrieval(episode_db):
     episode_id = episode_db.create_episode("sess-5")
     for _ in range(3):
-        episode_db.add_turn(episode_id, "I live in City B.")
+        episode_db.add_turn(episode_id, "Remember this: I live in City B.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     gate = MemoryReviewGate(episode_db)
     for c in candidates:
@@ -109,7 +109,7 @@ def test_duplicate_candidates_do_not_overwhelm_retrieval(episode_db):
 
 def test_coordinator_end_to_end(coordinator):
     session = coordinator.start_session()
-    coordinator.record_turn(session, "I live in City B.", "Noted.")
+    coordinator.record_turn(session, "Remember this: I live in City B.", "Noted.")
     structured, candidates = coordinator.close_and_consolidate(session)
     assert structured.summary
     assert candidates
@@ -143,3 +143,10 @@ def test_raw_episode_never_equals_accepted_memory_table(coordinator):
     )
     accepted = coordinator.store.get_accepted_memories()
     assert raw[0].text != accepted[0].statement or True
+
+
+def test_bare_owner_fact_creates_no_candidates(episode_db):
+    episode_id = episode_db.create_episode("bare-no-cand")
+    episode_db.add_turn(episode_id, "My sister TestPersonAlpha lives in City B.")
+    _, candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)
+    assert candidates == []

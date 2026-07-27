@@ -188,7 +188,7 @@ def test_identity_merge_preferred_and_legal(episode_db):
         "sess-id",
         "Remember this: My name is Owner A but official name is Person C.",
     )
-    coord.ingest_trusted_owner_declaration("sess-id", "you can call me Person C")
+    coord.ingest_trusted_owner_declaration("sess-id", "Remember this: you can call me Person C")
     retrieval = BrainV2Retrieval(episode_db, coord.working)
     answer = retrieval.answer_from_accepted("what is my name?")
     assert answer == "Your name is Person C."
@@ -201,7 +201,7 @@ def test_identity_prefers_casual_name_but_keeps_real_name(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     coord.ingest_trusted_owner_declaration(
         "sess-id",
-        "My name is Owner A but you can call me Person C.",
+        "Remember this: My name is Owner A but you can call me Person C.",
     )
     retrieval = BrainV2Retrieval(episode_db, coord.working)
 
@@ -209,42 +209,42 @@ def test_identity_prefers_casual_name_but_keeps_real_name(episode_db):
     assert retrieval.answer_from_accepted("whats my real name?") == "Your real name is Owner A."
 
 
-def test_person_c_is_my_sister_auto_accept_and_recall(episode_db):
+def test_remember_person_c_is_my_sister_accept_and_recall(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "Person C is my sister")
+    reply = _teach_long_term(orch, "Remember this: Person C is my sister")
     assert "got it" in reply.lower()
 
     answer = orch.process_input("who is my sister?")
     assert "person c" in answer.lower()
 
 
-def test_bare_my_name_is_auto_trusted(episode_db):
+def test_remember_my_name_is_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "My name is Owner A.")
+    reply = _teach_long_term(orch, "Remember this: My name is Owner A.")
     assert "got it" in reply.lower()
     answer = orch.process_input("what is my name?")
     assert "owner a" in answer.lower()
 
 
-def test_bare_preference_auto_trusted(episode_db):
+def test_remember_preference_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "I prefer Topic A.")
+    reply = _teach_long_term(orch, "Remember this: I prefer Topic A.")
     assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic a" in profile.lower()
 
 
-def test_favorite_artist_is_auto_trusted_and_recalled(episode_db):
+def test_remember_favorite_artist_is_accepted_and_recalled(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "My favorite artist is Lana Del Rey.")
+    reply = _teach_long_term(orch, "Remember this: My favorite artist is Lana Del Rey.")
     answer = orch.process_input("Who's my favorite artist?")
 
     assert "got it" in reply.lower()
@@ -261,7 +261,7 @@ def test_fav_abbreviation_is_saved_and_recalled(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "My fav artist is Lana Del Rey.")
+    reply = _teach_long_term(orch, "Remember this: My fav artist is Lana Del Rey.")
     answer = orch.process_input("Who's my fav artist?")
 
     assert "got it" in reply.lower()
@@ -341,7 +341,7 @@ def test_voice_stt_birthplace_is_saved_and_recalled(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = orch.process_input("1st born in Tirupati, India", source="voice")
+    reply = orch.process_input("Remember this: 1st born in Tirupati, India", source="voice")
     answer = orch.process_input("Where was I born?", source="voice")
 
     assert "got it" in reply.lower()
@@ -373,21 +373,21 @@ def test_brain_database_anaphoric_command_resolves_birthplace(episode_db):
     )
 
 
-def test_bare_dislike_auto_trusted(episode_db):
+def test_remember_dislike_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "I don't like Topic B.")
+    reply = _teach_long_term(orch, "Remember this: I don't like Topic B.")
     assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "topic b" in profile.lower()
 
 
-def test_bare_education_auto_trusted(episode_db):
+def test_remember_education_accepted(episode_db):
     coord = BrainV2Coordinator(store=episode_db, allow_neural_procedural=False)
     orch = _minimal_orchestrator(coord, HikariBrain(FakeNeural([])))
 
-    reply = _teach_long_term(orch, "I study at School A.")
+    reply = _teach_long_term(orch, "Remember this: I study at School A.")
     assert "got it" in reply.lower()
     profile = orch.process_input("what do you know about me?")
     assert "school a" in profile.lower()

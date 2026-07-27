@@ -91,12 +91,12 @@ Rejected patterns include: assistant filler (“okay”, “got it”), vague st
 | Consolidate to structured episode + candidates | Yes (periodic + on exit; not every turn) |
 | Quality filter + score + duplicate marking | Yes (metadata only; no deletes) |
 | Accept / reject candidates | **Manual** (CLI) by default |
-| Clear owner self-disclosures (identity, home, own education, preference, plan, decision, direct family relation) | **Automatic** when non-conflicting (`owner_self_disclosure_v1`) |
+| Clear owner self-disclosures (identity, home, own education, preference, plan, decision, direct family relation) | **Automatic only with explicit remember/save** when non-conflicting (`owner_self_disclosure_v1`) |
 | Temporary current location (`I am in …`) | **Session working memory** (no review queue) |
 | Promote to neural memory | **Manual + explicit** — only with `--brain-v2-accept <id> --confirm-promote PROMOTE` (exact, case-sensitive). All other accept paths stay Brain v2-only. |
 | Retrieval in prompts | Accepted memories for semantic layer; pending/rejected never semantic truth |
 
-Durable-memory phrasing supports `Remember this: <fact>`, `Remember this in my brain: <fact>`, and `Save this as a memory: <fact>`. The last two also work as standalone follow-ups to the most recent eligible owner statement.
+Durable-memory phrasing supports `Remember this: <fact>`, `Remember this in my brain: <fact>`, and `Save this as a memory: <fact>`. The last two also work as standalone follow-ups to the most recent eligible owner statement. Casual owner facts without an explicit remember/save command stay episode-only — they do **not** auto-accept or enter the pending review queue.
 
 ## Review CLI
 

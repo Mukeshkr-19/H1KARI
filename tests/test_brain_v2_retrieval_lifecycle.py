@@ -22,7 +22,8 @@ from core.path_literals import EPISODES_DB
 
 def _accept(store: EpisodeStore, statement: str, episode_key: str = "ep") -> str:
     episode_id = store.create_episode(episode_key)
-    store.add_turn(episode_id, statement, is_user=True)
+    turn = statement if statement.lower().startswith("remember this:") else f"Remember this: {statement}"
+    store.add_turn(episode_id, turn, is_user=True)
     candidates = EpisodeConsolidationPipeline(store).process_episode(episode_id)[1]
     linked = MemoryReviewGate(store).accept(candidates[0].candidate_id)
     return linked.memory_id

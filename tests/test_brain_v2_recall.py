@@ -34,9 +34,10 @@ def episode_db(tmp_path):
 
 def _accept_turn(store, statement: str, episode_key: str = "ep"):
     episode_id = store.create_episode(episode_key)
-    store.add_turn(episode_id, statement, is_user=True)
+    turn = statement if statement.lower().startswith("remember this:") else f"Remember this: {statement}"
+    store.add_turn(episode_id, turn, is_user=True)
     candidates = EpisodeConsolidationPipeline(store).process_episode(episode_id)[1]
-    assert candidates, f"no candidate for: {statement}"
+    assert candidates, f"no candidate for: {turn}"
     MemoryReviewGate(store).accept(candidates[0].candidate_id)
     return candidates[0]
 
@@ -136,7 +137,7 @@ def test_pending_not_semantic_truth_recall(episode_db):
 
 def test_rejected_not_semantic_truth_recall(episode_db):
     episode_id = episode_db.create_episode("rej-r")
-    episode_db.add_turn(episode_id, "My dad Rowan lives in Lake Town.", is_user=True)
+    episode_db.add_turn(episode_id, "Remember this: My dad Rowan lives in Lake Town.", is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     MemoryReviewGate(episode_db).reject(candidates[0].candidate_id)
     packet = BrainV2Retrieval(episode_db).retrieve("where does my dad live?")

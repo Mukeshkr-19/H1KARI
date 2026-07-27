@@ -89,10 +89,19 @@ def _quality_eligible(meta: dict, user_text: str) -> bool:
 def is_owner_scoped_auto_trust_candidate(
     candidate: MemoryCandidate, user_text: str
 ) -> bool:
-    """True when a candidate may be auto-accepted for the household owner."""
+    """True when a candidate may be auto-accepted for the household owner.
+
+    Requires an explicit remember/save command (inline or metadata). Casual
+    owner declarations are episode-only and must not auto-accept.
+    """
     ctype = candidate.candidate_type
     meta = candidate.metadata or {}
 
+    if not (
+        (meta or {}).get("explicit_remember")
+        or is_explicit_remember_command(user_text)
+    ):
+        return False
     if ctype not in _TRUSTED_TYPES:
         return False
     if not _quality_eligible(meta, user_text):
@@ -124,14 +133,36 @@ def is_owner_scoped_auto_trust_candidate(
 def pick_trusted_owner_candidate(
     candidates: Sequence[MemoryCandidate], user_text: str
 ) -> Optional[MemoryCandidate]:
+    preferred_preference: Optional[MemoryCandidate] = None
+    preferred_birthplace: Optional[MemoryCandidate] = None
     fallback: Optional[MemoryCandidate] = None
     for cand in candidates:
         if not is_owner_scoped_auto_trust_candidate(cand, user_text):
             continue
-        if cand.candidate_type == "identity" and (cand.metadata or {}).get(
-            "legal_name"
-        ):
+        meta = cand.metadata or {}
+        if cand.candidate_type == "identity" and meta.get("legal_name"):
             return cand
+        if cand.candidate_type == "preference" and meta.get("preference_kind"):
+            kind = str(meta.get("preference_kind") or "").strip()
+            value = str(meta.get("preference_value") or "").strip()
+            expected = f"My favorite {kind} is {value}."
+            # Prefer the normalized favorite form over a raw correction sentence.
+            if (
+                value
+                and cand.statement.strip().rstrip(".") == expected.rstrip(".")
+            ):
+                return cand
+            if preferred_preference is None:
+                preferred_preference = cand
+            continue
+        if cand.candidate_type == "birthplace":
+            place = str(meta.get("birthplace") or "").strip()
+            expected = f"I was born in {place}."
+            if place and cand.statement.strip().rstrip(".") == expected.rstrip("."):
+                return cand
+            if preferred_birthplace is None:
+                preferred_birthplace = cand
+            continue
         if fallback is None:
             fallback = cand
-    return fallback
+    return preferred_preference or preferred_birthplace or fallback

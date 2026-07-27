@@ -248,16 +248,19 @@ class EpisodeConsolidationPipeline:
             return []
         if is_memory_rejection_statement(text):
             return []
+        # Durable candidates require an explicit remember/save command so casual
+        # owner facts do not fill the pending review queue.
+        if not explicit_remember:
+            return []
 
         found: List[Tuple[str, str, float, Optional[dict]]] = []
-        if explicit_remember:
-            statement = strip_explicit_memory_command(text).strip()
-            inferred = infer_memory_type(statement, explicit_remember=True)
-            extra = {"explicit_remember": True, **inferred.metadata}
-            found.append(
-                (statement, inferred.candidate_type, inferred.confidence, extra)
-            )
-            text = statement
+        statement = strip_explicit_memory_command(text).strip()
+        inferred = infer_memory_type(statement, explicit_remember=True)
+        extra = {"explicit_remember": True, **inferred.metadata}
+        found.append(
+            (statement, inferred.candidate_type, inferred.confidence, extra)
+        )
+        text = statement
 
         m_call = _CALL_ME.search(text)
         if m_call:
