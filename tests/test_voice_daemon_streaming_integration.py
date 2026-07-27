@@ -40,6 +40,7 @@ def _reset_daemon_runtime(monkeypatch):
     daemon._time_sense_coordinator = None
     daemon._utterance_seq = 0
     daemon._capture_mode = "utterance_only"
+    daemon._active_last_activity_ns = 0
     daemon.daemon_running = True
     daemon.hikari_state = daemon.HikariState.LISTENING
     yield
@@ -52,6 +53,7 @@ def _reset_daemon_runtime(monkeypatch):
     daemon._time_sense_coordinator = None
     daemon._utterance_seq = 0
     daemon._capture_mode = "utterance_only"
+    daemon._active_last_activity_ns = 0
     daemon.daemon_running = True
     daemon.hikari_state = daemon.HikariState.LISTENING
 
@@ -274,6 +276,58 @@ def test_daemon_uses_public_set_input_capability():
 def test_pcm_speaker_verification_missing_auth_fails_closed(monkeypatch):
     monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", False)
     assert daemon._verify_speaker_pcm(b"\x00\x00" * 8_000, utterance_id="u1") is False
+
+
+def test_wake_activation_requires_stronger_owner_match(monkeypatch):
+    class Auth:
+        @staticmethod
+        def is_enrolled():
+            return True
+
+        @staticmethod
+        def verify_pcm16_mono(_pcm, *, utterance_id):
+            assert utterance_id in {"wake-1", "active-1"}
+            return SimpleNamespace(ok=True, score=0.30, threshold=0.25, reason="matched")
+
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", True)
+    monkeypatch.setattr(daemon, "_get_speaker_auth", lambda: Auth())
+    monkeypatch.delenv("HIKARI_VOICE_WAKE_MIN_SCORE", raising=False)
+
+    assert daemon._verify_speaker_pcm(
+        b"\x00\x00" * 8_000,
+        utterance_id="wake-1",
+        wake_activation=True,
+    ) is False
+    assert daemon._verify_speaker_pcm(
+        b"\x00\x00" * 8_000,
+        utterance_id="active-1",
+        wake_activation=False,
+    ) is True
+
+
+def test_active_conversation_sleeps_after_long_idle(monkeypatch):
+    class Clock:
+        now = 1_000_000_000
+
+        def __call__(self):
+            return self.now
+
+    clock = Clock()
+    runtime = VoiceStreamingRuntime("daemon_stream", clock=clock)
+    runtime.start_wake_listening()
+    runtime.start_active_listening()
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+    monkeypatch.setenv("HIKARI_VOICE_ACTIVE_IDLE_SECONDS", "120")
+
+    daemon._mark_active_voice_activity(runtime)
+    clock.now += 119_000_000_000
+    assert daemon._sleep_active_session_if_idle(runtime) is False
+    assert daemon.hikari_state == daemon.HikariState.ACTIVE
+
+    clock.now += 2_000_000_000
+    assert daemon._sleep_active_session_if_idle(runtime) is True
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    assert runtime.is_wake_listening
 
 
 def test_frame_stream_barge_requests_before_physical_confirmation(monkeypatch):

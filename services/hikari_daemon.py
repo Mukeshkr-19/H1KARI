@@ -20,6 +20,7 @@ from pathlib import Path
 import subprocess
 import signal
 import json
+import math
 import re
 import tempfile
 
@@ -169,6 +170,56 @@ _barge_endpoint_gate = None
 _utterance_seq = 0
 _interruption_seq = 0
 _time_sense_coordinator = None
+_active_last_activity_ns = 0
+
+_DEFAULT_ACTIVE_IDLE_SECONDS = 120.0
+_MIN_ACTIVE_IDLE_SECONDS = 30.0
+_MAX_ACTIVE_IDLE_SECONDS = 600.0
+_DEFAULT_WAKE_SPEAKER_MIN_SCORE = 0.35
+
+
+def _bounded_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        return default
+    return value
+
+
+def _active_idle_timeout_ns() -> int:
+    seconds = _bounded_float_env(
+        "HIKARI_VOICE_ACTIVE_IDLE_SECONDS",
+        _DEFAULT_ACTIVE_IDLE_SECONDS,
+        _MIN_ACTIVE_IDLE_SECONDS,
+        _MAX_ACTIVE_IDLE_SECONDS,
+    )
+    return int(seconds * 1_000_000_000)
+
+
+def _mark_active_voice_activity(runtime) -> None:
+    global _active_last_activity_ns
+    _active_last_activity_ns = runtime.now_ns()
+
+
+def _sleep_active_session_if_idle(runtime) -> bool:
+    """Return to wake-only listening after a bounded conversational pause."""
+    global hikari_state, _active_last_activity_ns
+    if runtime.is_wake_listening or hikari_state == HikariState.LISTENING:
+        _active_last_activity_ns = 0
+        return False
+    now_ns = runtime.now_ns()
+    if _active_last_activity_ns <= 0:
+        _active_last_activity_ns = now_ns
+        return False
+    if now_ns - _active_last_activity_ns < _active_idle_timeout_ns():
+        return False
+    runtime.reset_to_wake_listening(now_ns)
+    hikari_state = HikariState.LISTENING
+    _active_last_activity_ns = 0
+    print("[DAEMON] Active conversation timed out; wake word required", flush=True)
+    return True
 
 
 def _get_streaming_runtime():
@@ -806,6 +857,7 @@ def speak(text, *, allow_interrupt: bool = True):
         cleanup()
         if hikari_state == HikariState.SPEAKING:
             hikari_state = HikariState.ACTIVE
+            _mark_active_voice_activity(runtime)
 
 
 def _get_voice_orchestrator():
@@ -911,6 +963,7 @@ def _listen_for_wake_word() -> None:
 
     print("\n🎉 ACTIVATED!\n")
     hikari_state = HikariState.ACTIVE
+    _mark_active_voice_activity(runtime)
 
     if res.get("action") == "process_command":
         cmd = res["command"]
@@ -927,11 +980,13 @@ def _listen_for_wake_word() -> None:
 
 
 def _listen_for_active_command() -> None:
-    global hikari_state
+    global hikari_state, _active_last_activity_ns
 
     if hikari_state != HikariState.ACTIVE:
         return
     runtime = _get_streaming_runtime()
+    if _sleep_active_session_if_idle(runtime):
+        return
     # Align canonical runtime when the owned loop is already ACTIVE.
     if runtime.is_wake_listening:
         runtime.start_active_listening()
@@ -958,8 +1013,10 @@ def _listen_for_active_command() -> None:
         utterance_id=_next_utterance_id("active"),
     )
     _sync_hikari_state_from_runtime(runtime)
+    _mark_active_voice_activity(runtime)
 
     if result.get("action") == "silent_goodbye":
+        _active_last_activity_ns = 0
         hikari_state = HikariState.LISTENING
         print("💤 Going to sleep... (still listening for 'hikari')\n")
         return
@@ -996,7 +1053,7 @@ def _transcribe_pcm_utterance(pcm: bytes, *, short_utterance: bool = False) -> s
         return ""
 
 
-def _verify_speaker_pcm(pcm: bytes, *, utterance_id: str) -> bool:
+def _verify_speaker_pcm(pcm: bytes, *, utterance_id: str, wake_activation: bool = False) -> bool:
     if not SPEAKER_AUTH_AVAILABLE:
         return False
     auth = _get_speaker_auth()
@@ -1011,14 +1068,24 @@ def _verify_speaker_pcm(pcm: bytes, *, utterance_id: str) -> bool:
                 f"threshold={result.threshold:.3f}, reason={result.reason})",
                 flush=True,
             )
-        return bool(result.ok)
+        if not result.ok:
+            return False
+        if wake_activation:
+            minimum = _bounded_float_env(
+                "HIKARI_VOICE_WAKE_MIN_SCORE",
+                _DEFAULT_WAKE_SPEAKER_MIN_SCORE,
+                0.25,
+                0.95,
+            )
+            return float(result.score) >= max(float(result.threshold), minimum)
+        return True
     except Exception:
         return False
 
 
 def _listen_frame_stream_cycle() -> None:
     """One wake/active cycle using CoreAudio frames + local VAD endpointing."""
-    global hikari_state, daemon_running, _capture_mode
+    global hikari_state, daemon_running, _capture_mode, _active_last_activity_ns
     runtime = _get_streaming_runtime()
     loop = _voice_audio_loop
     gate = _frame_endpoint_gate
@@ -1033,6 +1100,9 @@ def _listen_frame_stream_cycle() -> None:
     diagnostic_max_probability = 0.0
     deadline = time.monotonic() + 30.0
     while daemon_running and time.monotonic() < deadline:
+        if _sleep_active_session_if_idle(runtime):
+            gate.reset()
+            return
         pulled = loop.pull()
         if not pulled.accepted or pulled.frame is None:
             if pulled.reason.value in {"closed", "cancelled", "hardware_error"}:
@@ -1088,7 +1158,11 @@ def _listen_frame_stream_cycle() -> None:
             if command is None:
                 gate.reset()
                 continue
-            speaker_ok = _verify_speaker_pcm(pcm, utterance_id=utterance_id)
+            speaker_ok = _verify_speaker_pcm(
+                pcm,
+                utterance_id=utterance_id,
+                wake_activation=True,
+            )
             print(f"[DAEMON] Speaker verified={speaker_ok}", flush=True)
             if not speaker_ok:
                 gate.reset()
@@ -1100,6 +1174,7 @@ def _listen_frame_stream_cycle() -> None:
                 utterance_id=utterance_id,
             )
             _sync_hikari_state_from_runtime(runtime)
+            _mark_active_voice_activity(runtime)
             action = result.get("action")
             if action == "process_command":
                 response = process(result.get("command") or command)
@@ -1121,8 +1196,10 @@ def _listen_frame_stream_cycle() -> None:
             utterance_id=utterance_id,
         )
         _sync_hikari_state_from_runtime(runtime)
+        _mark_active_voice_activity(runtime)
         action = result.get("action")
         if action == "silent_goodbye":
+            _active_last_activity_ns = 0
             gate.reset()
             return
         if action == "process_command":
@@ -1152,6 +1229,7 @@ def listen_always() -> None:
 
     while daemon_running:
         try:
+            _sleep_active_session_if_idle(runtime)
             if _capture_mode.startswith("frame_stream") and _voice_audio_loop is not None:
                 _listen_frame_stream_cycle()
                 continue
@@ -1174,7 +1252,7 @@ def request_shutdown(_signum=None, _frame=None) -> None:
     global daemon_running, _streaming_runtime, _time_sense_bridge
     global _voice_audio_loop, _time_sense_coordinator, _utterance_seq, _capture_mode
     global _capture_backend, _frame_endpoint_gate, _barge_endpoint_gate
-    global _playback_controller, _interruption_seq
+    global _playback_controller, _interruption_seq, _active_last_activity_ns
 
     daemon_running = False
     if _voice_audio_loop is not None:
@@ -1205,6 +1283,7 @@ def request_shutdown(_signum=None, _frame=None) -> None:
         _time_sense_bridge = None
     _utterance_seq = 0
     _interruption_seq = 0
+    _active_last_activity_ns = 0
     _capture_mode = "utterance_only"
     _capture_backend = "utterance-only"
     _frame_endpoint_gate = None
