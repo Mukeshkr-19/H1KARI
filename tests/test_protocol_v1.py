@@ -86,7 +86,11 @@ def test_protocol_v1_declares_exact_message_directions():
         "phase5_helper_grant_list",
         "phase5_helper_grant_revoke",
         "phase6_integration_list_request",
+        "phase6_home_assistant_prepare_request",
         "phase6_home_assistant_confirm_request",
+        "phase6_proposal_cancel_request",
+        "phase6_agent_run_request",
+        "phase6_snapshot_refresh_request",
     }
 
 

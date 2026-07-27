@@ -12,6 +12,8 @@ from typing import Callable, Dict, FrozenSet, Optional, Set
 
 from core.voice_streaming.contracts import VoiceStreamState
 
+from core.voice_streaming.interruption_evidence import InterruptionEvidence
+
 from .barge_in import BargeInController, BargeInResult
 from .contracts import (
     InterruptionEvent,
@@ -119,6 +121,8 @@ class TurnStateMachine:
         self._closed = False
         self._last_wake_id: Optional[str] = None
         self._draining = False
+        self._pending_interrupt_id: Optional[str] = None
+        self._playback_stop_confirmed = False
 
     @property
     def canonical_runtime(self):
@@ -189,10 +193,15 @@ class TurnStateMachine:
     def cancel(self) -> StreamingDecision:
         if self._closed:
             return StreamingDecision(False, StreamingReason.CLOSED, TurnState.CLOSED.value)
+        response_id = self._response_id
+        if response_id is not None:
+            self._runtime.clear_assistant_playback(expected_response_id=response_id)
         self._runtime.cancel_active()
         self._closed = True
         self._wake_candidate = False
         self._draining = False
+        self._pending_interrupt_id = None
+        self._playback_stop_confirmed = False
         self._user_utt = None
         self._assistant_utt = None
         self._response_id = None
@@ -242,9 +251,14 @@ class TurnStateMachine:
     def goodbye(self) -> StreamingDecision:
         if self._closed:
             return StreamingDecision(False, StreamingReason.CLOSED, TurnState.CLOSED.value)
+        response_id = self._response_id
+        if response_id is not None:
+            self._runtime.clear_assistant_playback(expected_response_id=response_id)
         self._runtime.reset_to_wake_listening()
         self._wake_candidate = False
         self._draining = False
+        self._pending_interrupt_id = None
+        self._playback_stop_confirmed = False
         self._user_utt = None
         self._assistant_utt = None
         self._response_id = None
@@ -305,13 +319,19 @@ class TurnStateMachine:
             return StreamingDecision(False, StreamingReason.DUPLICATE, self.state.value)
         if len(self._seen_utt) >= 4096:
             return StreamingDecision(False, StreamingReason.BUFFER_EXHAUSTED, self.state.value)
+        # Bind while THINKING so failed bind never mutates facade utterance/response.
+        if not self._runtime.bind_assistant_playback(uid, rid):
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
         ok = self._runtime.assistant_speaking_start()
         if not ok:
+            self._runtime.clear_assistant_playback(expected_response_id=rid)
             return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
         self._seen_utt.add(uid)
         self._assistant_utt = uid
         self._response_id = rid
         self._barge.set_active_utterance(uid)
+        self._pending_interrupt_id = None
+        self._playback_stop_confirmed = False
         return StreamingDecision(True, StreamingReason.OK, TurnState.ASSISTANT_SPEAKING.value)
 
     def complete_assistant_response(self, *, response_id: str) -> StreamingDecision:
@@ -328,45 +348,152 @@ class TurnStateMachine:
         )
         if not ok:
             return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
+        if not self._runtime.clear_assistant_playback(expected_response_id=rid):
+            return StreamingDecision(False, StreamingReason.CORRELATION_MISMATCH, self.state.value)
         self._assistant_utt = None
         self._response_id = None
         self._draining = False
+        self._pending_interrupt_id = None
+        self._playback_stop_confirmed = False
         self._barge.set_active_utterance(None)
         return StreamingDecision(True, StreamingReason.OK, TurnState.LISTENING.value)
 
-    def interrupt(self, event: InterruptionEvent) -> BargeInResult:
+    def _event_observed_ns(self, event: InterruptionEvent) -> int:
+        return int(float(event.observed_at_mono) * 1_000_000_000)
+
+    def _deny_interrupt(self, reason: StreamingReason) -> BargeInResult:
+        return BargeInResult(False, reason, None, False)
+
+    def _correlate_interruption_evidence(
+        self,
+        event: InterruptionEvent,
+        evidence: InterruptionEvidence,
+    ) -> Optional[BargeInResult]:
+        """Fail closed before any drain mutation when evidence cannot be trusted."""
+        if not isinstance(event, InterruptionEvent):
+            return self._deny_interrupt(StreamingReason.INVALID_INPUT)
+        if not isinstance(evidence, InterruptionEvidence):
+            return self._deny_interrupt(StreamingReason.INVALID_INPUT)
+        if evidence.stream_id != self._session_id or event.session_id != self._session_id:
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
+        if evidence.interruption_id != event.interruption_id:
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
+        if evidence.observed_at_ns != self._event_observed_ns(event):
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
+        if not evidence.speaker_verified:
+            return self._deny_interrupt(StreamingReason.SPEAKER_DENIED)
+        # Active assistant utterance/response must match both event and evidence.
+        if self._assistant_utt is None:
+            return self._deny_interrupt(StreamingReason.STALE_INTERRUPTION)
+        if event.assistant_utterance_id != self._assistant_utt:
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
+        allowed_targets = {self._assistant_utt}
+        if self._response_id is not None:
+            allowed_targets.add(self._response_id)
+        allowed_targets.add(self._runtime.interruption_target_id())
+        if evidence.target_assistant_utterance_id not in allowed_targets:
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
+        return None
+
+    def interrupt(
+        self,
+        event: InterruptionEvent,
+        *,
+        evidence: Optional[InterruptionEvidence] = None,
+        is_authenticated: Optional[bool] = None,
+    ) -> BargeInResult:
+        """Request barge-in via canonical runtime.
+
+        ``is_authenticated`` is ignored and grants no authority. Callers must
+        supply correlated ``InterruptionEvidence``. Drain begins only after the
+        runtime accepts the request. Playback stop confirmation is separate.
+        """
+        del is_authenticated  # never trusted
+        if evidence is None:
+            return self._deny_interrupt(StreamingReason.INVALID_INPUT)
+
+        correlated = self._correlate_interruption_evidence(event, evidence)
+        if correlated is not None:
+            return correlated
+
         if event.session_id != self._session_id:
-            return BargeInResult(False, StreamingReason.CORRELATION_MISMATCH, None, False)
+            return self._deny_interrupt(StreamingReason.CORRELATION_MISMATCH)
         try:
             now = float(self._clock())
         except Exception:
-            return BargeInResult(False, StreamingReason.INVALID_INPUT, None, False)
+            return self._deny_interrupt(StreamingReason.INVALID_INPUT)
         if event.observed_at_mono > now + 1.0 or now - event.observed_at_mono > 30.0:
-            return BargeInResult(False, StreamingReason.STALE_INTERRUPTION, None, False)
+            return self._deny_interrupt(StreamingReason.STALE_INTERRUPTION)
+
+        # Facade policy check first; do not mark turn draining until runtime accepts.
         result = self._barge.handle(event, turn_state=self.state)
         if not result.accepted:
             return result
+
         req_ok = self._runtime.request_interruption(
-            event.interruption_id,
-            is_authenticated=True,
-            monotonic_ns=int(event.observed_at_mono * 1_000_000_000),
+            evidence.interruption_id,
+            evidence=evidence,
+            monotonic_ns=evidence.observed_at_ns,
         )
-        if req_ok:
-            self._runtime.confirm_interruption(
-                event.interruption_id,
-                is_confirmed=True,
-                monotonic_ns=self._runtime.now_ns(),
-            )
+        if not req_ok:
+            # Roll back controller drain flag; keep active utterance for replay/fail-closed.
+            if self._assistant_utt is not None:
+                self._barge.set_active_utterance(self._assistant_utt)
+            return self._deny_interrupt(StreamingReason.STALE_INTERRUPTION)
+
         self._draining = True
-        return result
+        self._pending_interrupt_id = evidence.interruption_id
+        self._playback_stop_confirmed = False
+        return BargeInResult(True, StreamingReason.OK, result.cancel_utterance_id, True)
+
+    def notify_playback_stopped(
+        self,
+        interruption_id: str,
+        *,
+        bytes_played_before_stop: int = 0,
+    ) -> StreamingDecision:
+        """Confirm physical playback termination after an accepted interruption."""
+        if self._closed:
+            return StreamingDecision(False, StreamingReason.CLOSED, TurnState.CLOSED.value)
+        if not self._draining or self._pending_interrupt_id is None:
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
+        try:
+            iid = validate_id(interruption_id, "interruption_id")
+        except ValueError:
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
+        if iid != self._pending_interrupt_id:
+            return StreamingDecision(False, StreamingReason.CORRELATION_MISMATCH, self.state.value)
+        if isinstance(bytes_played_before_stop, bool) or not isinstance(bytes_played_before_stop, int):
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
+        if bytes_played_before_stop < 0:
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
+        ok = self._runtime.confirm_interruption(
+            iid,
+            is_confirmed=True,
+            bytes_played_before_stop=bytes_played_before_stop,
+            monotonic_ns=self._runtime.now_ns(),
+        )
+        if not ok:
+            return StreamingDecision(False, StreamingReason.STALE_INTERRUPTION, self.state.value)
+        self._playback_stop_confirmed = True
+        return StreamingDecision(True, StreamingReason.OK, self.state.value)
 
     def finish_drain(self) -> StreamingDecision:
+        if not self._playback_stop_confirmed:
+            return StreamingDecision(False, StreamingReason.INVALID_INPUT, self.state.value)
         drain = self._barge.complete_drain()
         if not drain.accepted:
             return drain
+        if self._response_id is None:
+            return StreamingDecision(False, StreamingReason.CORRELATION_MISMATCH, self.state.value)
+        if not self._runtime.clear_assistant_playback(expected_response_id=self._response_id):
+            return StreamingDecision(False, StreamingReason.CORRELATION_MISMATCH, self.state.value)
         self._assistant_utt = None
         self._response_id = None
         self._draining = False
+        self._pending_interrupt_id = None
+        self._playback_stop_confirmed = False
+        self._barge.set_active_utterance(None)
         self._runtime.state_machine.transition_to(
             VoiceStreamState.ACTIVE_LISTENING,
             event_type="facade_drain_complete",

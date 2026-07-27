@@ -179,3 +179,31 @@ test("clears sensitive proposals and reset data", () => {
   const sReset = reducePhase6State(s1, { type: "phase6/reset" });
   assert.deepStrictEqual(sReset, INITIAL_PHASE6_STATE);
 });
+
+test("controlled state clearing on disconnect and cancel", () => {
+  const sInit = reducePhase6State(INITIAL_PHASE6_STATE, {
+    type: "phase6/begin_request",
+    requestId: "req_001",
+  });
+  const haProp: Phase6HomeAssistantProposal = {
+    type: "phase6_home_assistant_proposal",
+    request_id: "req_001",
+    protocol_version: 1,
+    proposal_id: "prop_01",
+    entity_id: "switch.pump",
+    domain: "switch",
+    service: "turn_on",
+    risk: "high",
+    effect_summary: "Turn on pump",
+    expires_at: 1000,
+    nonce: "nonce_456",
+  };
+  const s1 = reducePhase6State(sInit, { type: "phase6/apply_server", message: haProp });
+  assert.notStrictEqual(s1.haProposal, null);
+
+  // Disconnect / cancel clears proposal and resets submission lock
+  const sDisc = reducePhase6State(s1, { type: "phase6/clear_sensitive" });
+  assert.strictEqual(sDisc.haProposal, null);
+  assert.strictEqual(sDisc.confirmedNonce, null);
+  assert.strictEqual(sDisc.submitLocked, false);
+});

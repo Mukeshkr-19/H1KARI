@@ -22,7 +22,27 @@ from core.voice_streaming.runtime import (
     is_wake_phrase,
 )
 from core.voice_streaming.vad import VADFrameMeasurement, VADState
+from core.voice_streaming.interruption_evidence import (
+    InterruptionEvidence,
+    InterruptionVerificationSource,
+)
 
+
+
+def _barge_evidence(runtime, interruption_id="req_1", **kwargs):
+    now = runtime.now_ns()
+    base = dict(
+        stream_id=runtime.stream_id,
+        interruption_id=interruption_id,
+        target_assistant_utterance_id=runtime.interruption_target_id(),
+        speaker_verified=True,
+        verification_source=InterruptionVerificationSource.SPEAKER_AUTH,
+        speech_observed_ns=now,
+        observed_at_ns=now,
+        expires_at_ns=now + 2_000_000_000,
+    )
+    base.update(kwargs)
+    return InterruptionEvidence(**base)
 
 def test_runtime_construction_has_no_io():
     """Verify runtime instantiation performs zero file/network/microphone I/O."""
@@ -136,9 +156,10 @@ def test_unauthenticated_barge_in_denied():
     runtime.assistant_speaking_start()
     assert runtime.state == VoiceStreamState.ASSISTANT_SPEAKING
 
-    # Unauthenticated interruption request -> False
-    ok = runtime.request_interruption("req_1", is_authenticated=False)
-    assert ok is False
+    assert runtime.request_interruption("req_1", is_authenticated=False) is False
+    assert runtime.request_interruption("req_1", is_authenticated=True) is False
+    bad = _barge_evidence(runtime, speaker_verified=False)
+    assert runtime.request_interruption(evidence=bad) is False
     assert runtime.state == VoiceStreamState.ASSISTANT_SPEAKING
 
 
@@ -148,7 +169,7 @@ def test_confirmed_interruption_transition():
     runtime.start_active_listening()
     runtime.assistant_speaking_start()
 
-    ok_req = runtime.request_interruption("req_1", is_authenticated=True)
+    ok_req = runtime.request_interruption(evidence=_barge_evidence(runtime, "req_1"))
     assert ok_req is True
     assert runtime.state == VoiceStreamState.INTERRUPTING
 
@@ -163,7 +184,7 @@ def test_stale_interruption_rejection():
     runtime.start_active_listening()
     runtime.assistant_speaking_start()
 
-    runtime.request_interruption("req_1", is_authenticated=True)
+    runtime.request_interruption(evidence=_barge_evidence(runtime, "req_1"))
     assert runtime.state == VoiceStreamState.INTERRUPTING
 
     # Mismatched request_id -> False
@@ -250,8 +271,19 @@ def test_future_interruption_rejected():
     runtime = VoiceStreamingRuntime("stream_future", clock=lambda: 1_000)
     runtime.start_active_listening()
     runtime.assistant_speaking_start()
-    ok = runtime.request_interruption("req_f", is_authenticated=True, monotonic_ns=10**15)
-    assert ok is False
+    now = runtime.now_ns()
+    future = InterruptionEvidence(
+        stream_id=runtime.stream_id,
+        interruption_id="req_f",
+        target_assistant_utterance_id=runtime.interruption_target_id(),
+        speaker_verified=True,
+        verification_source=InterruptionVerificationSource.SPEAKER_AUTH,
+        speech_observed_ns=now,
+        observed_at_ns=now,
+        expires_at_ns=now + 2_000_000_000,
+    )
+    # monotonic_ns mismatch / future wall via mismatched observed binding
+    assert runtime.request_interruption(evidence=future, monotonic_ns=10**15) is False
 
 
 def test_cancel_active_from_speaking_clears_state():
@@ -289,3 +321,43 @@ def test_replay_history_exhaustion_fail_closed():
                 rejected += 1
     assert accepted >= 1
     assert rejected >= 1
+
+
+
+def test_bind_assistant_playback_public_api():
+    runtime = VoiceStreamingRuntime("stream_bind")
+    runtime.start_active_listening()
+    # Wrong state
+    assert runtime.bind_assistant_playback("a1", "r1") is False
+    runtime.state_machine.transition_to(
+        VoiceStreamState.THINKING,
+        event_type="test_think",
+        monotonic_ns=runtime.now_ns(),
+        reason="test",
+    )
+    assert runtime.bind_assistant_playback("a1", "r1") is True
+    assert runtime.interruption_target_id() == "a1"
+    # Idempotent identical
+    assert runtime.bind_assistant_playback("a1", "r1") is True
+    # Conflict
+    assert runtime.bind_assistant_playback("a2", "r2") is False
+    assert runtime.interruption_target_id() == "a1"
+    # Stale clear
+    assert runtime.clear_assistant_playback(expected_response_id="other") is False
+    assert runtime.clear_assistant_playback() is False
+    assert runtime.clear_assistant_playback(expected_response_id="r1") is True
+    assert runtime.interruption_target_id() == "assistant_playback"
+    # Idempotent already clear
+    assert runtime.clear_assistant_playback(expected_response_id="r1") is True
+    # Content-free events
+    blob = repr(runtime.get_history())
+    assert "a1" not in blob
+    assert "r1" not in blob
+
+
+def test_bind_does_not_change_wake_sleep():
+    runtime = VoiceStreamingRuntime("stream_wake")
+    runtime.start_wake_listening()
+    assert runtime.is_wake_listening
+    assert runtime.bind_assistant_playback("a1", "r1") is False
+    assert runtime.is_wake_listening

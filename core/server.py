@@ -77,7 +77,7 @@ from core.pairing import PairingRuntime
 from core.visual_transfer import VisualTransferRuntime
 from core.vision import VisionRuntime
 
-from core.action_policy import Actor
+from core.action_policy import Actor, ActorContext
 from core.phase5.bootstrap import Phase5BootstrapError, Phase5Subsystem, create_phase5_subsystem
 from core.phase5.contracts import (
     Capability,
@@ -263,7 +263,6 @@ class WebSocketServer:
         self._phase5_bootstrap_failed = False
         self._phase5_pending_approvals: Dict[str, Dict[str, dict]] = {}
         self._phase6_subsystem = phase6_subsystem
-        self._phase6_pending_proposals: Dict[str, Dict[str, dict]] = {}
         self._phase6_trackers: Dict[str, Phase6CorrelationTracker] = {}
 
     def _voice_companion_enabled(self) -> bool:
@@ -569,7 +568,8 @@ class WebSocketServer:
             self._connection_tokens.pop(client_key, None)
             self._paired_client_ids.discard(client_key)
             self._phase5_pending_approvals.pop(client_key, None)
-            self._phase6_pending_proposals.pop(client_key, None)
+            if self._phase6_subsystem is not None and actor is not None:
+                self._phase6_subsystem.invalidate_session_proposals(actor.session_id)
             self._phase6_trackers.pop(client_key, None)
             self._pair_attempts.pop(client_key, None)
             self.device_info.pop(client_key, None)
@@ -1815,25 +1815,6 @@ class WebSocketServer:
         except Exception:
             pass
 
-    def queue_phase6_proposal(self, client_key: str, proposal: dict) -> bool:
-        if (
-            not isinstance(client_key, str)
-            or not client_key
-            or not isinstance(proposal, dict)
-            or proposal.get("type") != "phase6_home_assistant_proposal"
-            or validate_server_message(proposal) is not None
-        ):
-            return False
-        pending_map = self._phase6_pending_proposals.setdefault(client_key, {})
-        if len(pending_map) >= 32:
-            oldest_id = next(iter(pending_map))
-            pending_map.pop(oldest_id, None)
-        proposal_id = proposal.get("proposal_id")
-        if isinstance(proposal_id, str):
-            pending_map[proposal_id] = dict(proposal)
-            return True
-        return False
-
     async def _handle_phase6_control(self, websocket, data: dict) -> None:
         request_id = data.get("request_id")
         if not isinstance(request_id, str) or not _PREPARE_REQUEST_ID_RE.fullmatch(request_id):
@@ -1862,9 +1843,17 @@ class WebSocketServer:
         msg_type = data.get("type")
         try:
             if msg_type == "phase6_integration_list_request":
-                await self._phase6_integration_list(websocket, data, request_id, client_key)
+                await self._phase6_integration_list(websocket, data, request_id, client_key, actor)
+            elif msg_type == "phase6_home_assistant_prepare_request":
+                await self._phase6_home_assistant_prepare(websocket, data, request_id, client_key, actor)
             elif msg_type == "phase6_home_assistant_confirm_request":
-                await self._phase6_home_assistant_confirm(websocket, data, request_id, client_key)
+                await self._phase6_home_assistant_confirm(websocket, data, request_id, client_key, actor)
+            elif msg_type == "phase6_proposal_cancel_request":
+                await self._phase6_proposal_cancel(websocket, data, request_id, client_key, actor)
+            elif msg_type == "phase6_agent_run_request":
+                await self._phase6_agent_run(websocket, data, request_id, client_key, actor)
+            elif msg_type == "phase6_snapshot_refresh_request":
+                await self._phase6_snapshot_refresh(websocket, data, request_id, client_key, actor)
             else:
                 await self._send_phase6_message(
                     websocket,
@@ -1876,26 +1865,19 @@ class WebSocketServer:
                 build_error_frame(request_id=request_id, code=Phase6ErrorCode.INTERNAL_ERROR),
             )
 
-    async def _phase6_integration_list(self, websocket, data: dict, request_id: str, client_key: str) -> None:
-        ha_status = "unavailable"
-        sync_status = "unavailable"
-        worker_status = "unavailable"
-        skill_status = "unavailable"
-        model_status = "unavailable"
-
-        if self._phase6_subsystem is not None:
-            ha_status = "ready" if getattr(self._phase6_subsystem, "home_assistant_enabled", False) else "disabled"
-            sync_status = "ready" if getattr(self._phase6_subsystem, "encrypted_sync_enabled", False) else "disabled"
-            worker_status = "ready" if getattr(self._phase6_subsystem, "remote_workers_enabled", False) else "disabled"
-            skill_status = "ready" if getattr(self._phase6_subsystem, "skill_staging_enabled", False) else "disabled"
-            model_status = "ready" if getattr(self._phase6_subsystem, "measured_routing_enabled", False) else "disabled"
+    async def _phase6_integration_list(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
+        if self._phase6_subsystem is not None and hasattr(self._phase6_subsystem, "get_status_snapshots"):
+            snapshots = self._phase6_subsystem.get_status_snapshots(request_id)
+            for frame in snapshots:
+                await self._send_phase6_message(websocket, frame)
+            return
 
         integrations = [
-            ("home_assistant", "Home Assistant", ha_status, "Entity control plane"),
-            ("encrypted_sync", "Encrypted Sync", sync_status, "Manifest sync planner"),
-            ("remote_workers", "Remote Workers", worker_status, "Isolated job telemetry"),
-            ("skill_evolution", "Skill Evolution", skill_status, "Reviewed skill packages"),
-            ("model_evaluation", "Model Evaluation", model_status, "Local model routing"),
+            ("home_assistant", "Home Assistant", "unavailable", "Disabled by default"),
+            ("encrypted_sync", "Encrypted Sync", "disabled", "Disabled by default"),
+            ("remote_workers", "Remote Workers", "unavailable", "Disabled by default"),
+            ("skill_evolution", "Skill Evolution", "disabled", "Disabled by default"),
+            ("model_evaluation", "Model Evaluation", "disabled", "Disabled by default"),
         ]
         for int_id, name, status, summary in integrations:
             await self._send_phase6_message(
@@ -1909,41 +1891,129 @@ class WebSocketServer:
                 ),
             )
 
-    async def _phase6_home_assistant_confirm(self, websocket, data: dict, request_id: str, client_key: str) -> None:
+    async def _phase6_home_assistant_prepare(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
+        if self._phase6_subsystem is None or not hasattr(self._phase6_subsystem, "prepare_home_assistant"):
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
+            )
+            return
+
+        ok, proposal_frame, err_code, _ = self._phase6_subsystem.prepare_home_assistant(
+            request_id=request_id,
+            entity_id=data["entity_id"],
+            domain=data["domain"],
+            service=data["service"],
+            risk=data["risk"],
+            effect_summary=data["effect_summary"],
+            actor_context=actor,
+        )
+        if not ok or proposal_frame is None:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=err_code),
+            )
+            return
+
+        await self._send_phase6_message(websocket, proposal_frame)
+
+    async def _phase6_home_assistant_confirm(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
         proposal_id = data.get("proposal_id")
         nonce = data.get("nonce")
 
-        pending_map = self._phase6_pending_proposals.get(client_key, {})
-        proposal = pending_map.get(proposal_id)
-
-        if not proposal or proposal.get("nonce") != nonce:
+        if self._phase6_subsystem is None or not hasattr(self._phase6_subsystem, "confirm_home_assistant"):
             await self._send_phase6_message(
                 websocket,
-                build_error_frame(request_id=request_id, code=Phase6ErrorCode.STALE_REQUEST),
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
             )
             return
 
-        tracker = self._get_phase6_tracker(client_key)
-        if not tracker.track_nonce(nonce):
-            pending_map.pop(proposal_id, None)
+        ok, result_frame, err_code, _ = self._phase6_subsystem.confirm_home_assistant(
+            request_id=request_id,
+            proposal_id=proposal_id,
+            nonce=nonce,
+            actor_context=actor,
+        )
+        if not ok or result_frame is None:
             await self._send_phase6_message(
                 websocket,
-                build_error_frame(request_id=request_id, code=Phase6ErrorCode.STALE_REQUEST),
+                build_error_frame(request_id=request_id, code=err_code),
             )
             return
 
-        expires_at = proposal.get("expires_at", 0)
-        if time.time() > expires_at:
-            pending_map.pop(proposal_id, None)
+        await self._send_phase6_message(websocket, result_frame)
+
+    async def _phase6_proposal_cancel(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
+        proposal_id = data.get("proposal_id")
+
+        if self._phase6_subsystem is not None and hasattr(self._phase6_subsystem, "cancel_proposal"):
+            self._phase6_subsystem.cancel_proposal(proposal_id, actor)
+
+        # Typed status frame response indicating proposal cancellation
+        cancel_frame = build_integration_status_frame(
+            request_id=request_id,
+            integration_id="home_assistant",
+            name="Home Assistant",
+            status="cancelled",
+            details_summary="Proposal cancelled by owner",
+        )
+        await self._send_phase6_message(websocket, cancel_frame)
+
+    async def _phase6_agent_run(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
+        if self._phase6_subsystem is None or not hasattr(self._phase6_subsystem, "prepare_agent_run"):
             await self._send_phase6_message(
                 websocket,
-                build_error_frame(request_id=request_id, code=Phase6ErrorCode.EXPIRED),
+                build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
             )
             return
 
-        # One-time consumption
-        pending_map.pop(proposal_id, None)
+        action = data.get("action")
+        run_id = data.get("run_id")
 
+        if action == "preview":
+            ok, frame, err_code, _ = self._phase6_subsystem.prepare_agent_run(
+                request_id=request_id,
+                run_id=run_id,
+                task_summary=data.get("task_summary", "Bounded run"),
+                budget_limit=data.get("budget_limit", 10),
+                actor_context=actor,
+            )
+        elif action == "start":
+            ok, frame, err_code, _ = self._phase6_subsystem.start_agent_run(
+                request_id=request_id,
+                run_id=run_id,
+                nonce=data.get("nonce", ""),
+                actor_context=actor,
+            )
+        elif action == "cancel":
+            self._phase6_subsystem.cancel_agent_run(run_id, actor)
+            ok, frame, err_code = True, build_integration_status_frame(
+                request_id=request_id,
+                integration_id="remote_workers",
+                name="Remote Workers",
+                status="cancelled",
+                details_summary="Agent run cancelled",
+            ), Phase6ErrorCode.CLOSED
+        elif action == "status":
+            ok, frame, err_code, _ = self._phase6_subsystem.get_agent_run_status(
+                request_id=request_id,
+                run_id=run_id,
+                actor_context=actor,
+            )
+        else:
+            ok, frame, err_code = False, None, Phase6ErrorCode.INVALID_REQUEST
+
+        if not ok or frame is None:
+            await self._send_phase6_message(
+                websocket,
+                build_error_frame(request_id=request_id, code=err_code),
+            )
+            return
+
+        await self._send_phase6_message(websocket, frame)
+
+    async def _phase6_snapshot_refresh(self, websocket, data: dict, request_id: str, client_key: str, actor: ActorContext) -> None:
+        target = data.get("target")
         if self._phase6_subsystem is None:
             await self._send_phase6_message(
                 websocket,
@@ -1951,10 +2021,20 @@ class WebSocketServer:
             )
             return
 
-        await self._send_phase6_message(
-            websocket,
-            build_error_frame(request_id=request_id, code=Phase6ErrorCode.UNAVAILABLE),
-        )
+        if target in ("all", "time_sense"):
+            await self._send_phase6_message(
+                websocket,
+                self._phase6_subsystem.get_time_sense_snapshot(request_id),
+            )
+        if target in ("all", "repo_intel"):
+            await self._send_phase6_message(
+                websocket,
+                self._phase6_subsystem.get_repo_intel_snapshot(request_id, "Command-center query"),
+            )
+        if target in ("all", "integrations"):
+            snapshots = self._phase6_subsystem.get_status_snapshots(request_id)
+            for frame in snapshots:
+                await self._send_phase6_message(websocket, frame)
 
     async def _handle_message(self, websocket, message: str):
         """Process incoming message from client"""

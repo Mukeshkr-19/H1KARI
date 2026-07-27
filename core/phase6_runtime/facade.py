@@ -1,9 +1,4 @@
-"""Fail-closed composition facade for HIKARI Phase 6 foundations.
-
-Importing and constructing this module performs no repository scan, subprocess,
-network, Git, model, database, or device operation.  Callers must explicitly
-request read-only analysis or inject every adapter needed by the bounded loop.
-"""
+"""Fail-closed composition facade for HIKARI Phase 6 foundations."""
 
 from __future__ import annotations
 
@@ -35,7 +30,7 @@ from core.phase6_ecosystem.skill_review import SkillEvolutionCoordinator
 class Phase6UnavailableError(RuntimeError):
     """Fixed public error for a Phase 6 capability that is not enabled."""
 
-    def __init__(self, feature: str) -> None:
+    def __init__(self, feature: str = "unavailable") -> None:
         self.feature = feature
         super().__init__("phase 6 capability unavailable")
 
@@ -63,18 +58,13 @@ class Phase6FeatureFlags:
             self.encrypted_sync_transport,
             self.model_router_mutation,
         ):
-            if not isinstance(value, bool):
+            if type(value) is not bool:
                 raise ValueError("phase 6 feature flags must be boolean")
 
 
 @dataclass(frozen=True)
 class Phase6Runtime:
-    """Small runtime facade over audited Phase 6 foundation packages.
-
-    Read-only repository indexing and pure policy/evaluation methods are usable
-    immediately.  Anything capable of acting remains disabled by default and
-    requires explicit caller injection.
-    """
+    """Small runtime facade over audited Phase 6 foundation packages."""
 
     repository_policy: RepositoryPolicy
     flags: Phase6FeatureFlags
@@ -124,11 +114,6 @@ class Phase6Runtime:
         approval_resolver: Any | None = None,
         cancellation: Any | None = None,
     ) -> BoundedAgentLoop:
-        """Construct the bounded kernel only after an explicit feature opt-in.
-
-        This method does not supply permissive adapters.  Every authority,
-        audit, execution, time, and identity boundary remains caller-injected.
-        """
         if not self.flags.bounded_agent_execution:
             raise Phase6UnavailableError("bounded_agent_execution")
         return BoundedAgentLoop(
@@ -167,11 +152,3 @@ def create_phase6_runtime(
         skill_evolution=skill_evolution or SkillEvolutionCoordinator(),
         model_evaluation=model_evaluation or ModelRoutingEvaluator(),
     )
-
-
-__all__ = [
-    "Phase6FeatureFlags",
-    "Phase6Runtime",
-    "Phase6UnavailableError",
-    "create_phase6_runtime",
-]

@@ -23,8 +23,21 @@ from __future__ import annotations
 from core.time_sense.adapters import (
     ConversationSessionObservationSource,
     ScheduledJobObservationSource,
+    StaticConversationSessionSource,
+    StaticScheduledJobSource,
+    StaticStreamingVoiceSource,
+    StaticTaskProgressSource,
     StreamingVoiceObservationSource,
     TaskProgressObservationSource,
+)
+from core.time_sense.observation_coordinator import (
+    CoordinatorSnapshot,
+    ObservationCoordinatorConfig,
+    TimeSenseObservationCoordinator,
+)
+from core.time_sense.runtime_bridge import (
+    TimeSenseRuntimeBridge,
+    TimingAdvisory,
 )
 from core.time_sense.background_awareness import (
     AwarenessBuilder,
@@ -77,13 +90,19 @@ __all__ = [
     "AwarenessSnapshot",
     "BackgroundActivity",
     "ConversationSessionObservationSource",
+    "CoordinatorSnapshot",
     "ConversationTimingObservation",
     "JobObservationState",
     "JobTimingObservation",
     "NotificationAdvice",
     "NotificationRecommendation",
     "QuietHoursContext",
+    "ObservationCoordinatorConfig",
     "ScheduledJobObservationSource",
+    "StaticConversationSessionSource",
+    "StaticScheduledJobSource",
+    "StaticStreamingVoiceSource",
+    "StaticTaskProgressSource",
     "StreamingVoiceObservationSource",
     "StuckAssessment",
     "StuckDetector",
@@ -94,6 +113,9 @@ __all__ = [
     "StuckReason",
     "TaskProgressObservation",
     "TaskProgressObservationSource",
+    "TimeSenseObservationCoordinator",
+    "TimeSenseRuntimeBridge",
+    "TimingAdvisory",
     "TaskProgressState",
     "TemporalInterpretation",
     "TemporalPrecision",

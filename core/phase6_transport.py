@@ -66,7 +66,7 @@ SAFE_ERROR_MESSAGES: Mapping[Phase6ErrorCode, str] = {
 # Valid status/state enums
 INTEGRATION_STATUSES = frozenset({
     "unavailable", "disabled", "configuring", "ready", "degraded",
-    "approval_required", "active", "cancelling", "failed", "revoked",
+    "approval_required", "active", "cancelling", "cancelled", "completed", "failed", "revoked",
 })
 
 AGENT_RUN_STATES = frozenset({
@@ -84,7 +84,11 @@ PRIVACY_CLASSES = frozenset({"local_only", "gateway_ok", "remote_ok"})
 
 PHASE6_CLIENT_MESSAGE_TYPES = frozenset({
     "phase6_integration_list_request",
+    "phase6_home_assistant_prepare_request",
     "phase6_home_assistant_confirm_request",
+    "phase6_proposal_cancel_request",
+    "phase6_agent_run_request",
+    "phase6_snapshot_refresh_request",
 })
 
 PHASE6_SERVER_MESSAGE_TYPES = frozenset({
@@ -136,6 +140,21 @@ PHASE6_CLIENT_MESSAGE_SPECS: dict[str, Any] = {
         },
         "optional": {},
     },
+    "phase6_home_assistant_prepare_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "entity_id": _SAFE_TEXT_128,
+            "domain": _SAFE_TEXT_128,
+            "service": _SAFE_TEXT_128,
+            "risk": {
+                "type": "string",
+                "enum": list(HOME_ASSISTANT_RISKS),
+            },
+            "effect_summary": _SAFE_TEXT_512,
+        },
+        "optional": {},
+    },
     "phase6_home_assistant_confirm_request": {
         "required": {
             "request_id": _CANONICAL_ID_SPEC,
@@ -147,6 +166,47 @@ PHASE6_CLIENT_MESSAGE_SPECS: dict[str, Any] = {
                 "max_length": 80,
                 "forbid_controls": True,
                 "forbid_unicode_format": True,
+            },
+        },
+        "optional": {},
+    },
+    "phase6_proposal_cancel_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "proposal_id": _CANONICAL_ID_SPEC,
+        },
+        "optional": {},
+    },
+    "phase6_agent_run_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "action": {
+                "type": "string",
+                "enum": ["preview", "start", "confirm", "cancel", "status"],
+            },
+            "run_id": _CANONICAL_ID_SPEC,
+        },
+        "optional": {
+            "nonce": {
+                "type": "string",
+                "min_length": 1,
+                "max_length": 80,
+                "forbid_controls": True,
+                "forbid_unicode_format": True,
+            },
+            "budget_limit": {"type": "integer", "minimum": 0},
+            "task_summary": _SAFE_TEXT_512,
+        },
+    },
+    "phase6_snapshot_refresh_request": {
+        "required": {
+            "request_id": _CANONICAL_ID_SPEC,
+            "protocol_version": {"type": "integer", "enum": [1]},
+            "target": {
+                "type": "string",
+                "enum": ["all", "time_sense", "repo_intel", "integrations"],
             },
         },
         "optional": {},

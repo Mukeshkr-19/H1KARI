@@ -60,6 +60,12 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+export function generatePhase6RequestId(): string {
+  const timePart = Date.now().toString(36);
+  const randPart = Math.random().toString(36).substring(2, 8);
+  return `req_${timePart}_${randPart}`;
+}
+
 function isNonNegativeInt(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
@@ -487,6 +493,49 @@ export function parsePhase6ServerMessage(input: unknown): Phase6ServerMessage | 
 
 // Client frame builders
 
+export function buildIntegrationListRequest(requestId: string) {
+  if (!isValidCanonicalId(requestId)) {
+    throw new Error("Invalid request_id for integration list request");
+  }
+  return Object.freeze({
+    type: "phase6_integration_list_request",
+    request_id: requestId,
+    protocol_version: 1,
+  });
+}
+
+export function buildHomeAssistantPrepareRequest(
+  requestId: string,
+  entityId: string,
+  domain: string,
+  service: string,
+  risk: "low" | "medium" | "high" | "critical",
+  effectSummary: string,
+) {
+  if (
+    !isValidCanonicalId(requestId) ||
+    !isSafeText(entityId, 128) ||
+    !isSafeText(domain, 128) ||
+    !isSafeText(service, 128) ||
+    !isSafeText(effectSummary, 512) ||
+    entityId.includes("*") ||
+    domain.includes("*") ||
+    service.includes("*")
+  ) {
+    throw new Error("Invalid parameters for Home Assistant prepare request");
+  }
+  return Object.freeze({
+    type: "phase6_home_assistant_prepare_request",
+    request_id: requestId,
+    protocol_version: 1,
+    entity_id: entityId,
+    domain,
+    service,
+    risk,
+    effect_summary: effectSummary,
+  });
+}
+
 export function buildHomeAssistantConfirmRequest(requestId: string, proposalId: string, nonce: string) {
   if (!isValidCanonicalId(requestId) || !isValidCanonicalId(proposalId) || !isSafeText(nonce, 80)) {
     throw new Error("Invalid parameters for Home Assistant confirmation request");
@@ -497,5 +546,60 @@ export function buildHomeAssistantConfirmRequest(requestId: string, proposalId: 
     protocol_version: 1,
     proposal_id: proposalId,
     nonce,
+  });
+}
+
+export function buildProposalCancelRequest(requestId: string, proposalId: string) {
+  if (!isValidCanonicalId(requestId) || !isValidCanonicalId(proposalId)) {
+    throw new Error("Invalid parameters for proposal cancel request");
+  }
+  return Object.freeze({
+    type: "phase6_proposal_cancel_request",
+    request_id: requestId,
+    protocol_version: 1,
+    proposal_id: proposalId,
+  });
+}
+
+export function buildAgentRunRequest(
+  requestId: string,
+  runId: string,
+  action: "preview" | "start" | "confirm" | "cancel" | "status",
+  options?: { nonce?: string; budgetLimit?: number; taskSummary?: string },
+) {
+  if (!isValidCanonicalId(requestId) || !isValidCanonicalId(runId)) {
+    throw new Error("Invalid parameters for agent run request");
+  }
+  const payload: Record<string, unknown> = {
+    type: "phase6_agent_run_request",
+    request_id: requestId,
+    protocol_version: 1,
+    action,
+    run_id: runId,
+  };
+  if (options?.nonce) {
+    if (!isSafeText(options.nonce, 80)) throw new Error("Invalid nonce");
+    payload.nonce = options.nonce;
+  }
+  if (options?.budgetLimit !== undefined) {
+    if (!isNonNegativeInt(options.budgetLimit)) throw new Error("Invalid budget_limit");
+    payload.budget_limit = options.budgetLimit;
+  }
+  if (options?.taskSummary) {
+    if (!isSafeText(options.taskSummary, 512)) throw new Error("Invalid task_summary");
+    payload.task_summary = options.taskSummary;
+  }
+  return Object.freeze(payload);
+}
+
+export function buildSnapshotRefreshRequest(requestId: string, target: "all" | "time_sense" | "repo_intel" | "integrations") {
+  if (!isValidCanonicalId(requestId)) {
+    throw new Error("Invalid request_id for snapshot refresh");
+  }
+  return Object.freeze({
+    type: "phase6_snapshot_refresh_request",
+    request_id: requestId,
+    protocol_version: 1,
+    target,
   });
 }

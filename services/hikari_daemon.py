@@ -157,6 +157,10 @@ def enroll_voice():
 # One SpeakerAuth loads ECAPA once; a new instance per utterance reloads the model and breaks wake responsiveness.
 _speaker_auth_cache = None
 _streaming_runtime = None
+_voice_audio_loop = None
+_capture_mode = "utterance_only"
+_utterance_seq = 0
+_time_sense_coordinator = None
 
 
 def _get_streaming_runtime():
@@ -166,6 +170,7 @@ def _get_streaming_runtime():
 
         _streaming_runtime = VoiceStreamingRuntime("daemon_stream")
         _streaming_runtime.start_wake_listening()
+        _resolve_capture_mode(_streaming_runtime)
     return _streaming_runtime
 
 
@@ -188,6 +193,57 @@ def get_timing_advisory_snapshot():
     """Expose content-free timing advisories without initiating speech."""
     bridge = _get_time_sense_bridge()
     return bridge.snapshot()
+
+def _next_utterance_id(prefix: str = "utt") -> str:
+    global _utterance_seq
+    _utterance_seq += 1
+    if _utterance_seq > 1_000_000:
+        _utterance_seq = 1
+    return f"{prefix}-{_utterance_seq}"
+
+
+def _resolve_capture_mode(runtime) -> str:
+    """Capability-derived capture mode. Never assumes frame stream."""
+    global _capture_mode, _voice_audio_loop
+    from core.voice_streaming.live_audio import (
+        AudioInputCapability,
+        try_create_pyaudio_source,
+    )
+
+    # Package presence is not evidence of an opened frame loop. Production
+    # remains utterance_only unless a real injected open runner is attached.
+    source = try_create_pyaudio_source(stream_id=runtime.stream_id)
+    _voice_audio_loop = None
+    _capture_mode = "utterance_only"
+    if source.capability == AudioInputCapability.FRAME_STREAM:
+        # Honest downgrade: probe must not claim frame_stream without open loop.
+        _capture_mode = "utterance_only"
+    runtime.set_input_capability(AudioInputCapability.UTTERANCE_ONLY, frame_loop_open=False)
+    return _capture_mode
+
+
+def _get_time_sense_coordinator():
+    global _time_sense_coordinator
+    if _time_sense_coordinator is None:
+        from datetime import datetime, timezone
+        from core.time_sense.observation_coordinator import TimeSenseObservationCoordinator
+
+        bridge = _get_time_sense_bridge()
+        _time_sense_coordinator = TimeSenseObservationCoordinator(
+            lambda: datetime.now(timezone.utc),
+            bridge=bridge,
+        )
+    return _time_sense_coordinator
+
+
+def get_voice_capture_mode() -> str:
+    return _capture_mode
+
+
+def get_timing_coordinator_snapshot():
+    """Content-free Time Sense coordinator snapshot (advisory only)."""
+    return _get_time_sense_coordinator().content_free_snapshot()
+
 
 
 def _sync_hikari_state_from_runtime(runtime) -> None:
@@ -404,7 +460,24 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                     continue
                 _terminate_speech_process(process)
                 runtime = _get_streaming_runtime()
-                runtime.request_interruption("barge_in_1", is_authenticated=True)
+                from core.voice_streaming.interruption_evidence import (
+                    InterruptionEvidence,
+                    InterruptionVerificationSource,
+                )
+                now_ns = runtime.now_ns()
+                evidence = InterruptionEvidence(
+                    stream_id=runtime.stream_id,
+                    interruption_id="barge_in_1",
+                    target_assistant_utterance_id=runtime.interruption_target_id(),
+                    speaker_verified=True,
+                    verification_source=InterruptionVerificationSource.SPEAKER_AUTH,
+                    speech_observed_ns=now_ns,
+                    observed_at_ns=now_ns,
+                    expires_at_ns=now_ns + 2_000_000_000,
+                )
+                if not runtime.request_interruption("barge_in_1", evidence=evidence):
+                    print("[DAEMON] Barge-in denied by runtime evidence gate", flush=True)
+                    return False
                 runtime.confirm_interruption("barge_in_1", is_confirmed=True)
                 print("[DAEMON] Speech interrupted by explicit local command", flush=True)
                 return True
@@ -598,7 +671,12 @@ def _listen_for_wake_word() -> None:
         return
 
     # Canonical runtime is the only authority before process().
-    res = runtime.process_utterance(text, is_verified_speaker=True, is_short=True)
+    res = runtime.process_utterance(
+        text,
+        is_verified_speaker=True,
+        is_short=True,
+        utterance_id=_next_utterance_id("wake"),
+    )
     _sync_hikari_state_from_runtime(runtime)
     if res.get("action") == "ignore":
         return
@@ -646,7 +724,11 @@ def _listen_for_active_command() -> None:
         return
 
     # Single canonical gate: runtime decides goodbye vs process vs ignore.
-    result = runtime.process_utterance(text, is_verified_speaker=True)
+    result = runtime.process_utterance(
+        text,
+        is_verified_speaker=True,
+        utterance_id=_next_utterance_id("active"),
+    )
     _sync_hikari_state_from_runtime(runtime)
 
     if result.get("action") == "silent_goodbye":
@@ -676,7 +758,8 @@ def listen_always() -> None:
     print("🎯 HIKARI - JARVIS Mode Active")
     print("  • Say 'hikari' to activate (when sleeping)")
     print("  • Say 'bye', 'exit', or 'goodbye' to sleep")
-    print("  • Always listening...\n")
+    print("  • Always listening...")
+    print(f"  • Capture mode: {get_voice_capture_mode()}\n")
 
     while daemon_running:
         try:
@@ -697,8 +780,16 @@ def listen_always() -> None:
 def request_shutdown(_signum=None, _frame=None) -> None:
     """Ask the owned listener loop to stop at its next boundary."""
     global daemon_running, _streaming_runtime, _time_sense_bridge
+    global _voice_audio_loop, _time_sense_coordinator, _utterance_seq, _capture_mode
 
     daemon_running = False
+    if _voice_audio_loop is not None:
+        try:
+            _voice_audio_loop.cancel()
+            _voice_audio_loop.close()
+        except Exception:
+            pass
+        _voice_audio_loop = None
     if _streaming_runtime is not None:
         try:
             _streaming_runtime.cancel_active()
@@ -706,12 +797,20 @@ def request_shutdown(_signum=None, _frame=None) -> None:
         except Exception:
             pass
         _streaming_runtime = None
+    if _time_sense_coordinator is not None:
+        try:
+            _time_sense_coordinator.clear()
+        except Exception:
+            pass
+        _time_sense_coordinator = None
     if _time_sense_bridge is not None:
         try:
             _time_sense_bridge.clear()
         except Exception:
             pass
         _time_sense_bridge = None
+    _utterance_seq = 0
+    _capture_mode = "utterance_only"
 
 
 def main() -> int:

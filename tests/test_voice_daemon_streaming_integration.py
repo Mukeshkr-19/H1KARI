@@ -23,10 +23,18 @@ def _speech_module():
 def _reset_daemon_runtime(monkeypatch):
     daemon._streaming_runtime = None
     daemon._time_sense_bridge = None
+    daemon._voice_audio_loop = None
+    daemon._time_sense_coordinator = None
+    daemon._utterance_seq = 0
+    daemon._capture_mode = "utterance_only"
     daemon.hikari_state = daemon.HikariState.LISTENING
     yield
     daemon._streaming_runtime = None
     daemon._time_sense_bridge = None
+    daemon._voice_audio_loop = None
+    daemon._time_sense_coordinator = None
+    daemon._utterance_seq = 0
+    daemon._capture_mode = "utterance_only"
     daemon.hikari_state = daemon.HikariState.LISTENING
 
 
@@ -182,3 +190,50 @@ def test_shutdown_cancels_and_clears(monkeypatch):
     runtime.start_active_listening()
     daemon.request_shutdown()
     assert daemon._streaming_runtime is None
+
+
+def test_daemon_defaults_to_utterance_mode():
+    runtime = daemon._get_streaming_runtime()
+    assert daemon.get_voice_capture_mode() == "utterance_only"
+    assert runtime.input_capability.value == "utterance_only"
+
+
+def test_shutdown_clears_utterance_and_timing_state():
+    daemon._get_streaming_runtime()
+    daemon._next_utterance_id()
+    daemon._get_time_sense_coordinator()
+    daemon.request_shutdown()
+    assert daemon._streaming_runtime is None
+    assert daemon._utterance_seq == 0
+    assert daemon._capture_mode == "utterance_only"
+
+
+def test_package_presence_cannot_force_frame_stream(monkeypatch):
+    """Installed audio package must not flip capture mode to frame_stream."""
+    class FakeFrameSource:
+        @property
+        def capability(self):
+            from core.voice_streaming.live_audio import AudioInputCapability
+            return AudioInputCapability.FRAME_STREAM
+
+    monkeypatch.setattr(
+        "core.voice_streaming.live_audio.try_create_pyaudio_source",
+        lambda **kwargs: FakeFrameSource(),
+    )
+    # Also patch where daemon imports from.
+    import core.voice_streaming.live_audio as la
+    monkeypatch.setattr(la, "try_create_pyaudio_source", lambda **kwargs: FakeFrameSource())
+    runtime = daemon._get_streaming_runtime()
+    mode = daemon._resolve_capture_mode(runtime)
+    assert mode == "utterance_only"
+    assert runtime.input_capability.value == "utterance_only"
+    assert daemon.get_voice_capture_mode() == "utterance_only"
+
+
+def test_daemon_uses_public_set_input_capability():
+    runtime = daemon._get_streaming_runtime()
+    result = runtime.set_input_capability(
+        __import__("core.voice_streaming.live_audio", fromlist=["AudioInputCapability"]).AudioInputCapability.FRAME_STREAM,
+        frame_loop_open=False,
+    )
+    assert result["capability"] == "utterance_only"

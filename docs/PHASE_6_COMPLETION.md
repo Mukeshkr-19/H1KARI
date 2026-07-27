@@ -16,6 +16,10 @@ Phase 6's safe engineering baseline is complete. HIKARI now contains:
 - pure streaming-voice/VAD/turn-taking and conversational Time Sense foundations
 - strict Phase 6 command-center transport, reducer, and accessible UI components
 - disabled-by-default injected adapter scaffolding with adversarial authority tests
+- a server-wired, fail-closed `Phase6Subsystem` for command-center status,
+  bounded agent runs, exact Home Assistant confirmation, and proposal cancellation
+- disabled-by-default live backend implementations for Home Assistant, encrypted
+  sync state, remote-worker state, skill archive inspection, and measured routing
 
 The runtime defaults are deliberately restrictive. Starting HIKARI does not
 enable agent execution, remote workers, skill installation, Home Assistant
@@ -42,8 +46,9 @@ and environment-specific acceptance testing.
 
 Verified on Python 3.12:
 
-- New streaming voice, Time Sense, adapter, and transport focused suite: `197 passed`
-- Full backend suite: `5067 passed, 1 skipped`, plus `5` subtests
+- Full backend run: `5272 passed, 1 skipped`, plus `5` subtests; the sole
+  sandbox-denied loopback socket case passed separately with local bind permission
+- Home Assistant deadline and adapter regression suite: `72 passed`
 - Frontend unit suite: `239 passed`; Phase 5 pretest: `7 passed`; Phase 6
   protocol/reducer suite: `13 passed`
 - Frontend lint: clean
@@ -64,8 +69,10 @@ Verified on Python 3.12:
   behavior. Each needs its own configured integration test before activation.
 - Long-duration voice/full-duplex and background-daemon testing remains part of
   the final device-specific manual checklist.
-- Streaming voice remains metadata/state-machine infrastructure: live mic VAD,
-  platform AEC, daemon/orchestrator wiring, and robust full-duplex transport are
-  not claimed.
-- The command center is not yet registered in the live WebSocket server or
-  mounted as a production control surface.
+- Canonical streaming-voice wake/sleep/goodbye/interruption authority is wired
+  into the daemon, but a production live-frame microphone source, verified
+  platform AEC, hardware playback-stop signaling, and robust real-device
+  full-duplex behavior are not claimed.
+- The command center is registered in the WebSocket server and mounted in the
+  frontend. Its live integrations remain unavailable unless an explicitly
+  configured, policy-governed subsystem and adapter are injected.

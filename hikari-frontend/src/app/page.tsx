@@ -92,6 +92,19 @@ import {
   reducePhase5State,
   type Phase5State,
 } from "@/utils/phase5/phase5State";
+import { Phase6CommandCenter } from "@/components/phase6/Phase6CommandCenter";
+import {
+  parsePhase6ServerMessage,
+  buildHomeAssistantConfirmRequest,
+  generatePhase6RequestId,
+} from "@/utils/phase6/phase6Protocol";
+import {
+  INITIAL_PHASE6_STATE,
+  reducePhase6State,
+  clearSensitivePhase6Data,
+  type Phase6State,
+} from "@/utils/phase6/phase6State";
+
 import {
   createInitialProposalLifecycleState,
   reduceProposalLifecycle,
@@ -2147,6 +2160,15 @@ export default function Home() {
     setPhase5State(next);
   }, []);
 
+  const [phase6State, setPhase6State] = useState<Phase6State>(INITIAL_PHASE6_STATE);
+  const phase6StateRef = useRef<Phase6State>(INITIAL_PHASE6_STATE);
+
+  const applyPhase6State = useCallback((next: Phase6State) => {
+    phase6StateRef.current = next;
+    setPhase6State(next);
+  }, []);
+
+
   const sendPhase5 = useCallback((type: string, fields: Record<string, unknown>) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
@@ -2880,6 +2902,16 @@ export default function Home() {
     };
 
     ws.onmessage = (event) => {
+      const phase6Message = parsePhase6ServerMessage(event.data);
+      if (phase6Message) {
+        applyPhase6State(
+          reducePhase6State(phase6StateRef.current, {
+            type: "phase6/apply_server",
+            message: phase6Message,
+          }),
+        );
+        return;
+      }
       const phase5Message = parsePhase5ServerMessage(event.data);
       if (phase5Message) {
         applyPhase5State(
@@ -3082,6 +3114,7 @@ export default function Home() {
       clearProductivityLifecycle();
       clearScheduledJobsState();
       resetPhase4State();
+      applyPhase6State(clearSensitivePhase6Data(phase6StateRef.current));
       speechOutputRef.current?.cancel();
       speechOutputRef.current?.clearLastVoiceResponse();
       cancelVoiceCapture();
@@ -3089,7 +3122,7 @@ export default function Home() {
       setIsPaired(false);
       setTimeout(connect, 3000);
     };
-  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState, applyPhase4ServerMessage, resetPhase4State, applyPhase5State]);
+  }, [serverUrl, pairingCode, applyCompanionUpdate, syncCompanionPrefs, resetVoiceCompanion, cancelVoiceCapture, forgetDocumentTask, rememberDocumentTask, failDocumentPrepare, applyProductivityMessage, clearProductivityLifecycle, applyScheduledJobsMessage, clearScheduledJobsState, applyPhase4ServerMessage, resetPhase4State, applyPhase5State, applyPhase6State]);
 
 
   const activatePhase5OwnerSession = useCallback(() => {
@@ -3735,6 +3768,52 @@ export default function Home() {
               onCreateHelperGrant={createPhase5HelperGrant}
               onListHelperGrants={listPhase5HelperGrants}
               onRevokeHelperGrant={revokePhase5HelperGrant}
+            />
+
+            <Phase6CommandCenter
+              state={phase6State}
+              onSendClientFrame={(frame) => {
+                const ws = wsRef.current;
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                const requestId = generatePhase6RequestId();
+                applyPhase6State(
+                  reducePhase6State(phase6StateRef.current, {
+                    type: "phase6/begin_request",
+                    requestId,
+                  }),
+                );
+                ws.send(
+                  JSON.stringify(
+                    typeof frame === "object" && frame !== null
+                      ? { ...(frame as Record<string, unknown>), request_id: requestId }
+                      : { type: "phase6_integration_list_request", request_id: requestId, protocol_version: 1 }
+                  )
+                );
+              }}
+              onConfirmHomeAssistant={(proposalId, nonce) => {
+                const ws = wsRef.current;
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                const requestId = generatePhase6RequestId();
+                applyPhase6State(
+                  reducePhase6State(phase6StateRef.current, {
+                    type: "phase6/confirm_home_assistant",
+                    proposalId,
+                    nonce,
+                  }),
+                );
+                ws.send(
+                  JSON.stringify(
+                    buildHomeAssistantConfirmRequest(requestId, proposalId, nonce)
+                  )
+                );
+              }}
+              onDismissError={() => {
+                applyPhase6State(
+                  reducePhase6State(phase6StateRef.current, {
+                    type: "phase6/dismiss_error",
+                  })
+                );
+              }}
             />
             {handoffState.status === "accepted" &&
               visionAnalysisState.status === "awaiting_image" && (

@@ -2,9 +2,9 @@
 
 Status: active implementation authority
 
-Version: 1.0
+Version: 1.1
 
-Updated: 2026-07-13
+Updated: 2026-07-26
 
 Repository: H1KARI
 Product and runtime name: HIKARI / `hikari`
@@ -85,13 +85,19 @@ External project documentation is evidence, not authority. Repository behavior i
 
 ### 7.1 Protected branch model
 
-- `main` is frozen for this program and is not an implementation target.
-- `develop` is the only integration branch for this program.
-- Every coherent work package starts from the latest verified `develop`.
-- Work branches use a focused prefix such as `docs/`, `audit/`, `infra/`, `core/`, `brain/`, `safety/`, `voice/`, `frontend/`, or `integration/`.
-- Work branches merge into `develop` only after their required gates pass.
-- Nothing merges from `develop` to `main` without a separate, explicit owner decision.
-- Only the designated release operator pushes program branches.
+- `main` is the reviewed release branch; `develop` is its synchronized
+  integration mirror and must finish each release at the same commit.
+- External implementation tools work in the shared checkout only inside an
+  exclusive file allowlist. They do not stage, commit, switch branches, merge,
+  rebase, stash, reset, fetch, pull, push, or change Git configuration.
+- Concurrent dirty files belong to their assigned tool until the final review;
+  no tool may overwrite or clean another tool's work.
+- Mira is the designated release operator: she reviews the combined diff,
+  repairs cross-workstream defects, runs the complete gates, scans public
+  artifacts and private-data boundaries, creates the release commit, pushes
+  `main`, then fast-forwards and pushes `develop`.
+- Focused work branches remain available for exceptional isolated changes, but
+  they never bypass the same final review and release gates.
 
 ### 7.2 Existing branch intake
 

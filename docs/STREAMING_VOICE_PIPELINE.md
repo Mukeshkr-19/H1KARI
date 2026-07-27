@@ -1,51 +1,94 @@
 # Streaming Voice Pipeline
 
-## Canonical runtime
+## Canonical authority
 
-**Production authority:** `core.voice_streaming.runtime.VoiceStreamingRuntime`
+`core.voice_streaming.runtime.VoiceStreamingRuntime` is the only production
+wake/sleep/turn authority. `core.streaming_voice` is a compatibility/policy
+facade. The daemon may call `process()` only when
+`process_utterance(...).action == "process_command"`.
 
-This is the daemon-facing runtime already used by `services/hikari_daemon.py`.
-It owns wake/sleep/turn gating via `VoiceStreamStateMachine` before any
-`process()` / orchestrator call.
+## Live audio frames
 
-**Compatibility facade:** `core.streaming_voice.TurnStateMachine`
+`core.voice_streaming.live_audio` defines injected frame-source contracts:
 
-Bounded contracts (AEC negotiation, barge-in correlation, backpressure,
-metadata VAD, transcript segments) live under `core/streaming_voice/`.
-Turn/wake APIs there **delegate** to `VoiceStreamingRuntime` and must not keep
-independent mutable wake/sleep authority.
+- `AudioInputCapability`: unavailable | utterance_only | frame_stream
+- `LiveAudioFrame` / `AudioFrameSource` / `VoiceAudioLoop`
 
-There is no third voice runtime.
+Importing the module never opens a microphone. Default construction is
+unavailable. Optional PyAudio probing stays unavailable; package presence is
+not hardware evidence. Production capture mode remains `utterance_only` unless
+an injected frame source is opened and driven by a real frame loop via
+`set_input_capability(..., frame_loop_open=True)`.
 
-## Guarantees
+### Replay guarantee
 
-- While sleeping / wake-listening, ordinary speech never reaches the orchestrator.
-- Wake requires verified wake evidence and speaker verification at the daemon boundary.
-- Same-utterance `Hikari, <command>` executes once after wake + speaker checks.
-- Exact sleep phrases return to wake-listening without `process()` or `speak()`.
-- Wake grants no tool, memory, or action authority.
-- No raw audio in reprs, metrics summaries, or protocol-facing state.
-- Missing/unverified AEC selects honest half duplex; never claims active AEC
-  without negotiated evidence.
-- Cancellation clears transcript, interruption, and response correlation state.
+Seen frame IDs are tracked in a bounded deque+set. When capacity is reached,
+further frames are rejected with `BOUND_EXCEEDED` until the loop is
+reset/closed for a new stream/session. IDs are never silently evicted
+mid-session, so an old frame cannot be replayed within the active security
+window.
 
-## VAD / AEC truthfulness
+### Staleness
 
-SpeechRecognition in the daemon provides complete utterances, not live
-frame-level VAD. Frame/VAD engines in `voice_streaming` are deterministic
-contracts for injected measurements — not a claim of production mic VAD.
-AEC modes are capability contracts / echo policy only — not live DSP.
+Every frame — including the first — is checked against the injected `now`.
+Stale and future frames are rejected without advancing canonical sequence
+state. Duplicate, out-of-order, and cross-stream failures remain distinct.
 
-## Daemon gating flow
+## Frame → VAD
 
-1. Capture + STT (daemon)
-2. Wake extract / speaker verify (daemon)
-3. `VoiceStreamingRuntime.process_utterance(...)` (canonical gate)
-4. Only `action == process_command` may call `process()`
-5. `silent_goodbye` returns to wake-listening without orchestrator or speech
+`ingest_live_frame` feeds the canonical pipeline + VAD. VAD advises boundaries
+only and never calls the orchestrator. Sleeping speech can produce VAD evidence
+but cannot process commands. During assistant playback, frames may update
+barge-in observation only and never orchestrate.
 
-## Mira-owned next steps
+## Barge-in evidence
 
-- Platform AEC verification hooks into `report_aec_status` / `EchoCapability`
-- Optional frame-level VAD backend injection (honest availability flags)
-- Frontend accessibility binding to `get_accessibility_state()`
+`request_interruption` never trusts caller booleans such as `is_authenticated`.
+Authorization requires an immutable `InterruptionEvidence` bound to stream,
+interruption id, target utterance/response, verified speaker, verification
+source, speech/observation timestamps, and expiry. Speech must be observed
+**after** assistant playback began. Prior command VAD/`_last_vad_speech_ns`
+cannot authorize barge-in. Frame-stream mode additionally requires fresh
+post-playback barge VAD. Utterance-only mode requires the evidence object and
+does not invent frame-level VAD.
+
+### Assistant playback correlation
+
+Facade code must not assign canonical private fields. Use:
+
+- `VoiceStreamingRuntime.bind_assistant_playback(utterance_id, response_id)`
+- `VoiceStreamingRuntime.clear_assistant_playback(expected_response_id=...)`
+
+Binding is allowed only in thinking/speaking, is idempotent for an exact match,
+rejects conflicts, and never changes wake/sleep authority.
+`interruption_target_id()` remains the authoritative interruption target.
+
+### Compatibility facade (`TurnStateMachine.interrupt`)
+
+The facade accepts an `InterruptionEvent` plus required `InterruptionEvidence`.
+Missing evidence or `is_authenticated=...` alone is denied with no drain.
+Evidence must correlate to the event (interruption id, session/stream,
+observation timestamp) and the active assistant utterance/response. The
+facade forwards the exact evidence to `VoiceStreamingRuntime` and sets
+draining only after the runtime accepts the request. Physical playback stop
+is confirmed only via `notify_playback_stopped` before `finish_drain`.
+
+## AEC / duplex honesty
+
+Default AEC is unavailable → half duplex. Full duplex requires injected
+`PlatformAecEvidence` that is available, enabled, verified, and bound to the
+active stream/device with a fresh timestamp. AEC loss or capability downgrade
+returns to half duplex immediately. No fake DSP flags.
+
+## Privacy
+
+`LiveAudioFrame.__repr__` and runtime events omit transcript text, speaker
+identifiers, request identifiers, raw device identifiers, and sensitive
+correlation values. Events use booleans, bounded counts, and stable
+classifications.
+
+## Daemon
+
+Capability-derived capture mode defaults to utterance-only SpeechRecognition.
+Exactly one capture path; exactly one `process()` per authorized utterance.
+Shutdown cancels audio/VAD/transcript/timing state and resets utterance IDs.

@@ -39,6 +39,17 @@ from core.voice_streaming.frame_pipeline import (
     FramePipelineConfig,
     FramePipelineMetrics,
 )
+from core.voice_streaming.frame_pipeline import AudioFrameMetadata
+from core.voice_streaming.live_audio import (
+    AudioInputCapability,
+    LiveAudioFrame,
+    VoiceAudioLoop,
+)
+from core.voice_streaming.aec_evidence import (
+    AecEvidenceGate,
+    PlatformAecEvidence,
+)
+from core.voice_streaming.interruption_evidence import InterruptionEvidence
 from core.voice_streaming.state import VoiceStreamStateMachine
 from core.voice_streaming.transcript import StreamingTranscriptAccumulator
 from core.voice_streaming.vad import (
@@ -193,7 +204,17 @@ class VoiceStreamingRuntime:
         self._seen_utterance_keys: set[str] = set()
         self._max_utterance_keys = max(16, min(self.config.max_history, 256))
         self._active_response_id: Optional[str] = None
+        self._active_utterance_id: Optional[str] = None
         self._cancelled = False
+        self._audio_loop: Optional[VoiceAudioLoop] = None
+        self._aec_gate = AecEvidenceGate(stream_id=self.stream_id, device_id="default")
+        self._device_id = "default"
+        self._last_vad_speech_ns: int = 0  # command-path only; never barge-in proof
+        self._barge_speech_ns: int = 0  # speech observed during assistant playback
+        self._playback_started_ns: int = 0
+        self._seen_interruption_ids: set[str] = set()
+        self._max_interruption_ids = 64
+        self._input_capability = AudioInputCapability.UTTERANCE_ONLY
         # Honest default: no verified AEC until platform reports evidence.
         self._aec_negotiator.report(AecStatus.UNAVAILABLE)
 
@@ -403,6 +424,8 @@ class VoiceStreamingRuntime:
             )
             if not wake_ok:
                 return {"action": "ignore", "reason": "wake_transition_failed"}
+            # Command-path speech must not authorize later barge-in.
+            self._last_vad_speech_ns = t1
 
             if wake_cmd:
                 t2 = self.now_ns()
@@ -441,10 +464,15 @@ class VoiceStreamingRuntime:
                     self.reset_to_wake_listening(self.now_ns())
                     return {"action": "ignore", "reason": "duplicate_utterance"}
                 self._emit_event("process_same_utterance_command", {}, t5)
+                if utterance_id is not None:
+                    self._active_utterance_id = utterance_id
+                command = wake_cmd
+                self.clear_turn_transcript()
                 return {
                     "action": "process_command",
-                    "command": wake_cmd,
+                    "command": command,
                     "speaker_verified": True,
+                    "utterance_id": utterance_id,
                 }
             else:
                 self._emit_event("wake_acknowledge", {}, t1)
@@ -470,6 +498,7 @@ class VoiceStreamingRuntime:
                 return {"action": "silent_goodbye", "reason": "stop_command"}
 
             t1 = self.now_ns()
+            self._last_vad_speech_ns = t1
             self.state_machine.transition_to(
                 VoiceStreamState.USER_SPEAKING,
                 event_type="active_command_received",
@@ -504,10 +533,15 @@ class VoiceStreamingRuntime:
             ):
                 return {"action": "ignore", "reason": "duplicate_utterance"}
             self._emit_event("process_active_command", {}, t4)
+            if utterance_id is not None:
+                self._active_utterance_id = utterance_id
+            command = text
+            self.clear_turn_transcript()
             return {
                 "action": "process_command",
-                "command": text,
+                "command": command,
                 "speaker_verified": True,
+                "utterance_id": utterance_id,
             }
 
         return {"action": "ignore", "reason": "invalid_state"}
@@ -524,7 +558,11 @@ class VoiceStreamingRuntime:
                 reason="Preparing to speak",
             )
         t2 = self.now_ns()
-        return self.state_machine.assistant_speaking_start(t2)
+        ok = self.state_machine.assistant_speaking_start(t2)
+        if ok:
+            self._playback_started_ns = t2
+            self._barge_speech_ns = 0
+        return ok
 
     def add_assistant_segment(self, text: str, monotonic_ns: Optional[int] = None) -> bool:
         """Add assistant response segment."""
@@ -540,32 +578,123 @@ class VoiceStreamingRuntime:
 
     def request_interruption(
         self,
-        request_id: str,
+        request_id: str = "",
         *,
-        is_authenticated: bool,
+        evidence: Optional[InterruptionEvidence] = None,
+        is_authenticated: Optional[bool] = None,
         speaker_id: Optional[str] = None,
         monotonic_ns: Optional[int] = None,
     ) -> bool:
-        """Request barge-in during assistant playback. Fails closed if unauthenticated."""
-        ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
+        """Request barge-in during assistant playback.
+
+        Caller-supplied ``is_authenticated`` / ``speaker_id`` are never trusted.
+        Authorization requires a verified ``InterruptionEvidence`` object.
+        """
+        del is_authenticated, speaker_id  # intentionally ignored
         now = self.now_ns()
-        if ts > now + 1_000_000_000 or (self._last_monotonic_ns and ts + 30_000_000_000 < self._last_monotonic_ns):
-            self._emit_event("interruption_stale_or_future", {}, now)
+        if evidence is None:
+            self._emit_event("interruption_denied", {"reason": "missing_evidence"}, now)
             return False
+        if not isinstance(evidence, InterruptionEvidence):
+            self._emit_event("interruption_denied", {"reason": "invalid_evidence"}, now)
+            return False
+
+        # Prefer evidence timestamps; optional monotonic_ns must not widen trust.
+        ts = evidence.observed_at_ns
+        if monotonic_ns is not None:
+            try:
+                mono = validate_monotonic_ns(monotonic_ns)
+            except Exception:
+                self._emit_event("interruption_denied", {"reason": "invalid_timestamp"}, now)
+                return False
+            if mono != evidence.observed_at_ns:
+                self._emit_event("interruption_denied", {"reason": "timestamp_mismatch"}, now)
+                return False
+
+        if request_id and request_id != evidence.interruption_id:
+            self._emit_event("interruption_denied", {"reason": "request_mismatch"}, now)
+            return False
+
+        if self.state != VoiceStreamState.ASSISTANT_SPEAKING:
+            reason = "playback_not_active"
+            if self.state == VoiceStreamState.WAKE_LISTENING:
+                reason = "sleeping"
+            self._emit_event("interruption_denied", {"reason": reason}, now)
+            return False
+
+        if self._playback_started_ns <= 0:
+            self._emit_event("interruption_denied", {"reason": "playback_not_active"}, now)
+            return False
+
+        if evidence.stream_id != self.stream_id:
+            self._emit_event("interruption_denied", {"reason": "cross_stream"}, now)
+            return False
+
+        if not evidence.speaker_verified:
+            self._emit_event("interruption_denied", {"reason": "unverified_speaker"}, now)
+            return False
+
+        if evidence.observed_at_ns > now + 1_000_000_000:
+            self._emit_event("interruption_denied", {"reason": "future_evidence"}, now)
+            return False
+        if evidence.expires_at_ns < now:
+            self._emit_event("interruption_denied", {"reason": "stale_evidence"}, now)
+            return False
+        if evidence.speech_observed_ns <= self._playback_started_ns:
+            # Prior command speech (even within 2s) cannot authorize barge-in.
+            self._emit_event("interruption_denied", {"reason": "speech_before_playback"}, now)
+            return False
+        if now - evidence.speech_observed_ns > 2_000_000_000:
+            self._emit_event("interruption_denied", {"reason": "stale_speech"}, now)
+            return False
+
+        target = evidence.target_assistant_utterance_id
+        allowed_targets: set[str] = set()
+        if self._active_utterance_id is not None:
+            allowed_targets.add(self._active_utterance_id)
+        if self._active_response_id is not None:
+            allowed_targets.add(self._active_response_id)
+        if not allowed_targets:
+            allowed_targets = {self.stream_id, "assistant_playback"}
+        if target not in allowed_targets:
+            self._emit_event("interruption_denied", {"reason": "wrong_utterance"}, now)
+            return False
+
+        if evidence.interruption_id in self._seen_interruption_ids:
+            self._emit_event("interruption_denied", {"reason": "duplicate_interruption"}, now)
+            return False
+
+        if self._input_capability == AudioInputCapability.FRAME_STREAM:
+            # Frame mode requires live barge VAD after playback began.
+            if (
+                self._barge_speech_ns <= self._playback_started_ns
+                or (now - self._barge_speech_ns) > 2_000_000_000
+            ):
+                self._emit_event("interruption_denied", {"reason": "vad_stale"}, now)
+                return False
+        # Utterance-only: evidence object is the speech proof; do not invent frames.
+
+        if len(self._seen_interruption_ids) >= self._max_interruption_ids:
+            self._emit_event("interruption_denied", {"reason": "bound_exceeded"}, now)
+            return False
+
         req = InterruptionRequest(
             stream_id=self.stream_id,
-            request_id=request_id,
+            request_id=evidence.interruption_id,
             monotonic_ns=ts,
-            is_authenticated=is_authenticated,
-            speaker_id=speaker_id,
+            is_authenticated=True,  # derived only after evidence gates pass
+            speaker_id=None,
         )
         ok = self.state_machine.request_interruption(req)
         if ok:
+            self._seen_interruption_ids.add(evidence.interruption_id)
             self._emit_event(
                 "interruption_requested",
-                {"request_id": request_id, "speaker_id": speaker_id},
+                {"accepted": True, "source": evidence.verification_source.value},
                 ts,
             )
+        else:
+            self._emit_event("interruption_denied", {"reason": "state_reject"}, now)
         return ok
 
     def confirm_interruption(
@@ -589,7 +718,7 @@ class VoiceStreamingRuntime:
         if ok and is_confirmed:
             self._emit_event(
                 "interruption_confirmed",
-                {"request_id": request_id},
+                {"accepted": True, "confirmed": True},
                 ts,
             )
         return ok
@@ -601,6 +730,7 @@ class VoiceStreamingRuntime:
         self.vad_engine.reset()
         self.state_machine.active_interruption_request = None
         self._active_response_id = None
+        self._active_utterance_id = None
         return self.state_machine.transition_to(
             VoiceStreamState.WAKE_LISTENING,
             event_type="reset_to_wake_listening",
@@ -617,13 +747,317 @@ class VoiceStreamingRuntime:
         self._runtime_events.clear()
         self._seen_utterance_keys.clear()
         self._active_response_id = None
+        self._active_utterance_id = None
         self._cancelled = False
+        self._last_vad_speech_ns = 0
+        self._barge_speech_ns = 0
+        self._playback_started_ns = 0
+        self._seen_interruption_ids.clear()
+        self._aec_gate.clear()
+        if self._audio_loop is not None:
+            try:
+                self._audio_loop.close()
+            except Exception:
+                pass
+            self._audio_loop = None
+            self.set_input_capability(AudioInputCapability.UTTERANCE_ONLY, frame_loop_open=False)
 
     def close(self) -> None:
         """Close runtime pipeline and state machine."""
         self.pipeline.close()
         self.vad_engine.close()
         self.reset_to_wake_listening()
+
+
+    def attach_audio_loop(self, loop: VoiceAudioLoop) -> None:
+        """Attach an injected live-audio loop. Does not open the microphone."""
+        if not isinstance(loop, VoiceAudioLoop):
+            raise TypeError("loop_must_be_VoiceAudioLoop")
+        if loop.stream_id != self.stream_id:
+            raise ValueError("cross_stream_audio_loop")
+        self._audio_loop = loop
+        snap = loop.snapshot()
+        frame_open = (
+            snap.open
+            and not snap.closed
+            and not snap.cancelled
+            and loop.capability == AudioInputCapability.FRAME_STREAM
+        )
+        self.set_input_capability(
+            AudioInputCapability.FRAME_STREAM if frame_open else AudioInputCapability.UTTERANCE_ONLY,
+            frame_loop_open=frame_open,
+        )
+
+    def set_input_capability(
+        self,
+        capability: AudioInputCapability,
+        *,
+        frame_loop_open: bool = False,
+    ) -> Dict[str, Any]:
+        """Public capability update. FRAME_STREAM requires an opened frame loop."""
+        if not isinstance(capability, AudioInputCapability):
+            raise TypeError("invalid_capability")
+        if not isinstance(frame_loop_open, bool):
+            raise TypeError("invalid_frame_loop_open")
+        reason = "ok"
+        applied = capability
+        if capability == AudioInputCapability.FRAME_STREAM and not frame_loop_open:
+            applied = AudioInputCapability.UTTERANCE_ONLY
+            reason = "frame_stream_requires_open_loop"
+        prev = self._input_capability
+        self._input_capability = applied
+        if applied != AudioInputCapability.FRAME_STREAM and prev == AudioInputCapability.FRAME_STREAM:
+            # Downgrade clears incompatible AEC/full-duplex claims.
+            self.mark_aec_lost()
+        self._emit_event(
+            "input_capability",
+            {
+                "capability": applied.value,
+                "frame_loop_open": bool(
+                    frame_loop_open and applied == AudioInputCapability.FRAME_STREAM
+                ),
+                "reason": reason,
+            },
+            self.now_ns(),
+        )
+        return {
+            "accepted": reason == "ok",
+            "capability": applied.value,
+            "reason": reason,
+        }
+
+    @property
+    def input_capability(self) -> AudioInputCapability:
+        return self._input_capability
+
+    def interruption_target_id(self) -> str:
+        """Stable correlation target for interruption evidence binding."""
+        if self._active_utterance_id is not None:
+            return self._active_utterance_id
+        if self._active_response_id is not None:
+            return self._active_response_id
+        return "assistant_playback"
+
+    def _validate_playback_correlation_id(self, value: object, *, name: str) -> Optional[str]:
+        if (
+            not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value)
+        ):
+            return None
+        return value
+
+    def bind_assistant_playback(self, utterance_id: str, response_id: str) -> bool:
+        """Bind assistant utterance/response correlation for interruption targeting.
+
+        Allowed only in THINKING or ASSISTANT_SPEAKING. Does not change wake/sleep
+        authority. Identical re-bind is idempotent; conflicting bind fails closed.
+        """
+        now = self.now_ns()
+        uid = self._validate_playback_correlation_id(utterance_id, name="utterance_id")
+        rid = self._validate_playback_correlation_id(response_id, name="response_id")
+        if uid is None or rid is None:
+            self._emit_event(
+                "assistant_playback_bind",
+                {"accepted": False, "reason": "invalid_id"},
+                now,
+            )
+            return False
+        if self.state not in (
+            VoiceStreamState.THINKING,
+            VoiceStreamState.ASSISTANT_SPEAKING,
+        ):
+            self._emit_event(
+                "assistant_playback_bind",
+                {"accepted": False, "reason": "invalid_state"},
+                now,
+            )
+            return False
+        if self._active_utterance_id is not None or self._active_response_id is not None:
+            if (
+                self._active_utterance_id == uid
+                and self._active_response_id == rid
+            ):
+                self._emit_event(
+                    "assistant_playback_bind",
+                    {"accepted": True, "reason": "idempotent"},
+                    now,
+                )
+                return True
+            self._emit_event(
+                "assistant_playback_bind",
+                {"accepted": False, "reason": "conflict"},
+                now,
+            )
+            return False
+        self._active_utterance_id = uid
+        self._active_response_id = rid
+        self._emit_event(
+            "assistant_playback_bind",
+            {"accepted": True, "reason": "ok"},
+            now,
+        )
+        return True
+
+    def clear_assistant_playback(self, *, expected_response_id: Optional[str] = None) -> bool:
+        """Clear assistant playback correlation for an exact response match.
+
+        Canonical cancel/reset paths clear internally. Callers must supply the
+        expected response id; mismatched or missing expected ids fail closed.
+        """
+        now = self.now_ns()
+        if self._active_utterance_id is None and self._active_response_id is None:
+            self._emit_event(
+                "assistant_playback_clear",
+                {"cleared": False, "reason": "already_clear"},
+                now,
+            )
+            return True
+        if expected_response_id is None:
+            self._emit_event(
+                "assistant_playback_clear",
+                {"cleared": False, "reason": "missing_expected"},
+                now,
+            )
+            return False
+        rid = self._validate_playback_correlation_id(
+            expected_response_id, name="expected_response_id"
+        )
+        if rid is None:
+            self._emit_event(
+                "assistant_playback_clear",
+                {"cleared": False, "reason": "invalid_id"},
+                now,
+            )
+            return False
+        if rid != self._active_response_id:
+            self._emit_event(
+                "assistant_playback_clear",
+                {"cleared": False, "reason": "stale_or_cross_response"},
+                now,
+            )
+            return False
+        self._active_utterance_id = None
+        self._active_response_id = None
+        self._emit_event(
+            "assistant_playback_clear",
+            {"cleared": True, "reason": "ok"},
+            now,
+        )
+        return True
+
+    def set_device_id(self, device_id: str) -> None:
+        if not isinstance(device_id, str) or not device_id or len(device_id) > 128:
+            raise ValueError("invalid_device_id")
+        self._device_id = device_id
+        self._aec_gate = AecEvidenceGate(stream_id=self.stream_id, device_id=device_id)
+
+    def ingest_live_frame(self, frame: LiveAudioFrame) -> Dict[str, Any]:
+        """Feed one live frame into pipeline + VAD. Never calls orchestrator."""
+        if not isinstance(frame, LiveAudioFrame):
+            return {"accepted": False, "reason": "invalid_frame"}
+        if frame.stream_id != self.stream_id:
+            return {"accepted": False, "reason": "cross_stream"}
+        if self.state == VoiceStreamState.ASSISTANT_SPEAKING:
+            # Observe barge-in speech only; never orchestrate during playback.
+            peak = max(frame.pcm) if frame.pcm else 0
+            speech_p = min(1.0, peak / 128.0) if frame.sample_width == 1 else min(1.0, peak / 255.0)
+            barge_observed = speech_p >= 0.35
+            if barge_observed and frame.monotonic_ns > self._playback_started_ns:
+                self._barge_speech_ns = frame.monotonic_ns
+            self._emit_event(
+                "live_frame_playback_observe",
+                {"barge_observed": barge_observed, "can_orchestrate": False},
+                frame.monotonic_ns,
+            )
+            return {
+                "accepted": False,
+                "reason": "assistant_playback_active",
+                "barge_observed": barge_observed,
+                "can_orchestrate": False,
+            }
+
+        meta = AudioFrameMetadata(
+            stream_id=frame.stream_id,
+            sequence_id=frame.sequence,
+            monotonic_ns=frame.monotonic_ns,
+            sample_rate=frame.sample_rate,
+            channels=frame.channels,
+            sample_width=frame.sample_width,
+            duration_ms=max(
+                1.0,
+                (len(frame.pcm) / float(frame.sample_rate * frame.channels * frame.sample_width))
+                * 1000.0,
+            ),
+            payload_bytes=len(frame.pcm),
+        )
+        audio_frame = AudioFrame(meta, frame.pcm)
+        ok, reason = self.pipeline.push_frame(audio_frame)
+        if not ok:
+            return {"accepted": False, "reason": reason or "pipeline_reject"}
+
+        peak = max(frame.pcm) if frame.pcm else 0
+        speech_p = min(1.0, peak / 128.0) if frame.sample_width == 1 else min(1.0, peak / 255.0)
+        measurement = VADFrameMeasurement(
+            sequence_id=frame.sequence,
+            monotonic_ns=frame.monotonic_ns,
+            speech_probability=speech_p,
+            energy_db=-60.0 + (speech_p * 40.0),
+            frame_duration_ms=meta.duration_ms,
+        )
+        vad_state, transition = self.process_vad_measurement(
+            measurement,
+            assistant_speaking=(self.state == VoiceStreamState.ASSISTANT_SPEAKING),
+        )
+        if vad_state.value in {"confirmed_speech", "possible_speech", "interruption_candidate"}:
+            self._last_vad_speech_ns = frame.monotonic_ns
+        self._emit_event(
+            "live_frame_ingested",
+            {
+                "sequence": frame.sequence,
+                "vad_state": vad_state.value,
+                "transition": transition.new_state.value if transition else None,
+            },
+            frame.monotonic_ns,
+        )
+        return {
+            "accepted": True,
+            "reason": "ok",
+            "vad_state": vad_state.value,
+            "wake_listening": self.is_wake_listening,
+            "can_orchestrate": False,
+        }
+
+    def submit_platform_aec_evidence(self, evidence: PlatformAecEvidence) -> Dict[str, Any]:
+        now = self.now_ns()
+        decision = self._aec_gate.accept(evidence, now_ns=now)
+        if not decision.accepted:
+            self.set_echo_capability(EchoCapability())
+            from core.streaming_voice.aec import AecStatus
+            self._aec_negotiator.report(AecStatus.UNAVAILABLE)
+            return {"accepted": False, "reason": decision.reason, "full_duplex": False}
+        self.set_echo_capability(evidence.to_echo_capability())
+        from core.streaming_voice.aec import AecStatus
+        if evidence.supports_full_duplex:
+            self._aec_negotiator.report(AecStatus.AVAILABLE, vendor_label="platform")
+            self._aec_negotiator.negotiate()
+        else:
+            self._aec_negotiator.report(AecStatus.UNAVAILABLE)
+        return {
+            "accepted": True,
+            "reason": "ok",
+            "full_duplex": decision.full_duplex and self.duplex_mode() == "full_duplex",
+        }
+
+    def mark_aec_lost(self) -> None:
+        """AEC loss during playback immediately returns to half duplex."""
+        self._aec_gate.mark_lost()
+        self.set_echo_capability(EchoCapability())
+        from core.streaming_voice.aec import AecStatus
+        self._aec_negotiator.report(AecStatus.UNAVAILABLE)
+        self._emit_event("aec_lost", {}, self.now_ns())
+
+    def clear_turn_transcript(self) -> None:
+        self.accumulator.reset()
 
     def allows_orchestrator_process(self) -> bool:
         """True only when the canonical runtime is in an active command path."""
@@ -644,7 +1078,8 @@ class VoiceStreamingRuntime:
         from core.streaming_voice.contracts import DuplexMode as StreamingDuplexMode
         decision = self.evaluate_echo_policy()
         aec = self._aec_negotiator.capability
-        if decision.full_duplex_safe and aec.echo_cancellation_active:
+        gate_ok = bool(self._aec_gate.current and self._aec_gate.current.supports_full_duplex)
+        if decision.full_duplex_safe and aec.echo_cancellation_active and gate_ok:
             return StreamingDuplexMode.FULL_DUPLEX.value
         return StreamingDuplexMode.HALF_DUPLEX.value
 
@@ -678,9 +1113,18 @@ class VoiceStreamingRuntime:
         ts = monotonic_ns if monotonic_ns is not None else self.now_ns()
         self._cancelled = True
         self._active_response_id = None
+        self._active_utterance_id = None
         self.accumulator.reset()
         self.vad_engine.reset()
         self.state_machine.active_interruption_request = None
+        self._last_vad_speech_ns = 0
+        self._barge_speech_ns = 0
+        self._playback_started_ns = 0
+        if self._audio_loop is not None:
+            try:
+                self._audio_loop.cancel()
+            except Exception:
+                pass
         ok = self.state_machine.transition_to(
             VoiceStreamState.WAKE_LISTENING,
             event_type="cancel_active",
@@ -705,6 +1149,7 @@ class VoiceStreamingRuntime:
             "echo_cancellation_active": self.echo_cancellation_active(),
             "history_count": len(self._runtime_events),
             "vad_state": self.vad_engine.current_state.value,
+            "input_capability": self._input_capability.value,
         }
 
     def get_accessibility_state(self) -> AccessibilityState:
