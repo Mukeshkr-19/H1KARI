@@ -116,6 +116,9 @@ def add_learning(wrong, correct):
 
 def enroll_voice():
     """Enroll speaker embedding (recommended)."""
+    if sr is None or r is None:
+        print("\n❌ SpeechRecognition is required for voice enrollment.")
+        return False
     if not SPEAKER_AUTH_AVAILABLE:
         print("\n❌ Speaker verification not available (missing dependencies).")
         print("   Install: pip install speechbrain torch")
@@ -159,7 +162,12 @@ _speaker_auth_cache = None
 _streaming_runtime = None
 _voice_audio_loop = None
 _capture_mode = "utterance_only"
+_capture_backend = "utterance-only"
+_playback_controller = None
+_frame_endpoint_gate = None
+_barge_endpoint_gate = None
 _utterance_seq = 0
+_interruption_seq = 0
 _time_sense_coordinator = None
 
 
@@ -168,7 +176,12 @@ def _get_streaming_runtime():
     if _streaming_runtime is None:
         from core.voice_streaming.runtime import VoiceStreamingRuntime
 
-        _streaming_runtime = VoiceStreamingRuntime("daemon_stream")
+        # Native CoreAudio frames use the host monotonic clock. Production must
+        # share that clock; the runtime's synthetic default is tests-only.
+        _streaming_runtime = VoiceStreamingRuntime(
+            "daemon_stream",
+            clock=time.monotonic_ns,
+        )
         _streaming_runtime.start_wake_listening()
         _resolve_capture_mode(_streaming_runtime)
     return _streaming_runtime
@@ -202,22 +215,128 @@ def _next_utterance_id(prefix: str = "utt") -> str:
     return f"{prefix}-{_utterance_seq}"
 
 
+def _selected_capture_backend() -> str:
+    """Explicit capture backend selection (distinct from STT --voice-backend)."""
+    import os
+    configured = os.getenv("HIKARI_VOICE_CAPTURE_BACKEND")
+    if configured is None:
+        return "auto"
+    raw = configured.strip().lower()
+    if raw in {"macos-coreaudio", "utterance-only", "utterance_only"}:
+        return "macos-coreaudio" if raw == "macos-coreaudio" else "utterance-only"
+    raise ValueError("invalid_voice_capture_backend")
+
+
 def _resolve_capture_mode(runtime) -> str:
     """Capability-derived capture mode. Never assumes frame stream."""
-    global _capture_mode, _voice_audio_loop
+    global _capture_mode, _capture_backend, _voice_audio_loop, _frame_endpoint_gate
+    global _barge_endpoint_gate
     from core.voice_streaming.live_audio import (
         AudioInputCapability,
+        VoiceAudioLoop,
+        try_create_production_frame_source,
         try_create_pyaudio_source,
     )
 
-    # Package presence is not evidence of an opened frame loop. Production
-    # remains utterance_only unless a real injected open runner is attached.
-    source = try_create_pyaudio_source(stream_id=runtime.stream_id)
+    try:
+        selected_backend = _selected_capture_backend()
+    except ValueError:
+        _capture_backend = "invalid"
+        _capture_mode = "capture_unavailable"
+        runtime.set_input_capability(AudioInputCapability.UNAVAILABLE, frame_loop_open=False)
+        print("[DAEMON] invalid voice capture backend; voice capture unavailable", flush=True)
+        return _capture_mode
+    auto_backend = selected_backend == "auto"
+    _capture_backend = "macos-coreaudio" if auto_backend else selected_backend
     _voice_audio_loop = None
+    _frame_endpoint_gate = None
+    _barge_endpoint_gate = None
     _capture_mode = "utterance_only"
-    if source.capability == AudioInputCapability.FRAME_STREAM:
-        # Honest downgrade: probe must not claim frame_stream without open loop.
-        _capture_mode = "utterance_only"
+
+    # Legacy PyAudio probe remains unavailable-by-design.
+    _ = try_create_pyaudio_source(stream_id=runtime.stream_id)
+
+    if _capture_backend == "macos-coreaudio":
+        source = try_create_production_frame_source(
+            stream_id=runtime.stream_id,
+            capture_backend="macos-coreaudio",
+        )
+        if source.capability == AudioInputCapability.FRAME_STREAM:
+            loop = VoiceAudioLoop(runtime.stream_id, source=source, clock=runtime.now_ns)
+            opened = loop.open()
+            if opened.accepted:
+                _voice_audio_loop = loop
+                _capture_mode = "frame_stream"
+                runtime.set_input_capability(
+                    AudioInputCapability.FRAME_STREAM,
+                    frame_loop_open=True,
+                )
+                try:
+                    from core.voice_capture.endpointing import UtteranceEndpointGate
+                    from core.voice_capture.vad_backend import create_vad_backend
+                    import os
+
+                    model_path = os.getenv("HIKARI_SILERO_VAD_PATH") or None
+                    allow_energy = os.getenv("HIKARI_ALLOW_ENERGY_VAD", "0") == "1"
+                    backend = create_vad_backend(
+                        model_path=model_path,
+                        allow_energy_fallback=allow_energy,
+                    )
+                    if not backend.available:
+                        loop.close()
+                        _voice_audio_loop = None
+                        _capture_mode = "capture_unavailable"
+                        runtime.set_input_capability(
+                            AudioInputCapability.UNAVAILABLE,
+                            frame_loop_open=False,
+                        )
+                        print("[DAEMON] local VAD unavailable; CoreAudio capture disabled", flush=True)
+                        return _capture_mode
+                    _frame_endpoint_gate = UtteranceEndpointGate(
+                        stream_id=runtime.stream_id,
+                        backend=backend,
+                    )
+                    _barge_endpoint_gate = UtteranceEndpointGate(
+                        stream_id=runtime.stream_id,
+                        backend=create_vad_backend(
+                            model_path=model_path,
+                            allow_energy_fallback=allow_energy,
+                        ),
+                        pre_roll_ms=120.0,
+                        hangover_ms=220.0,
+                        max_utterance_bytes=128_000,
+                    )
+                except Exception:
+                    _frame_endpoint_gate = None
+                    _barge_endpoint_gate = None
+                    loop.close()
+                    _voice_audio_loop = None
+                    _capture_mode = "capture_unavailable"
+                    runtime.set_input_capability(
+                        AudioInputCapability.UNAVAILABLE,
+                        frame_loop_open=False,
+                    )
+                    print("[DAEMON] CoreAudio endpointing unavailable", flush=True)
+                return _capture_mode
+            try:
+                loop.close()
+            except Exception:
+                pass
+        if auto_backend:
+            _capture_backend = "utterance-only"
+            _capture_mode = "utterance_only"
+            runtime.set_input_capability(
+                AudioInputCapability.UTTERANCE_ONLY,
+                frame_loop_open=False,
+            )
+            print("[DAEMON] CoreAudio helper unavailable; using utterance-only capture", flush=True)
+            return _capture_mode
+        # Explicit selection must never silently claim success via another backend.
+        _capture_mode = "capture_unavailable"
+        runtime.set_input_capability(AudioInputCapability.UNAVAILABLE, frame_loop_open=False)
+        print("[DAEMON] macos-coreaudio unavailable; voice capture will not start", flush=True)
+        return _capture_mode
+
     runtime.set_input_capability(AudioInputCapability.UTTERANCE_ONLY, frame_loop_open=False)
     return _capture_mode
 
@@ -238,6 +357,10 @@ def _get_time_sense_coordinator():
 
 def get_voice_capture_mode() -> str:
     return _capture_mode
+
+
+def get_voice_capture_backend() -> str:
+    return _capture_backend
 
 
 def get_timing_coordinator_snapshot():
@@ -330,12 +453,20 @@ def _get_configured_stt_backend() -> str:
 
 
 def initialize_audio_backends() -> bool:
-    """Initialize speech dependencies once, when the daemon actually starts."""
+    """Initialize local STT and optional legacy microphone capture independently."""
     global _audio_initialized, sr, stt_adapter, r
 
     if _audio_initialized:
-        return sr is not None
+        return stt_adapter is not None
     _audio_initialized = True
+
+    backend_name = _get_configured_stt_backend()
+    try:
+        stt_adapter = build_stt_adapter(backend_name)
+        print(f"[OK] STT backend: {backend_name}")
+    except Exception:
+        stt_adapter = None
+        print("[DAEMON] configured local STT backend is unavailable", flush=True)
 
     try:
         import speech_recognition as sr_module
@@ -347,15 +478,12 @@ def initialize_audio_backends() -> bool:
         r.pause_threshold = 1.1
         r.phrase_time_limit = 10
         r.non_speaking_duration = 0.5
-        backend_name = _get_configured_stt_backend()
-        stt_adapter = build_stt_adapter(backend_name)
-        print("[OK] SpeechRecognition")
-        print(f"[OK] STT backend: {backend_name}")
+        print("[OK] SpeechRecognition legacy capture")
     except Exception:
         sr = None
         r = None
 
-    return sr is not None
+    return stt_adapter is not None
 
 
 def recognize_audio(audio, *, short_utterance: bool = False):
@@ -378,7 +506,7 @@ def recognize_audio(audio, *, short_utterance: bool = False):
             print("[DAEMON] Recognition succeeded", flush=True)
         return text.lower().strip()
     except SpeechAdapterError:
-        print("[DAEMON] Recognition failed; falling back to text", flush=True)
+        print("[DAEMON] Recognition failed; utterance ignored", flush=True)
         return ""
     except Exception:
         print("[DAEMON] Recognition encountered an unexpected error", flush=True)
@@ -409,18 +537,28 @@ def recognize_interrupt_audio(audio):
 
 def _speech_interrupt_mode(text: str) -> str | None:
     """Classify only deliberate stop commands, never transcript fragments."""
+    from core.voice_streaming.runtime import speech_interrupt_mode
+
+    mode = speech_interrupt_mode(text)
+    if mode is None:
+        return None
+    # Preserve legacy wake_explicit alias for hikari-prefixed stops.
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    if normalized in {
-        "hikari stop",
-        "hikari done",
-        "stop hikari",
-    }:
+    if normalized in {"hikari stop", "hikari done", "stop hikari"}:
         return "wake_explicit"
-    return None
+    return mode
 
 
 def _is_speech_interrupt(text: str) -> bool:
     return _speech_interrupt_mode(text) is not None
+
+
+def _next_interruption_id() -> str:
+    global _interruption_seq
+    _interruption_seq += 1
+    if _interruption_seq > 1_000_000:
+        _interruption_seq = 1
+    return f"barge_in_{_interruption_seq}"
 
 
 def _terminate_speech_process(process) -> None:
@@ -435,15 +573,41 @@ def _terminate_speech_process(process) -> None:
         pass
 
 
-def _wait_for_speech_or_owner_interrupt(process) -> bool:
-    """Return True when the verified owner speaks over active speech.
+def _request_verified_interruption(*, speech_observed_ns: int) -> str | None:
+    """Request, but never confirm, one exactly correlated interruption."""
+    runtime = _get_streaming_runtime()
+    from core.voice_streaming.interruption_evidence import (
+        InterruptionEvidence,
+        InterruptionVerificationSource,
+    )
 
-    Barge-in requires an explicit interruption phrase. This prevents HIKARI's
-    own speaker output from being mistaken for the owner's next command.
+    now_ns = runtime.now_ns()
+    interruption_id = _next_interruption_id()
+    evidence = InterruptionEvidence(
+        stream_id=runtime.stream_id,
+        interruption_id=interruption_id,
+        target_assistant_utterance_id=runtime.interruption_target_id(),
+        speaker_verified=True,
+        verification_source=InterruptionVerificationSource.SPEAKER_AUTH,
+        speech_observed_ns=speech_observed_ns,
+        observed_at_ns=now_ns,
+        expires_at_ns=now_ns + 2_000_000_000,
+    )
+    if not runtime.request_interruption(interruption_id, evidence=evidence):
+        print("[DAEMON] Barge-in denied by runtime evidence gate", flush=True)
+        return None
+    return interruption_id
+
+
+def _wait_for_speech_or_owner_interrupt(process) -> tuple[str, str] | None:
+    """Return interrupt mode when verified owner speaks over active speech.
+
+    Returns None if playback finished without interrupt, else stop/cancel/goodbye/
+    wake_explicit. Barge-in requires an explicit interruption phrase.
     """
     if sr is None or r is None:
         process.wait()
-        return False
+        return None
 
     try:
         with sr.Microphone() as source:
@@ -458,34 +622,63 @@ def _wait_for_speech_or_owner_interrupt(process) -> bool:
                     continue
                 if not verify_speaker(audio):
                     continue
-                _terminate_speech_process(process)
                 runtime = _get_streaming_runtime()
-                from core.voice_streaming.interruption_evidence import (
-                    InterruptionEvidence,
-                    InterruptionVerificationSource,
-                )
                 now_ns = runtime.now_ns()
-                evidence = InterruptionEvidence(
-                    stream_id=runtime.stream_id,
-                    interruption_id="barge_in_1",
-                    target_assistant_utterance_id=runtime.interruption_target_id(),
-                    speaker_verified=True,
-                    verification_source=InterruptionVerificationSource.SPEAKER_AUTH,
-                    speech_observed_ns=now_ns,
-                    observed_at_ns=now_ns,
-                    expires_at_ns=now_ns + 2_000_000_000,
-                )
-                if not runtime.request_interruption("barge_in_1", evidence=evidence):
-                    print("[DAEMON] Barge-in denied by runtime evidence gate", flush=True)
-                    return False
-                runtime.confirm_interruption("barge_in_1", is_confirmed=True)
-                print("[DAEMON] Speech interrupted by explicit local command", flush=True)
-                return True
+                interruption_id = _request_verified_interruption(speech_observed_ns=now_ns)
+                if interruption_id is None:
+                    return None
+                return mode, interruption_id
     except OSError:
         pass
 
     process.wait()
-    return False
+    return None
+
+
+def _wait_for_frame_stream_owner_interrupt(process) -> tuple[str, str] | None:
+    """Use the already-open CoreAudio stream for barge-in during TTS."""
+    loop = _voice_audio_loop
+    gate = _barge_endpoint_gate
+    runtime = _get_streaming_runtime()
+    if loop is None or gate is None:
+        process.wait()
+        return None
+    gate.reset()
+    while daemon_running and process.poll() is None:
+        pulled = loop.pull()
+        if not pulled.accepted or pulled.frame is None:
+            if pulled.reason.value in {
+                "closed",
+                "cancelled",
+                "hardware_error",
+                "bound_exceeded",
+            }:
+                break
+            continue
+        frame = pulled.frame
+        runtime.ingest_live_frame(frame)
+        tick = gate.process_frame(
+            frame.pcm,
+            monotonic_ns=frame.monotonic_ns,
+            sample_rate=frame.sample_rate,
+        )
+        if tick.event.value not in {"finalized", "max_duration"} or not tick.utterance_pcm:
+            continue
+        pcm = tick.utterance_pcm
+        utterance_id = _next_utterance_id("barge")
+        text = _transcribe_pcm_utterance(pcm, short_utterance=True)
+        mode = _speech_interrupt_mode(text)
+        if mode is None or not _verify_speaker_pcm(pcm, utterance_id=utterance_id):
+            gate.reset()
+            continue
+        interruption_id = _request_verified_interruption(
+            speech_observed_ns=frame.monotonic_ns,
+        )
+        gate.reset()
+        if interruption_id is not None:
+            return mode, interruption_id
+    process.wait()
+    return None
 
 
 _voice_orchestrator = None
@@ -539,27 +732,80 @@ def _start_speech_process(text: str):
 
 def speak(text, *, allow_interrupt: bool = True):
     """Speak locally while accepting verified owner barge-in."""
-    global hikari_state
+    global hikari_state, _playback_controller
+    from core.voice_capture.playback import PlaybackController
+
     hikari_state = HikariState.SPEAKING
     runtime = _get_streaming_runtime()
-    runtime.assistant_speaking_start()
+    if not runtime.assistant_speaking_start():
+        hikari_state = HikariState.ACTIVE
+        return False
+    if _playback_controller is None:
+        _playback_controller = PlaybackController(now_ns=runtime.now_ns)
     print("[DAEMON] Synthesizing response", flush=True)
-    process, cleanup = _start_speech_process(text)
+    process = None
+    cleanup = lambda: None
+
+    class _ProcPlayback:
+        def __init__(self, proc):
+            self._proc = proc
+
+        def pause(self) -> None:
+            # Half-duplex honest path: cancel is the safe pause substitute.
+            _terminate_speech_process(self._proc)
+
+        def cancel(self) -> None:
+            _terminate_speech_process(self._proc)
+
+        def is_alive(self) -> bool:
+            return self._proc.poll() is None
+
     try:
-        if allow_interrupt:
-            interrupted = _wait_for_speech_or_owner_interrupt(process)
+        process, cleanup = _start_speech_process(text)
+        _playback_controller.start(
+            playback_id=f"play-{_next_utterance_id('play')}",
+            response_id=runtime.interruption_target_id(),
+            backend=_ProcPlayback(process),
+            started_ns=runtime.now_ns(),
+        )
+        if allow_interrupt and _capture_mode == "frame_stream":
+            pending = _wait_for_frame_stream_owner_interrupt(process)
+        elif allow_interrupt:
+            pending = _wait_for_speech_or_owner_interrupt(process)
         else:
             process.wait()
-            interrupted = False
-        if not interrupted:
+            pending = None
+        if pending is None:
             time.sleep(0.15)
             runtime.add_assistant_segment(text)
-        else:
-            runtime.start_active_listening()
-        return not interrupted
+            if not _playback_controller.notify_physically_stopped():
+                return False
+            return True
+        mode, interruption_id = pending
+        if not _playback_controller.cancel():
+            return False
+        if not _playback_controller.notify_physically_stopped():
+            return False
+        if not runtime.confirm_interruption(interruption_id, is_confirmed=True):
+            return False
+        print("[DAEMON] Speech interrupted by explicit local command", flush=True)
+        if mode == "goodbye":
+            runtime.start_wake_listening()
+            hikari_state = HikariState.LISTENING
+            return False
+        runtime.start_active_listening()
+        return False
+    except Exception:
+        if process is not None and process.poll() is None:
+            _terminate_speech_process(process)
+        _playback_controller.clear()
+        runtime.start_active_listening()
+        print("[DAEMON] Speech playback failed", flush=True)
+        return False
     finally:
         cleanup()
-        hikari_state = HikariState.ACTIVE
+        if hikari_state == HikariState.SPEAKING:
+            hikari_state = HikariState.ACTIVE
 
 
 def _get_voice_orchestrator():
@@ -625,27 +871,9 @@ def _is_wake_phrase(text: str) -> bool:
 
 def _extract_wake_command(text: str) -> str | None:
     """Return a same-utterance command after an explicit HIKARI wake prefix."""
+    from core.voice_streaming.runtime import extract_wake_command
 
-    if not isinstance(text, str):
-        return None
-    match = re.fullmatch(
-        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hikari\b[\s,.:;!?-]*(.*?)\s*",
-        text,
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match is not None:
-        return match.group(1).strip()
-
-    # Both reviewed local Whisper base implementations render the isolated
-    # product name "Hikari" as "Hickory". Accept that observed spelling only
-    # as a standalone wake phrase. It cannot carry a command, and owner speaker
-    # verification still runs before activation.
-    alias_match = re.fullmatch(
-        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hickory[\s,.:;!?-]*\s*",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return "" if alias_match is not None else None
+    return extract_wake_command(text)
 
 
 def _listen_for_wake_word() -> None:
@@ -746,12 +974,173 @@ def _listen_for_active_command() -> None:
         log_convo(command, response)
 
 
+
+def _transcribe_pcm_utterance(pcm: bytes, *, short_utterance: bool = False) -> str:
+    """Local STT from PCM; never cloud-falls-back silently."""
+    global stt_adapter
+    try:
+        if stt_adapter is None:
+            return ""
+        captured = CapturedAudio(
+            pcm_bytes=pcm,
+            sample_rate=16000,
+            sample_width=2,
+            channel_count=1,
+        )
+        if short_utterance and hasattr(stt_adapter, "transcribe_short_utterance"):
+            result = stt_adapter.transcribe_short_utterance(captured)
+        else:
+            result = stt_adapter.transcribe(captured)
+        return result.lower().strip() if isinstance(result, str) else ""
+    except Exception:
+        return ""
+
+
+def _verify_speaker_pcm(pcm: bytes, *, utterance_id: str) -> bool:
+    if not SPEAKER_AUTH_AVAILABLE:
+        return False
+    auth = _get_speaker_auth()
+    if auth is None or not auth.is_enrolled():
+        return False
+    try:
+        result = auth.verify_pcm16_mono(pcm, utterance_id=utterance_id)
+        if os.getenv("HIKARI_VOICE_DIAGNOSTICS", "0") == "1":
+            print(
+                "[DAEMON] Speaker diagnostics "
+                f"(accepted={result.ok}, score={result.score:.3f}, "
+                f"threshold={result.threshold:.3f}, reason={result.reason})",
+                flush=True,
+            )
+        return bool(result.ok)
+    except Exception:
+        return False
+
+
+def _listen_frame_stream_cycle() -> None:
+    """One wake/active cycle using CoreAudio frames + local VAD endpointing."""
+    global hikari_state, daemon_running, _capture_mode
+    runtime = _get_streaming_runtime()
+    loop = _voice_audio_loop
+    gate = _frame_endpoint_gate
+    if loop is None:
+        return
+    if gate is None:
+        time.sleep(0.05)
+        return
+
+    diagnostics = os.getenv("HIKARI_VOICE_DIAGNOSTICS", "0") == "1"
+    diagnostic_frames = 0
+    diagnostic_max_probability = 0.0
+    deadline = time.monotonic() + 30.0
+    while daemon_running and time.monotonic() < deadline:
+        pulled = loop.pull()
+        if not pulled.accepted or pulled.frame is None:
+            if pulled.reason.value in {"closed", "cancelled", "hardware_error"}:
+                _capture_mode = "capture_unavailable"
+                daemon_running = False
+                print("[DAEMON] CoreAudio capture stopped; voice daemon is stopping", flush=True)
+                break
+            time.sleep(0.01)
+            continue
+        frame = pulled.frame
+        runtime.ingest_live_frame(frame)
+        tick = gate.process_frame(
+            frame.pcm,
+            monotonic_ns=frame.monotonic_ns,
+            sample_rate=frame.sample_rate,
+        )
+        if diagnostics:
+            diagnostic_frames += 1
+            diagnostic_max_probability = max(
+                diagnostic_max_probability,
+                float(tick.speech_probability),
+            )
+            if diagnostic_frames % 100 == 0:
+                print(
+                    "[DAEMON] Frame diagnostics "
+                    f"(frames={diagnostic_frames}, "
+                    f"max_vad={diagnostic_max_probability:.3f})",
+                    flush=True,
+                )
+        if tick.event.value not in {"finalized", "max_duration"}:
+            continue
+        pcm = tick.utterance_pcm
+        if not pcm:
+            continue
+        print(
+            f"[DAEMON] Frame endpoint finalized (pcm_bytes={len(pcm)})",
+            flush=True,
+        )
+        utterance_id = _next_utterance_id("frame")
+        short = runtime.is_wake_listening
+        text = _transcribe_pcm_utterance(pcm, short_utterance=short)
+        if not text:
+            print("[DAEMON] Frame STT returned no text", flush=True)
+            gate.reset()
+            continue
+        print(f"[DAEMON] Frame STT complete (chars={len(text)})", flush=True)
+        if runtime.is_wake_listening:
+            command = _extract_wake_command(text)
+            print(
+                f"[DAEMON] Wake prefix matched={command is not None}",
+                flush=True,
+            )
+            if command is None:
+                gate.reset()
+                continue
+            speaker_ok = _verify_speaker_pcm(pcm, utterance_id=utterance_id)
+            print(f"[DAEMON] Speaker verified={speaker_ok}", flush=True)
+            if not speaker_ok:
+                gate.reset()
+                continue
+            result = runtime.process_utterance(
+                text if command == "" else f"hikari {command}",
+                is_verified_speaker=True,
+                is_short=True,
+                utterance_id=utterance_id,
+            )
+            _sync_hikari_state_from_runtime(runtime)
+            action = result.get("action")
+            if action == "process_command":
+                response = process(result.get("command") or command)
+                if response:
+                    speak(response)
+            elif action == "acknowledge_wake":
+                speak("Yes?", allow_interrupt=False)
+            gate.reset()
+            return
+        speaker_ok = _verify_speaker_pcm(pcm, utterance_id=utterance_id)
+        print(f"[DAEMON] Speaker verified={speaker_ok}", flush=True)
+        if not speaker_ok:
+            gate.reset()
+            continue
+        result = runtime.process_utterance(
+            text,
+            is_verified_speaker=True,
+            is_short=False,
+            utterance_id=utterance_id,
+        )
+        _sync_hikari_state_from_runtime(runtime)
+        action = result.get("action")
+        if action == "silent_goodbye":
+            gate.reset()
+            return
+        if action == "process_command":
+            response = process(result.get("command") or text)
+            if response:
+                speak(response)
+        gate.reset()
+        return
+
+
 def listen_always() -> None:
     """Listen for the wake word, then process verified commands until stopped."""
-    if sr is None or r is None:
+    if not _capture_mode.startswith("frame_stream") and (sr is None or r is None):
         raise RuntimeError("SpeechRecognition is not installed")
 
     runtime = _get_streaming_runtime()
+    if _capture_mode == "capture_unavailable":
+        raise RuntimeError("voice_capture_unavailable")
     runtime.start_wake_listening()
 
     print("\n" + "=" * 50)
@@ -763,6 +1152,9 @@ def listen_always() -> None:
 
     while daemon_running:
         try:
+            if _capture_mode.startswith("frame_stream") and _voice_audio_loop is not None:
+                _listen_frame_stream_cycle()
+                continue
             if hikari_state == HikariState.LISTENING:
                 _listen_for_wake_word()
             elif hikari_state == HikariState.ACTIVE:
@@ -781,6 +1173,8 @@ def request_shutdown(_signum=None, _frame=None) -> None:
     """Ask the owned listener loop to stop at its next boundary."""
     global daemon_running, _streaming_runtime, _time_sense_bridge
     global _voice_audio_loop, _time_sense_coordinator, _utterance_seq, _capture_mode
+    global _capture_backend, _frame_endpoint_gate, _barge_endpoint_gate
+    global _playback_controller, _interruption_seq
 
     daemon_running = False
     if _voice_audio_loop is not None:
@@ -810,7 +1204,17 @@ def request_shutdown(_signum=None, _frame=None) -> None:
             pass
         _time_sense_bridge = None
     _utterance_seq = 0
+    _interruption_seq = 0
     _capture_mode = "utterance_only"
+    _capture_backend = "utterance-only"
+    _frame_endpoint_gate = None
+    _barge_endpoint_gate = None
+    if _playback_controller is not None:
+        try:
+            _playback_controller.clear()
+        except Exception:
+            pass
+        _playback_controller = None
 
 
 def main() -> int:
@@ -833,7 +1237,7 @@ def main() -> int:
         return 0 if auth is not None and auth.is_enrolled() else 1
     _print_banner()
     if not initialize_audio_backends():
-        print("\n❌ Install SpeechRecognition before starting the voice daemon.")
+        print("\n❌ The configured local STT backend is unavailable.")
         return 1
     if len(sys.argv) > 1 and sys.argv[1] in ["--enroll-voice", "--setup-voice"]:
         return 0 if enroll_voice() else 1

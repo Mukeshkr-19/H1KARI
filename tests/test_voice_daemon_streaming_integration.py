@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
+import time
 
 import pytest
 
 from core.streaming_voice import AecStatus, TurnState, TurnStateMachine
 from core.voice_streaming.contracts import VoiceStreamState
+from core.voice_streaming.live_audio import (
+    AudioFrameSourceReason,
+    AudioFrameSourceResult,
+    AudioInputCapability,
+    CaptureSourceCategory,
+    LiveAudioFrame,
+)
 from core.voice_streaming.runtime import VoiceStreamingRuntime, extract_wake_command
 from services import hikari_daemon as daemon
 
@@ -21,20 +30,29 @@ def _speech_module():
 
 @pytest.fixture(autouse=True)
 def _reset_daemon_runtime(monkeypatch):
+    monkeypatch.setenv("HIKARI_VOICE_CAPTURE_BACKEND", "utterance-only")
     daemon._streaming_runtime = None
     daemon._time_sense_bridge = None
     daemon._voice_audio_loop = None
+    daemon._frame_endpoint_gate = None
+    daemon._barge_endpoint_gate = None
+    daemon._playback_controller = None
     daemon._time_sense_coordinator = None
     daemon._utterance_seq = 0
     daemon._capture_mode = "utterance_only"
+    daemon.daemon_running = True
     daemon.hikari_state = daemon.HikariState.LISTENING
     yield
     daemon._streaming_runtime = None
     daemon._time_sense_bridge = None
     daemon._voice_audio_loop = None
+    daemon._frame_endpoint_gate = None
+    daemon._barge_endpoint_gate = None
+    daemon._playback_controller = None
     daemon._time_sense_coordinator = None
     daemon._utterance_seq = 0
     daemon._capture_mode = "utterance_only"
+    daemon.daemon_running = True
     daemon.hikari_state = daemon.HikariState.LISTENING
 
 
@@ -155,7 +173,7 @@ def test_hickory_alias_characterization_unchanged():
     assert daemon._extract_wake_command("hickory") == ""
     assert daemon._extract_wake_command("Hickory") == ""
     assert extract_wake_command("hickory") == ""
-    assert daemon._extract_wake_command("hickory, do something") is None
+    assert daemon._extract_wake_command("hickory, do something") == "do something"
 
 
 def test_facade_shares_canonical_runtime_authority():
@@ -192,7 +210,7 @@ def test_shutdown_cancels_and_clears(monkeypatch):
     assert daemon._streaming_runtime is None
 
 
-def test_daemon_defaults_to_utterance_mode():
+def test_explicit_utterance_backend_stays_utterance_mode():
     runtime = daemon._get_streaming_runtime()
     assert daemon.get_voice_capture_mode() == "utterance_only"
     assert runtime.input_capability.value == "utterance_only"
@@ -230,6 +248,20 @@ def test_package_presence_cannot_force_frame_stream(monkeypatch):
     assert daemon.get_voice_capture_mode() == "utterance_only"
 
 
+def test_unconfigured_capture_backend_selects_auto(monkeypatch):
+    monkeypatch.delenv("HIKARI_VOICE_CAPTURE_BACKEND", raising=False)
+    assert daemon._selected_capture_backend() == "auto"
+
+
+def test_daemon_runtime_uses_host_monotonic_clock(monkeypatch):
+    monkeypatch.setenv("HIKARI_VOICE_CAPTURE_BACKEND", "utterance-only")
+    before = time.monotonic_ns()
+    runtime = daemon._get_streaming_runtime()
+    observed = runtime.now_ns()
+    after = time.monotonic_ns()
+    assert before <= observed <= after
+
+
 def test_daemon_uses_public_set_input_capability():
     runtime = daemon._get_streaming_runtime()
     result = runtime.set_input_capability(
@@ -237,3 +269,62 @@ def test_daemon_uses_public_set_input_capability():
         frame_loop_open=False,
     )
     assert result["capability"] == "utterance_only"
+
+
+def test_pcm_speaker_verification_missing_auth_fails_closed(monkeypatch):
+    monkeypatch.setattr(daemon, "SPEAKER_AUTH_AVAILABLE", False)
+    assert daemon._verify_speaker_pcm(b"\x00\x00" * 8_000, utterance_id="u1") is False
+
+
+def test_frame_stream_barge_requests_before_physical_confirmation(monkeypatch):
+    runtime = VoiceStreamingRuntime("daemon_stream")
+    runtime.start_active_listening()
+    runtime.process_utterance("tell me a story", is_verified_speaker=True, utterance_id="user-1")
+    assert runtime.assistant_speaking_start()
+    runtime.set_input_capability(AudioInputCapability.FRAME_STREAM, frame_loop_open=True)
+    daemon._streaming_runtime = runtime
+    daemon._capture_mode = "frame_stream"
+    time.sleep(0.002)
+
+    frame = LiveAudioFrame(
+        stream_id="daemon_stream",
+        frame_id="frame-1",
+        sequence=1,
+        monotonic_ns=runtime.now_ns(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        pcm=b"\xff\x7f" * 8_000,
+        capture_source=CaptureSourceCategory.MICROPHONE,
+    )
+
+    class Loop:
+        def pull(self):
+            return AudioFrameSourceResult(True, AudioFrameSourceReason.OK, frame)
+
+    class Gate:
+        def reset(self):
+            return None
+
+        def process_frame(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                event=SimpleNamespace(value="finalized"),
+                utterance_pcm=b"\xff\x7f" * 8_000,
+            )
+
+    process = MagicMock()
+    process.poll.return_value = None
+    daemon._voice_audio_loop = Loop()
+    daemon._barge_endpoint_gate = Gate()
+    monkeypatch.setattr(daemon, "_transcribe_pcm_utterance", lambda *_a, **_k: "stop")
+    monkeypatch.setattr(daemon, "_verify_speaker_pcm", lambda *_a, **_k: True)
+
+    pending = daemon._wait_for_frame_stream_owner_interrupt(process)
+
+    assert pending is not None
+    mode, interruption_id = pending
+    assert mode == "stop"
+    assert interruption_id.startswith("barge_in_")
+    assert runtime.state == VoiceStreamState.INTERRUPTING
+    assert runtime.confirm_interruption(interruption_id, is_confirmed=True)
+    assert runtime.state == VoiceStreamState.INTERRUPTED

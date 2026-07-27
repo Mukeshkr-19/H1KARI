@@ -104,3 +104,8 @@ Future integration with `services/hikari_daemon.py` and PyAudio/WebRTC streaming
 2. **VAD Adapter**: Pass frame measurements into `VADEngineState` and emit state transitions to `VoiceStreamStateMachine`.
 3. **AEC Adapter**: Inspect system hardware (headphone jack, OS AEC capabilities) to construct `EchoCapability` and apply `EchoPolicyDecision` instructions (muting input or ducking output).
 4. **Daemon Wiring**: Connect pipeline metrics and state transitions to the daemon's voice status monitoring without persisting raw audio.
+
+
+## macOS CoreAudio capture
+
+Use `HIKARI_VOICE_CAPTURE_BACKEND=macos-coreaudio` or `--voice-capture-backend macos-coreaudio` to require the reviewed helper. Unconfigured foreground startup uses `auto`; the login agent builds and pins CoreAudio explicitly. See `docs/OMI_DERIVED_VOICE_PIPELINE.md`.

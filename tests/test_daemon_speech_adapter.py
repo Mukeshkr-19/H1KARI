@@ -49,7 +49,7 @@ def test_recognize_audio_returns_empty_on_adapter_failure(capsys, monkeypatch):
 
     out, _err = capsys.readouterr()
     assert result == ""
-    assert "falling back to text" in out
+    assert "utterance ignored" in out
     fake_adapter.transcribe.assert_called_once()
 
 

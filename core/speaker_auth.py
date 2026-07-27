@@ -269,6 +269,124 @@ class SpeakerAuth:
         ]
         return [whole, *windows]
 
+
+    def embedding_from_pcm16_mono(
+        self,
+        pcm: bytes,
+        *,
+        sample_rate: int = 16000,
+        sample_width: int = 2,
+        channels: int = 1,
+        utterance_id: str | None = None,
+        max_bytes: int = 480_000,
+    ) -> List[float]:
+        """Build an embedding from bounded PCM16 mono. No AudioData required."""
+        if (
+            utterance_id is not None
+            and (
+                not isinstance(utterance_id, str)
+                or not utterance_id
+                or len(utterance_id) > 128
+                or any(ord(ch) < 32 or ord(ch) == 127 for ch in utterance_id)
+            )
+        ):
+            raise ValueError("invalid_utterance_id")
+        if isinstance(max_bytes, bool) or not isinstance(max_bytes, int):
+            raise ValueError("invalid_max_bytes")
+        if max_bytes < 16_000 or max_bytes > 1_920_000:
+            raise ValueError("invalid_max_bytes")
+        self._lazy_load_model()
+        if self._model is None:
+            raise RuntimeError("Speaker model unavailable")
+        if sample_rate != 16000 or sample_width != 2 or channels != 1:
+            raise ValueError("invalid_pcm_format")
+        if not isinstance(pcm, (bytes, bytearray)):
+            raise TypeError("pcm_must_be_bytes")
+        payload = bytes(pcm)
+        if len(payload) < sample_rate or len(payload) > max_bytes:
+            raise ValueError("invalid_pcm_duration")
+        if len(payload) % 2 != 0:
+            raise ValueError("invalid_pcm_alignment")
+        import numpy as np
+        import torch
+
+        wav = np.frombuffer(payload, dtype=np.int16).astype("float32") / 32768.0
+        if not np.isfinite(wav).all():
+            raise ValueError("non_finite_pcm")
+        waveform = torch.from_numpy(wav).unsqueeze(0)
+        with torch.inference_mode():
+            emb = self._model.encode_batch(waveform)
+        emb = emb.squeeze(0).squeeze(0).cpu().numpy()
+        values = [float(x) for x in emb.tolist()]
+        if not _valid_embedding(values):
+            raise ValueError("non_finite_embedding")
+        return values
+
+    def verify_pcm16_mono(
+        self,
+        pcm: bytes,
+        *,
+        sample_rate: int = 16000,
+        sample_width: int = 2,
+        channels: int = 1,
+        utterance_id: str | None = None,
+        max_bytes: int = 480_000,
+    ) -> VerifyResult:
+        """Verify owner from PCM16 mono without SpeechRecognition AudioData."""
+        try:
+            embeddings = self.verification_embeddings_from_pcm16_mono(
+                pcm,
+                sample_rate=sample_rate,
+                sample_width=sample_width,
+                channels=channels,
+                utterance_id=utterance_id,
+                max_bytes=max_bytes,
+            )
+        except ValueError as exc:
+            return VerifyResult(False, 0.0, self.threshold, reason=str(exc)[:64])
+        except Exception:
+            return VerifyResult(False, 0.0, self.threshold, reason="verify_failed")
+        return self.verify_embeddings(embeddings)
+
+    def verification_embeddings_from_pcm16_mono(
+        self,
+        pcm: bytes,
+        *,
+        sample_rate: int = 16000,
+        sample_width: int = 2,
+        channels: int = 1,
+        utterance_id: str | None = None,
+        max_bytes: int = 480_000,
+    ) -> List[List[float]]:
+        """Create a whole embedding plus at most three bounded PCM windows."""
+        payload = bytes(pcm) if isinstance(pcm, (bytes, bytearray)) else pcm
+        whole = self.embedding_from_pcm16_mono(
+            payload,
+            sample_rate=sample_rate,
+            sample_width=sample_width,
+            channels=channels,
+            utterance_id=utterance_id,
+            max_bytes=max_bytes,
+        )
+        bytes_per_second = sample_rate * sample_width * channels
+        window_bytes = bytes_per_second * 2
+        if len(payload) <= window_bytes + bytes_per_second // 2:
+            return [whole]
+        last = len(payload) - window_bytes
+        starts = sorted({0, max(0, last // 2), last})
+        windows = [
+            self.embedding_from_pcm16_mono(
+                payload[start : start + window_bytes],
+                sample_rate=sample_rate,
+                sample_width=sample_width,
+                channels=channels,
+                utterance_id=utterance_id,
+                max_bytes=max_bytes,
+            )
+            for start in starts[:3]
+        ]
+        return [whole, *windows]
+
     def _lazy_load_model(self):
         if self._model is not None:
             return

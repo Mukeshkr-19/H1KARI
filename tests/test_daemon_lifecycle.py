@@ -10,6 +10,8 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from services import hikari_daemon as daemon
 
 
@@ -35,6 +37,23 @@ def _speech_module():
         WaitTimeoutError=WaitTimeoutError,
         UnknownValueError=UnknownValueError,
     )
+
+
+@pytest.fixture(autouse=True)
+def _reset_daemon_capture(monkeypatch):
+    """Keep legacy lifecycle tests deterministic and microphone-free."""
+    monkeypatch.setenv("HIKARI_VOICE_CAPTURE_BACKEND", "utterance-only")
+    daemon._streaming_runtime = None
+    daemon._voice_audio_loop = None
+    daemon._frame_endpoint_gate = None
+    daemon._barge_endpoint_gate = None
+    daemon._playback_controller = None
+    daemon._capture_mode = "utterance_only"
+    daemon._capture_backend = "utterance-only"
+    daemon.daemon_running = True
+    yield
+    daemon.request_shutdown()
+    daemon.daemon_running = True
 
 
 def test_import_does_not_load_audio_models(tmp_path: Path):
@@ -72,6 +91,21 @@ def test_main_fails_cleanly_when_speech_recognition_is_unavailable(monkeypatch):
 
     assert daemon.main() == 1
     listen.assert_not_called()
+
+
+def test_coreaudio_startup_requires_local_stt_not_legacy_capture(monkeypatch):
+    adapter = object()
+    monkeypatch.setattr(daemon, "_audio_initialized", False)
+    monkeypatch.setattr(daemon, "stt_adapter", None)
+    monkeypatch.setattr(daemon, "sr", None)
+    monkeypatch.setattr(daemon, "r", None)
+    monkeypatch.setattr(daemon, "build_stt_adapter", lambda _name: adapter)
+    monkeypatch.setitem(sys.modules, "speech_recognition", None)
+
+    assert daemon.initialize_audio_backends() is True
+    assert daemon.stt_adapter is adapter
+    assert daemon.sr is None
+    assert daemon.r is None
 
 
 def test_shutdown_request_stops_owned_loop():
@@ -150,6 +184,7 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     daemon.r = MagicMock()
     daemon.daemon_running = True
     daemon.hikari_state = daemon.HikariState.ACTIVE
+    daemon._get_streaming_runtime().start_active_listening()
     monkeypatch.setattr(
         daemon,
         "recognize_interrupt_audio",
@@ -188,6 +223,21 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
     verify.assert_called_once()
 
 
+def test_speech_start_failure_restores_active_runtime(monkeypatch):
+    runtime = daemon._get_streaming_runtime()
+    runtime.start_active_listening()
+    daemon.hikari_state = daemon.HikariState.ACTIVE
+
+    def fail_start(_text):
+        raise RuntimeError("synthetic_tts_failure")
+
+    monkeypatch.setattr(daemon, "_start_speech_process", fail_start)
+
+    assert daemon.speak("bounded synthetic response") is False
+    assert daemon.hikari_state == daemon.HikariState.ACTIVE
+    assert runtime.is_active_listening is True
+
+
 def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
     daemon.sr = _speech_module()
     daemon.r = MagicMock()
@@ -203,7 +253,7 @@ def test_non_interrupt_follow_up_does_not_cut_off_active_speech(monkeypatch):
     process = MagicMock()
     process.poll.side_effect = [None, 0]
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is None
     process.terminate.assert_not_called()
     verify.assert_not_called()
 
@@ -265,7 +315,7 @@ def test_explicit_stop_requires_speaker_verification(monkeypatch):
 
     process = SpeechProcess()
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is None
     assert process.terminated is False
     verify.assert_called_once()
 
@@ -282,7 +332,7 @@ def test_bare_stop_cannot_interrupt_speech(monkeypatch):
     process = MagicMock()
     process.poll.side_effect = [None, 0]
 
-    assert daemon._wait_for_speech_or_owner_interrupt(process) is False
+    assert daemon._wait_for_speech_or_owner_interrupt(process) is None
     process.terminate.assert_not_called()
 
 
@@ -455,10 +505,10 @@ def test_wake_phrase_requires_explicit_hikari_form():
     assert daemon._is_wake_phrase("this has hikar somewhere") is False
 
 
-def test_observed_whisper_hickory_alias_is_standalone_and_owner_gated(monkeypatch):
+def test_observed_whisper_hickory_alias_is_anchored_and_owner_gated(monkeypatch):
     assert daemon._is_wake_phrase("hickory") is True
     assert daemon._is_wake_phrase("Hey, Hickory!") is True
-    assert daemon._extract_wake_command("hickory tell me the time") is None
+    assert daemon._extract_wake_command("hickory tell me the time") == "tell me the time"
     assert daemon._extract_wake_command("the hickory tree") is None
 
     daemon.sr = _speech_module()
@@ -516,12 +566,17 @@ def test_speech_interrupt_accepts_short_explicit_variants_only():
         "Hikari stop",
         "Hikari done",
         "stop Hikari",
+        "stop",
+        "be quiet",
+        "cancel",
+        "goodbye",
+        "go to sleep",
+        "stop listening",
     ):
         assert daemon._is_speech_interrupt(phrase) is True
 
     for phrase in (
         "do not stop the timer",
-        "stop",
         "done",
         "Hikari stop talking",
         "tell me about stop motion",
