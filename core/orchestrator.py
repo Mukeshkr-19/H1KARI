@@ -561,10 +561,17 @@ class HIKARI_Orchestrator:
         return self._conversation_scope(context)
 
     def _conversation_packet(self, user_input: str) -> ConversationContextPacket:
+        # Casual greetings must not carry historical chat or prior topic context.
+        if self._is_casual_greeting(user_input):
+            return ConversationContextPacket()
         scope = self._active_conversation_scope()
         if scope is None:
             return ConversationContextPacket()
         packet = self._conversation_engine().compose(scope, user_input)
+        # Profile-summary intents stay on Brain v2 / special-command paths; never
+        # inject older SQLite turns that may belong to an unrelated topic.
+        if self._is_profile_summary_intent(user_input):
+            return packet
         store = getattr(self, "conversation_session_store", None)
         active_id = str(getattr(self, "_local_conversation_session_id", "local"))
         if (
@@ -1244,9 +1251,16 @@ class HIKARI_Orchestrator:
             self.authenticated = True
             return "Authentication confirmed. I'm ready."
 
-        # Who am I / profile commands
-        if re.search(r"\bwho\s+am\s+i\b", lowered) or re.search(
-            r"\bwhat\s+do\s+(?:you|u)\s+know\s+about\s+me\b", lowered
+        # Who am I / profile commands (Brain v2 profile authority)
+        if (
+            re.search(r"\bwho\s+am\s+i\b", lowered)
+            or re.search(r"\bwhat\s+do\s+(?:you|u)\s+know\s+about\s+me\b", lowered)
+            or re.search(r"\bwhat\s+do\s+(?:you|u)\s+think\s+about\s+me\b", lowered)
+            or re.search(r"\bwhat\s+do\s+(?:you|u)\s+think\s+of\s+me\b", lowered)
+            or re.search(
+                r"\bwhat(?:'s|\s+is)\s+your\s+(?:opinion|view)\s+(?:of|on|about)\s+me\b",
+                lowered,
+            )
         ):
             return self._get_user_summary()
 
@@ -1989,6 +2003,17 @@ class HIKARI_Orchestrator:
 
         return is_casual_greeting(text)
 
+    def _is_profile_summary_intent(self, text: str) -> bool:
+        try:
+            from core.brain_v2.recall_intent import (
+                INTENT_PROFILE_SUMMARY,
+                classify_recall_intent,
+            )
+
+            return classify_recall_intent(text) == INTENT_PROFILE_SUMMARY
+        except Exception:
+            return False
+
     def _looks_like_smalltalk_name(self, text: str) -> bool:
         return self._is_casual_greeting(text) or (text or "").strip().lower() in {
             "yes",
@@ -2059,6 +2084,14 @@ class HIKARI_Orchestrator:
             context += f"{current_facts_prompt(current_headlines)}\n\n"
 
         conversation_packet = self._conversation_packet(user_input)
+        greeting_turn = self._is_casual_greeting(user_input)
+        profile_turn = self._is_profile_summary_intent(user_input)
+        if greeting_turn or profile_turn:
+            conversation_packet = ConversationContextPacket(
+                messages=() if greeting_turn else conversation_packet.messages,
+                digest="" if greeting_turn else conversation_packet.digest,
+                covered_through=conversation_packet.covered_through,
+            )
 
         # Add emotion context
         if emotion != "neutral" and emotion_score > 0.4:
@@ -2074,6 +2107,16 @@ class HIKARI_Orchestrator:
             if voice_channel
             else
             "You are currently responding in a text conversation."
+        )
+        topic_rules = (
+            "This turn is a greeting or profile-summary request. Do not continue or "
+            "reference prior unrelated conversation topics. Answer only from the current "
+            "user message and reviewed personal-memory context when present."
+            if greeting_turn or profile_turn
+            else
+            "Treat the latest user message as controlling. Use older conversation context "
+            "only to interpret follow-ups, and honor corrections instead of repeating the "
+            "previous topic."
         )
         current_date = datetime.now().strftime("%A, %B %-d, %Y")
         system_prompt = f"""You are HIKARI, a helpful AI assistant.
@@ -2091,9 +2134,7 @@ Adapt your responses to be:
 - Verbose level: {self.personality.traits['verbosity']:.0%} detailed
 - Humorous: {'yes' if self.personality.traits['humor'] > 0.5 else 'no'}
 - Always helpful and friendly
-- Treat the latest user message as controlling. Use older conversation context
-  only to interpret follow-ups, and honor corrections instead of repeating the
-  previous topic."""
+- {topic_rules}"""
 
         # Get AI response
         try:

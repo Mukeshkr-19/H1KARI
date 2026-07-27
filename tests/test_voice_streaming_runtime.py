@@ -21,6 +21,7 @@ from core.voice_streaming.runtime import (
     extract_wake_command,
     is_stop_command,
     is_wake_phrase,
+    speech_interrupt_mode,
 )
 from core.voice_streaming.vad import VADFrameMeasurement, VADState
 from core.voice_streaming.interruption_evidence import (
@@ -140,6 +141,28 @@ def test_goodbye_is_silent_and_returns_to_wake_listening():
 
     # Active transcript state cleared
     assert runtime.accumulator.current_interim is None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    ["hikari stop", "hikari done", "stop hikari", "be quiet", "stop listening", "stop"],
+)
+def test_stop_phrases_are_stop_commands_and_goodbye_interrupt(phrase: str):
+    assert is_stop_command(phrase) is True
+    assert speech_interrupt_mode(phrase) == "goodbye"
+
+
+def test_cancel_is_soft_interrupt_not_stop_command():
+    assert is_stop_command("cancel") is False
+    assert speech_interrupt_mode("cancel") == "cancel"
+
+
+def test_hikari_stop_while_active_returns_to_wake_listening():
+    runtime = VoiceStreamingRuntime("stream_1")
+    runtime.start_active_listening()
+    res = runtime.process_utterance("hikari stop", is_verified_speaker=True)
+    assert res["action"] == "silent_goodbye"
+    assert runtime.state == VoiceStreamState.WAKE_LISTENING
 
 
 def test_repeated_goodbye_while_sleeping_ignored():

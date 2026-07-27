@@ -456,10 +456,12 @@ def test_who_am_i_and_profile_use_same_summary_path(episode_db):
 
     who = orch._handle_special_commands("who am I?")
     what = orch._handle_special_commands("what do you know about me?")
+    think = orch._handle_special_commands("what do you think about me?")
+    think_u = orch._handle_special_commands("what do u think about me?")
     profile = orch._handle_special_commands("profile")
     my_profile = orch._handle_special_commands("my profile")
     show_profile = orch._handle_special_commands("show profile")
-    assert who == what == profile == my_profile == show_profile
+    assert who == what == think == think_u == profile == my_profile == show_profile
     assert "city a" in who.lower()
 
 

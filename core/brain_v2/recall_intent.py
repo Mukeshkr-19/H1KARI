@@ -343,7 +343,17 @@ def _matches_profile_summary(q: str) -> bool:
         )
         or re.search(r"\bwhat\s+have\s+you\s+(?:learned|remembered)\s+about\s+me\b", q)
         or re.search(r"\bsummarize\s+(?:what\s+you\s+know|my\s+profile)\b", q)
-        or q in {"what do you know about me", "tell me what you know about me"}
+        or re.search(r"\bwhat\s+do\s+(?:you|u)\s+think\s+about\s+me\b", q)
+        or re.search(r"\bwhat(?:'s|\s+is)\s+your\s+(?:opinion|view)\s+(?:of|on|about)\s+me\b", q)
+        or q
+        in {
+            "what do you know about me",
+            "tell me what you know about me",
+            "what do you think about me",
+            "what do u think about me",
+            "what do you think of me",
+            "what do u think of me",
+        }
     )
 
 

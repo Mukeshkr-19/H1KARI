@@ -240,8 +240,11 @@ def test_playback_controller_refuses_false_physical_stop():
 
 
 def test_speech_interrupt_modes():
-    assert speech_interrupt_mode("stop") == "stop"
-    assert speech_interrupt_mode("be quiet") == "stop"
+    assert speech_interrupt_mode("stop") == "goodbye"
+    assert speech_interrupt_mode("be quiet") == "goodbye"
+    assert speech_interrupt_mode("hikari stop") == "goodbye"
+    assert speech_interrupt_mode("hikari done") == "goodbye"
+    assert speech_interrupt_mode("stop hikari") == "goodbye"
     assert speech_interrupt_mode("cancel") == "cancel"
     assert speech_interrupt_mode("goodbye") == "goodbye"
     assert speech_interrupt_mode("do not stop the timer") is None

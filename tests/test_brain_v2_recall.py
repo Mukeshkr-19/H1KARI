@@ -47,6 +47,8 @@ def _accept_turn(store, statement: str, episode_key: str = "ep"):
         ("who am I?", INTENT_IDENTITY_SELF),
         ("where am I?", INTENT_CURRENT_LOCATION),
         ("what do you know about me?", INTENT_PROFILE_SUMMARY),
+        ("what do you think about me?", INTENT_PROFILE_SUMMARY),
+        ("what do u think about me", INTENT_PROFILE_SUMMARY),
         ("do you know my sister?", INTENT_FAMILY_PERSON),
         ("what did we decide about HIKARI?", INTENT_HIKARI_DECISION),
         ("what is the weather today?", INTENT_NON_MEMORY),

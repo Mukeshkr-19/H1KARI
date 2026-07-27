@@ -50,14 +50,28 @@ from core.runtime_paths import legacy_data_dir
 from core.voice_config import tts_rate, tts_voice_name
 
 WAKE_WORD = "hikari"
+# Kept in sync with core.voice_streaming.runtime.STOP_WORDS (active-listen sleep).
 STOP_WORDS = [
-    "stop listening",
-    "exit hikari",
-    "goodbye hikari",
-    "bye hikari",
-    "sleep hikari",
-    "stop",
     "bye",
+    "goodbye",
+    "good bye",
+    "exit",
+    "stop",
+    "go to sleep",
+    "sleep",
+    "that's all",
+    "that's it",
+    "nothing else",
+    "done",
+    "thank you",
+    "thanks",
+    "okay goodbye",
+    "see you later",
+    "hikari stop",
+    "hikari done",
+    "stop hikari",
+    "be quiet",
+    "stop listening",
 ]
 
 # Flag to control daemon exit
@@ -171,11 +185,15 @@ _utterance_seq = 0
 _interruption_seq = 0
 _time_sense_coordinator = None
 _active_last_activity_ns = 0
+_post_interrupt_ignore_until_ns = 0
 
 _DEFAULT_ACTIVE_IDLE_SECONDS = 120.0
 _MIN_ACTIVE_IDLE_SECONDS = 30.0
 _MAX_ACTIVE_IDLE_SECONDS = 600.0
 _DEFAULT_WAKE_SPEAKER_MIN_SCORE = 0.35
+_DEFAULT_POST_INTERRUPT_IGNORE_MS = 750.0
+_MIN_POST_INTERRUPT_IGNORE_MS = 250.0
+_MAX_POST_INTERRUPT_IGNORE_MS = 2000.0
 
 
 def _bounded_float_env(name: str, default: float, minimum: float, maximum: float) -> float:
@@ -196,6 +214,47 @@ def _active_idle_timeout_ns() -> int:
         _MAX_ACTIVE_IDLE_SECONDS,
     )
     return int(seconds * 1_000_000_000)
+
+
+def _post_interrupt_ignore_ns() -> int:
+    ms = _bounded_float_env(
+        "HIKARI_VOICE_POST_INTERRUPT_IGNORE_MS",
+        _DEFAULT_POST_INTERRUPT_IGNORE_MS,
+        _MIN_POST_INTERRUPT_IGNORE_MS,
+        _MAX_POST_INTERRUPT_IGNORE_MS,
+    )
+    return int(ms * 1_000_000)
+
+
+def _arm_post_interrupt_ignore(runtime) -> None:
+    """Ignore residual/echo audio briefly after stop/goodbye interrupt."""
+    global _post_interrupt_ignore_until_ns
+    _post_interrupt_ignore_until_ns = runtime.now_ns() + _post_interrupt_ignore_ns()
+    if _frame_endpoint_gate is not None:
+        try:
+            _frame_endpoint_gate.reset()
+        except Exception:
+            pass
+    if _barge_endpoint_gate is not None:
+        try:
+            _barge_endpoint_gate.reset()
+        except Exception:
+            pass
+    loop = _voice_audio_loop
+    if loop is None:
+        return
+    # Drain queued residual frames without cancelling the capture loop.
+    try:
+        while loop.snapshot().queued_frames > 0:
+            drained = loop.dequeue()
+            if not drained.accepted:
+                break
+    except Exception:
+        pass
+
+
+def _in_post_interrupt_ignore(runtime) -> bool:
+    return runtime.now_ns() < _post_interrupt_ignore_until_ns
 
 
 def _mark_active_voice_activity(runtime) -> None:
@@ -590,14 +649,7 @@ def _speech_interrupt_mode(text: str) -> str | None:
     """Classify only deliberate stop commands, never transcript fragments."""
     from core.voice_streaming.runtime import speech_interrupt_mode
 
-    mode = speech_interrupt_mode(text)
-    if mode is None:
-        return None
-    # Preserve legacy wake_explicit alias for hikari-prefixed stops.
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    if normalized in {"hikari stop", "hikari done", "stop hikari"}:
-        return "wake_explicit"
-    return mode
+    return speech_interrupt_mode(text)
 
 
 def _is_speech_interrupt(text: str) -> bool:
@@ -653,8 +705,8 @@ def _request_verified_interruption(*, speech_observed_ns: int) -> str | None:
 def _wait_for_speech_or_owner_interrupt(process) -> tuple[str, str] | None:
     """Return interrupt mode when verified owner speaks over active speech.
 
-    Returns None if playback finished without interrupt, else stop/cancel/goodbye/
-    wake_explicit. Barge-in requires an explicit interruption phrase.
+    Returns None if playback finished without interrupt, else cancel/goodbye.
+    Barge-in requires an explicit interruption phrase.
     """
     if sr is None or r is None:
         process.wait()
@@ -783,7 +835,7 @@ def _start_speech_process(text: str):
 
 def speak(text, *, allow_interrupt: bool = True):
     """Speak locally while accepting verified owner barge-in."""
-    global hikari_state, _playback_controller
+    global hikari_state, _playback_controller, _active_last_activity_ns
     from core.voice_capture.playback import PlaybackController
 
     hikari_state = HikariState.SPEAKING
@@ -841,10 +893,18 @@ def speak(text, *, allow_interrupt: bool = True):
             return False
         print("[DAEMON] Speech interrupted by explicit local command", flush=True)
         if mode == "goodbye":
-            runtime.start_wake_listening()
+            # Return to wake-only sleep; do not leave active listening that would
+            # immediately re-process residual/echo audio as a new command.
+            runtime.reset_to_wake_listening()
+            if _playback_controller is not None:
+                _playback_controller.clear()
+            _arm_post_interrupt_ignore(runtime)
+            _active_last_activity_ns = 0
             hikari_state = HikariState.LISTENING
             return False
+        # Soft cancel: stay in active listening for the next command.
         runtime.start_active_listening()
+        _arm_post_interrupt_ignore(runtime)
         return False
     except Exception:
         if process is not None and process.poll() is None:
@@ -861,7 +921,12 @@ def speak(text, *, allow_interrupt: bool = True):
 
 
 def _get_voice_orchestrator():
-    """Return the shared orchestrator, bound to the latest private owner chat."""
+    """Return a voice-bound orchestrator on a fresh conversation session.
+
+    Do not hydrate the latest text chat session (which may contain unrelated
+    prior topics). Brain v2 reviewed memory remains the authority for personal
+    facts; voice turns stay isolated from prior text threads.
+    """
     global _voice_orchestrator
     if _voice_orchestrator is not None:
         return _voice_orchestrator
@@ -871,9 +936,7 @@ def _get_voice_orchestrator():
 
     orchestrator = get_orchestrator()
     store = create_conversation_session_store()
-    record = store.latest(owner_id="local-owner")
-    if record is None:
-        record = store.create(owner_id="local-owner")
+    record = store.create(owner_id="local-owner", title="Voice session")
     orchestrator.configure_conversation_session(store, record.session_id)
     _voice_orchestrator = orchestrator
     return orchestrator
@@ -895,25 +958,9 @@ def process(text):
 
 def is_stop_command(text: str) -> bool:
     """Return True only for an explicit command to resume wake-word listening."""
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    stop_phrases = {
-        "bye",
-        "goodbye",
-        "good bye",
-        "exit",
-        "stop",
-        "go to sleep",
-        "sleep",
-        "that's all",
-        "that's it",
-        "nothing else",
-        "done",
-        "thank you",
-        "thanks",
-        "okay goodbye",
-        "see you later",
-    }
-    return normalized in stop_phrases
+    from core.voice_streaming.runtime import is_stop_command as runtime_is_stop_command
+
+    return runtime_is_stop_command(text)
 
 
 def _is_wake_phrase(text: str) -> bool:
@@ -985,6 +1032,8 @@ def _listen_for_active_command() -> None:
     if hikari_state != HikariState.ACTIVE:
         return
     runtime = _get_streaming_runtime()
+    if _in_post_interrupt_ignore(runtime):
+        return
     if _sleep_active_session_if_idle(runtime):
         return
     # Align canonical runtime when the owned loop is already ACTIVE.
@@ -1018,6 +1067,7 @@ def _listen_for_active_command() -> None:
     if result.get("action") == "silent_goodbye":
         _active_last_activity_ns = 0
         hikari_state = HikariState.LISTENING
+        _arm_post_interrupt_ignore(runtime)
         print("💤 Going to sleep... (still listening for 'hikari')\n")
         return
 
@@ -1100,6 +1150,13 @@ def _listen_frame_stream_cycle() -> None:
     diagnostic_max_probability = 0.0
     deadline = time.monotonic() + 30.0
     while daemon_running and time.monotonic() < deadline:
+        if _in_post_interrupt_ignore(runtime):
+            # Discard residual/echo frames until the ignore window ends.
+            pulled = loop.pull()
+            if pulled.accepted and pulled.frame is not None:
+                continue
+            time.sleep(0.01)
+            continue
         if _sleep_active_session_if_idle(runtime):
             gate.reset()
             return
@@ -1200,6 +1257,7 @@ def _listen_frame_stream_cycle() -> None:
         action = result.get("action")
         if action == "silent_goodbye":
             _active_last_activity_ns = 0
+            _arm_post_interrupt_ignore(runtime)
             gate.reset()
             return
         if action == "process_command":
@@ -1253,6 +1311,7 @@ def request_shutdown(_signum=None, _frame=None) -> None:
     global _voice_audio_loop, _time_sense_coordinator, _utterance_seq, _capture_mode
     global _capture_backend, _frame_endpoint_gate, _barge_endpoint_gate
     global _playback_controller, _interruption_seq, _active_last_activity_ns
+    global _post_interrupt_ignore_until_ns
 
     daemon_running = False
     if _voice_audio_loop is not None:
@@ -1284,6 +1343,7 @@ def request_shutdown(_signum=None, _frame=None) -> None:
     _utterance_seq = 0
     _interruption_seq = 0
     _active_last_activity_ns = 0
+    _post_interrupt_ignore_until_ns = 0
     _capture_mode = "utterance_only"
     _capture_backend = "utterance-only"
     _frame_endpoint_gate = None

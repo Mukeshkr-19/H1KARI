@@ -93,6 +93,54 @@ STOP_WORDS = {
     "thanks",
     "okay goodbye",
     "see you later",
+    "hikari stop",
+    "hikari done",
+    "stop hikari",
+    "be quiet",
+    "stop listening",
+}
+
+# Soft interrupt during playback only — stays in active listening (not wake sleep).
+SOFT_INTERRUPT_WORDS = {
+    "cancel",
+}
+
+# Exact phrases that interrupt assistant speech. Stop/goodbye return to wake sleep;
+# cancel remains a soft interrupt that stays active.
+SPEECH_INTERRUPT_WORDS = STOP_WORDS | SOFT_INTERRUPT_WORDS | {
+    "goodbye",
+    "good bye",
+    "go to sleep",
+    "stop listening",
+    "be quiet",
+    "hikari stop",
+    "hikari done",
+    "stop hikari",
+    "stop",
+    "cancel",
+}
+
+GOODBYE_INTERRUPT_WORDS = {
+    "stop",
+    "be quiet",
+    "hikari stop",
+    "hikari done",
+    "stop hikari",
+    "goodbye",
+    "good bye",
+    "go to sleep",
+    "stop listening",
+    "bye",
+    "exit",
+    "sleep",
+    "that's all",
+    "that's it",
+    "nothing else",
+    "done",
+    "thank you",
+    "thanks",
+    "okay goodbye",
+    "see you later",
 }
 
 
@@ -138,30 +186,21 @@ def is_speech_interrupt_command(text: str) -> bool:
     if not isinstance(text, str):
         return False
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in {
-        "hikari stop",
-        "hikari done",
-        "stop hikari",
-        "stop",
-        "be quiet",
-        "cancel",
-        "goodbye",
-        "good bye",
-        "go to sleep",
-        "stop listening",
-    }
+    return normalized in SPEECH_INTERRUPT_WORDS or normalized in GOODBYE_INTERRUPT_WORDS
 
 
 def speech_interrupt_mode(text: str) -> str | None:
-    """Return interrupt mode for an exact playback interrupt phrase."""
+    """Return interrupt mode for an exact playback interrupt phrase.
+
+    Stop and goodbye phrases return ``goodbye`` (wake-only sleep).
+    ``cancel`` remains a soft interrupt that stays in active listening.
+    """
     if not isinstance(text, str):
         return None
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    if normalized in {"stop", "be quiet", "hikari stop", "hikari done", "stop hikari"}:
-        return "stop"
     if normalized == "cancel":
         return "cancel"
-    if normalized in {"goodbye", "good bye", "go to sleep", "stop listening"}:
+    if normalized in GOODBYE_INTERRUPT_WORDS:
         return "goodbye"
     return None
 

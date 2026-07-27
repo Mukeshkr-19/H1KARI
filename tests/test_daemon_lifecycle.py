@@ -407,6 +407,12 @@ def test_stop_command_requires_an_explicit_full_utterance():
     assert daemon.is_stop_command("goodbye") is True
     assert daemon.is_stop_command("Good bye!") is True
     assert daemon.is_stop_command("okay goodbye") is True
+    assert daemon.is_stop_command("hikari stop") is True
+    assert daemon.is_stop_command("hikari done") is True
+    assert daemon.is_stop_command("stop hikari") is True
+    assert daemon.is_stop_command("be quiet") is True
+    assert daemon.is_stop_command("stop listening") is True
+    assert daemon.is_stop_command("cancel") is False
     assert daemon.is_stop_command("please stop by the store") is False
     assert daemon.is_stop_command("thanks for explaining that") is False
 

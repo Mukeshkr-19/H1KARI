@@ -1,93 +1,23 @@
-# H1KARI v2.0 - Personal AI Assistant
+# H1KARI
 
-H1KARI is a local-first personal AI assistant for macOS. The assistant and CLI still answer to HIKARI / `hikari`; the repo uses H1KARI as its clean public project identity. The public repo contains code, tests, docs, scripts, and the optional Next.js frontend. Private runtime state lives outside Git in a sibling private data directory (not committed).
+H1KARI is a local-first personal AI assistant for macOS. The runtime assistant and CLI still answer to HIKARI / `hikari`; this repository uses H1KARI as the public project identity. The public repo holds code, tests, docs, scripts, and an optional Next.js frontend. Private runtime state stays outside Git.
 
-## What Works Now
+## What it is
 
-- Python CLI entrypoint: `hikari.py`
-- Text mode: `python hikari.py --text`
-- Server mode: `python hikari.py --server --host 127.0.0.1 --port 9876`
-- HTTP routes: `/api/status`, `/connect`, `/qr`
-- Multi-agent routing: voice, research, files, system, code, memory
-- Neural memory bridge connected through the live brain directory (not committed)
-- Push-to-talk voice companion with visible capture state, bounded captions, and text fallback
-- Voice-controlled document prepare, confirmation, cancellation, and follow-up flow
-- Explicit local or cloud speech-recognition selection with no silent cloud fallback
-- Optional browser spoken output, off by default, with stop, repeat, and slower controls
-- Next.js frontend builds and lints
-- Tests pass with Python 3.12
+- **Local-first assistant** — text CLI, local HTTP server, and an always-on voice wake daemon.
+- **Brain v2** — reviewed, source-linked personal memory is the authority for durable personal facts. Guest sessions stay isolated from owner memory.
+- **Voice** — wake-word daemon with speaker verification; stop/goodbye phrases return to wake-only listening.
+- **Tasks** — productivity and document workflows are separate from Brain memory. A chat transcript is context, not accepted truth.
+- **Privacy** — secrets, conversation DBs, voice enrollment artifacts, and live brain data are not committed.
 
-## Public Repo Layout
+## Quick start
 
-```text
-H1KARI/
-├── agents/             # Agent implementations
-├── bin/                # Launchers, including bin/Hikari
-├── core/               # Orchestrator, server, memory, voice, integrations
-├── docs/               # Public project docs
-├── hikari-frontend/    # Optional Next.js frontend
-├── scripts/            # Install/uninstall helper scripts
-├── security/           # Authentication helpers
-├── services/           # Daemon/tray/always-on service entrypoints
-├── skills/             # Built-in skill system
-├── tests/              # Pytest suite
-├── .env.example        # Placeholder environment template
-├── .gitignore
-├── AGENTS.md           # Agent-facing repo context
-├── README.md
-├── hikari.py           # Main CLI/server entrypoint
-├── install.sh
-├── package.json        # npm shortcuts for Python commands
-├── requirements-dev-macos-arm64-py312.lock
-├── requirements-dev.txt
-├── requirements-macos-arm64-py312.lock
-└── requirements.txt
-```
-
-## Public Docs
-
-- `docs/QUICKSTART.md` - setup and first-run commands.
-- `docs/ARCHITECTURE.md` - current repo layout, commands, and operating model.
-- `docs/NEURAL_MEMORY_ACCEPTANCE.md` - neural memory acceptance criteria.
-- `docs/MODEL_PROVENANCE.md` - reviewed voice-model sources and download policy.
-- `docs/PROVIDER_PROVENANCE.md` - hosted-provider and external-service data flows.
-- `docs/LOCAL_ROUTER_GATEWAYS.md` - optional OmniRoute and 9Router setup.
-- `docs/LOCAL_VISION_PROVISIONING.md` - optional offline image-description model boundary.
-- `docs/PHASE_0_COMPLETION.md` - Phase A/0 work-package and verification record.
-- `docs/PHASE_1_COMPLETION.md` - safe companion kernel completion record.
-- `docs/PHASE_2_COMPLETION.md` - voice companion completion record.
-- `docs/PHASE_3_COMPLETION.md` - safe productivity tools completion record.
-- `docs/PHASE_5_CONTRACTS.md` - Phase 5 authority, consent, child, and helper boundaries.
-- `docs/PHASE_5_PROTOCOL.md` - production WebSocket session and proposal protocol.
-- `docs/PHASE_5_ACCESSIBILITY_CHECKLIST.md` - required human accessibility release evidence.
-- `docs/PHASE_5_MANUAL_TEST_GUIDE.md` - exact Phase 5 manual test steps and expected results.
-- `docs/VOICE_COMPANION.md` - voice behavior, controls, privacy, and failure boundaries.
-- `THIRD_PARTY_NOTICES.md` - dependency and packaged-release notice gate.
-- `SECURITY.md`, `CONTRIBUTING.md`, and `GOVERNANCE.md` - public project policy.
-
-## Privacy Model
-
-H1KARI keeps runtime state outside the public repository. Local API keys,
-conversation logs, voice-auth artifacts, SQLite brain databases, and private
-operating notes are intentionally excluded from Git.
-
-Brain v2 is the current personal-memory authority. It stores reviewed,
-source-linked memories separately from raw conversation evidence, blocks
-legacy neural personal fallback during normal chat, and keeps guest speaker
-sessions isolated from household-owner memories.
-
-## Setup
-
-Use Python 3.12. The macOS arm64 lock is verified only with Python 3.12. PyAudio
-also requires the native PortAudio library; install it with Homebrew before the
-Python dependencies.
+Use Python 3.12. On macOS arm64, install PortAudio and the verified lock:
 
 ```bash
 cd path/to/H1KARI
 brew install python@3.12 portaudio
 PYTHON312="$(command -v python3.12)"
-if [ -z "$PYTHON312" ]; then echo "Python 3.12 was not found on PATH." >&2; exit 1; fi
-"$PYTHON312" --version
 "$PYTHON312" -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
 .venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
@@ -95,42 +25,9 @@ cp .env.example .env
 bash scripts/install-hikari-cli.sh
 ```
 
-Confirm that the discovered interpreter reports Python 3.12 before creating the
-environment. This avoids relying on a Python installation at any fixed path.
-The exact lock above is verified for macOS arm64 with Python 3.12.
+Edit the ignored local `.env` with at least one provider key (for example `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`). Never commit credentials.
 
-`constraints-macos-arm64-py312.txt` is an optional, narrow compatibility constraint
-set for selected packages on macOS arm64 with Python 3.12. It affects installation
-only when passed explicitly to pip with `--constraint`; it is not a substitute for
-the complete, authoritative platform lock above. On another
-platform, install PortAudio through the platform package manager, then install
-`requirements.txt` and `requirements-dev.txt`; that portable path resolves
-direct constraints but is not yet a verified lock. The repository `install.sh`
-script similarly discovers `python3` from `PATH` and selects the verified lock
-only when the created environment is Python 3.12 on macOS arm64.
-
-Edit the ignored local `.env` file and add at least one provider key, for example
-`GOOGLE_AI_STUDIO_KEY` (or its `GEMINI_API_KEY` alias) or `GROQ_API_KEY`. The file is ignored by Git and is
-loaded automatically at runtime. Keep it local and never commit credentials.
-
-Provider defaults are maintained in `core/router.py` and can be overridden with
-the `*_FAST_MODEL`, `*_BALANCED_MODEL`, and `*_SMART_MODEL` variables in the
-ignored local environment file.
-The current defaults are Gemini 3.5/3.6 Flash, Groq Qwen3 32B and GPT-OSS 120B,
-Cerebras Llama 3.1 8B/GLM 4.7/GPT-OSS 120B, NVIDIA Nemotron 3 Ultra, Cohere
-Command A+, and OpenRouter's `openrouter/free` router. OpenRouter dynamically
-selects a free upstream, so never send private Brain, voice, identity, or
-credential data through it. Provider keys only mark a route as configured; use
-the provider smoke checks in your own environment to verify account access and
-model entitlements.
-
-H1KARI can also route text through separately running local OmniRoute or 9Router
-gateways. See `docs/LOCAL_ROUTER_GATEWAYS.md`. These gateways aggregate upstream
-provider accounts and quotas; they do not create guaranteed free tokens.
-
-## Run
-
-After CLI install, `hikari` and `Hikari` work from any terminal folder:
+### Run
 
 ```bash
 hikari --help
@@ -138,147 +35,88 @@ hikari --doctor
 hikari --text
 hikari --new
 hikari --sessions
-hikari --session chat_0123456789abcdef01234567
 hikari --server --host 127.0.0.1 --port 9876
-hikari --text --verbose
 ```
 
-Local text and foreground voice chats share private, resumable sessions. The
-complete transcript stays under the private HIKARI runtime directory; only a
-bounded recent/relevant window is sent to the configured model. Inside text
-mode, type `/help` for new, resume, rename, archive, restore, and confirmed
-deletion commands. Brain v2 remains the reviewed authority for durable personal
-memory; a saved chat is context, not permission or accepted truth.
-
-Repo-local commands still work too:
+Repo-local equivalents:
 
 ```bash
-cd path/to/H1KARI
-
-# CLI help
 .venv/bin/python hikari.py --help
-
-# Quick health/status check
 .venv/bin/python hikari.py --doctor
-
-# Full pre-push health check
-.venv/bin/python hikari.py --doctor-full
-
-# Text mode
 .venv/bin/python hikari.py --text
-
-# Server mode
 .venv/bin/python hikari.py --server --host 127.0.0.1 --port 9876
-
-# Simple always-listening daemon
-.venv/bin/python hikari.py --daemon
-
-# Speaker-locked daemon enrollment and run
 .venv/bin/python hikari.py --enroll-voice
 .venv/bin/python hikari.py --daemon
 ```
 
-CLI install/uninstall:
+`hikari --text` resumes the latest local-owner chat by default. Use `hikari --new` for a clean text session. The voice daemon starts its own conversation session so voice turns do not inherit an unrelated prior text thread; Brain v2 remains the authority for personal facts.
+
+### npm shortcuts
 
 ```bash
-bash scripts/install-hikari-cli.sh
-bash scripts/uninstall-hikari-cli.sh
-# or
-.venv/bin/python hikari.py --install-cli
-.venv/bin/python hikari.py --uninstall-cli
+npm start          # text mode
+npm run voice      # hikari.py --daemon
+npm run daemon     # services/hikari_daemon.py
+npm run enroll     # voice enrollment
+npm run server     # local server
 ```
 
-Phone/server URLs when server mode is running:
+## Layout
 
 ```text
-http://127.0.0.1:9876/api/status
-http://127.0.0.1:9876/connect
-http://127.0.0.1:9876/qr
+H1KARI/
+├── agents/             # Agent implementations
+├── bin/                # Launchers
+├── core/               # Orchestrator, Brain v2, voice, router, policy
+├── docs/               # Public project docs
+├── hikari-frontend/    # Optional Next.js frontend
+├── scripts/            # Install and doctor helpers
+├── security/           # Auth helpers
+├── services/           # Voice daemon and tray entrypoints
+├── skills/             # Built-in skills
+├── tests/              # Pytest suite
+├── hikari.py           # Main CLI entrypoint
+└── README.md
 ```
 
-## Frontend
+## Privacy
+
+Keep outside Git (and never stage):
+
+- local `.env` and API keys
+- conversation logs and session databases
+- Brain v2 / neural SQLite stores and live-brain trees
+- voice enrollment and speaker-auth artifacts
+- private operating notes
+
+Brain v2 stores reviewed, source-linked memories separately from raw chat evidence and blocks legacy personal-memory fallback during normal chat when authority is enabled.
+
+## Docs
+
+- `docs/QUICKSTART.md` — setup and first-run commands
+- `docs/ARCHITECTURE.md` — layout and operating model
+- `docs/VOICE_COMPANION.md` — voice behavior and controls
+- `docs/PROVIDER_PROVENANCE.md` — hosted providers and data flows
+- `docs/LOCAL_ROUTER_GATEWAYS.md` — optional OmniRoute / 9Router
+- `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE.md`
+
+## Verify
 
 ```bash
-cd path/to/H1KARI/hikari-frontend
-npm run lint
-npm run build
-```
-
-The frontend must not depend on remote Google Fonts during build. Keep fonts local or use system fonts.
-
-## Explain one approved text document
-
-Preparing a document records a durable task but does not read the file:
-
-```bash
-.venv/bin/python hikari.py --explain-document /path/to/notes.txt
-```
-
-After reviewing the selected path and provider, run the explicit one-action
-confirmation. Repeat `--document-provider` to define an ordered fallback:
-
-```bash
-.venv/bin/python hikari.py \
-  --explain-document /path/to/notes.txt \
-  --document-provider ollama \
-  --confirm-document READ_AND_SEND
-```
-
-Reconnect or ask a follow-up using the returned task ID:
-
-```bash
-.venv/bin/python hikari.py --document-task TASK_ID
-.venv/bin/python hikari.py \
-  --document-task TASK_ID \
-  --document-follow-up "What are the main risks?" \
-  --document-provider ollama \
-  --confirm-document READ_AND_SEND
-```
-
-The document workflow accepts one regular, non-symlinked UTF-8 `.txt` file up to
-100 KB. It does not support PDF, DOCX, OCR, uploads, or multiple files; those belong
-to later phases. When the voice companion is explicitly enabled, the same prepare,
-confirmation, cancellation, and follow-up flow can be driven with the bounded voice
-commands documented in `docs/VOICE_COMPANION.md`.
-
-## Verification Before Push
-
-```bash
-cd path/to/H1KARI
-
-git status --short --branch
 hikari --help
 hikari --doctor
 printf 'status\nexit\n' | .venv/bin/python hikari.py --text
 .venv/bin/python -m pytest tests -q
-cd hikari-frontend && npm run lint && npm run build
 ```
 
-Full doctor/status check:
+Full pre-push check:
 
 ```bash
 .venv/bin/python hikari.py --doctor-full
-# or
-npm run doctor:full
-# or
-bash scripts/doctor.sh --full
 ```
 
-Quick doctor checks repo layout, Git cleanliness, Python version, optional private
-brain paths, public Git privacy, duplicate tracked content, and frontend dependency
-presence. A clean H1KARI clone may show warnings for optional private data, brain
-symlink, Brain v2 episode DB (before first chat), or `node_modules` until you set
-those up — that is expected.
-Full doctor additionally runs CLI help, text status, Python tests, frontend lint,
-and frontend build.
-
-Normal CLI chat is quiet by default. Use `--verbose` when you want internal
-initialization, routing, scheduler, memory, and provider logs.
-
-Private-file scan before any public push:
+Privacy scan before a public push:
 
 ```bash
 .venv/bin/python -m pytest tests/test_privacy_terms.py -q
 ```
-
-That test must pass (zero denylist hits in tracked and untracked public source).
