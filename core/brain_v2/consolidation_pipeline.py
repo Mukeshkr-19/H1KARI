@@ -235,17 +235,21 @@ class EpisodeConsolidationPipeline:
             is_task_or_action_statement,
         )
 
-        if is_task_or_action_statement(text) or is_memory_rejection_statement(text):
-            return []
-
-        found: List[Tuple[str, str, float, Optional[dict]]] = []
-
         from core.brain_v2.owner_auto_trust import (
             is_explicit_remember_command,
             strip_explicit_memory_command,
         )
 
         explicit_remember = is_explicit_remember_command(text)
+        extraction_probe = (
+            strip_explicit_memory_command(text) if explicit_remember else text
+        )
+        if is_task_or_action_statement(extraction_probe) and not explicit_remember:
+            return []
+        if is_memory_rejection_statement(text):
+            return []
+
+        found: List[Tuple[str, str, float, Optional[dict]]] = []
         if explicit_remember:
             statement = strip_explicit_memory_command(text).strip()
             inferred = infer_memory_type(statement, explicit_remember=True)

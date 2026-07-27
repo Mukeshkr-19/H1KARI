@@ -169,13 +169,44 @@ class BrainV2Coordinator:
             == preference_kind
             and normalize_statement(memory.statement) != candidate_norm
         ]
+        relation = str((candidate.metadata or {}).get("relation") or "").strip().lower()
+        person = str((candidate.metadata or {}).get("person") or "").strip().lower()
+        relation_name_conflict = False
+        if candidate.candidate_type == "relation" and relation and person:
+            import re as _re_rel
+
+            cand_is_name = bool(
+                _re_rel.search(r"\bname\b", candidate.statement or "", _re_rel.I)
+                or _re_rel.search(
+                    rf"\bis\s+my\s+{_re_rel.escape(relation)}\b",
+                    candidate.statement or "",
+                    _re_rel.I,
+                )
+            )
+            if cand_is_name:
+                for memory in active_same_type:
+                    mem_rel = str((memory.metadata or {}).get("relation") or "").strip().lower()
+                    mem_person = str((memory.metadata or {}).get("person") or "").strip().lower()
+                    if mem_rel != relation or not mem_person or mem_person == person:
+                        continue
+                    mem_is_name = bool(
+                        _re_rel.search(r"\bname\b", memory.statement or "", _re_rel.I)
+                        or _re_rel.search(
+                            rf"\bis\s+my\s+{_re_rel.escape(mem_rel)}\b",
+                            memory.statement or "",
+                            _re_rel.I,
+                        )
+                    )
+                    if mem_is_name and normalize_statement(memory.statement) != candidate_norm:
+                        relation_name_conflict = True
+                        break
         if (
             candidate.candidate_type in singleton_types
             and active_same_type
             and not has_exact_active
             and not alias_identity_update
             and not identity_legal_correction
-        ):
+        ) or relation_name_conflict:
             return {
                 "status": "pending_conflict",
                 "candidate_type": candidate.candidate_type,

@@ -9,7 +9,7 @@ from core.action_policy import Actor, ActorContext, validate_actor_context
 from core.brain_v2.coordinator import BrainV2Coordinator
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class ReviewedMemoryHit:
     text: str
     score: float
@@ -20,6 +20,9 @@ class ReviewedMemoryHit:
     predecessor_memory_ids: tuple[str, ...]
     predecessor_evidence_segment_ids: tuple[str, ...]
     correction_actions: tuple[str, ...]
+
+    def __repr__(self):
+        return f"ReviewedMemoryHit(memory_id={self.memory_id!r}, score={self.score}, chars={len(self.text or "")})"
 
 
 class BrainService:

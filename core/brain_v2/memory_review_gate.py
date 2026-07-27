@@ -50,14 +50,10 @@ class MemoryReviewGate:
         accepted = self.store.get_active_accepted_memories(limit=200)
         existing = find_accepted_duplicate(cand.statement, accepted)
         if existing:
-            self.store.update_candidate_status(
-                cand.candidate_id, MemoryCandidateStatus.ACCEPTED
-            )
             meta = dict(cand.metadata or {})
             meta["merged_into_existing"] = True
             meta["merged_memory_id"] = existing.memory_id
             meta["normalized_statement"] = normalize_statement(cand.statement)
-            self.store.update_candidate_metadata(cand.candidate_id, meta)
             merged_meta = dict(existing.metadata or {})
             merged_meta["duplicate_merge_count"] = int(
                 merged_meta.get("duplicate_merge_count", 1)
@@ -77,9 +73,10 @@ class MemoryReviewGate:
                 layer=existing.layer,
                 metadata=merged_meta,
             )
-            return self.store.save_source_linked_memory(updated)
+            return self.store.atomic_accept_source_linked(
+                cand.candidate_id, updated, candidate_metadata=meta
+            )
 
-        self.store.update_candidate_status(cand.candidate_id, MemoryCandidateStatus.ACCEPTED)
         linked_meta: dict = {
             "candidate_type": cand.candidate_type,
             "confidence": cand.confidence,
@@ -101,7 +98,7 @@ class MemoryReviewGate:
             layer=layer,
             metadata=linked_meta,
         )
-        return self.store.save_source_linked_memory(linked)
+        return self.store.atomic_accept_source_linked(cand.candidate_id, linked)
 
     def reject(self, candidate_id: str) -> MemoryCandidate:
         cand = self.store.get_candidate(candidate_id)

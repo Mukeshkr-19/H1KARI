@@ -69,12 +69,21 @@ def route_owner_utterance(
         is_task_or_action_statement,
     )
 
-    if is_task_or_action_statement(raw):
-        return MemoryPolicyDecision(
-            MemoryPolicyRoute.TASK,
-            reason="task_or_action",
-            statement=raw,
-        )
+    from core.brain_v2.owner_auto_trust import strip_explicit_memory_command
+    import re as _re_task
+
+    explicit_wrapper = is_explicit_remember_command(raw)
+    task_probe = strip_explicit_memory_command(raw) if explicit_wrapper else raw
+    if is_task_or_action_statement(task_probe):
+        if not (
+            explicit_wrapper
+            and not _re_task.search(r"\bremind\s+me\b", task_probe or "", _re_task.I)
+        ):
+            return MemoryPolicyDecision(
+                MemoryPolicyRoute.TASK,
+                reason="task_or_action",
+                statement=raw,
+            )
 
     try:
         from core.speaker_context import is_temporary_speaker_intro
@@ -106,7 +115,8 @@ def route_owner_utterance(
         )
 
     explicit = is_explicit_remember_command(raw)
-    inferred = infer_memory_type(raw, explicit_remember=explicit)
+    fact_text = strip_explicit_memory_command(raw) if explicit else raw
+    inferred = infer_memory_type(fact_text, explicit_remember=explicit)
 
     if inferred.candidate_type == "current_location":
         return MemoryPolicyDecision(
@@ -156,12 +166,12 @@ def route_owner_utterance(
     candidate = MemoryCandidate(
         candidate_id=str(uuid.uuid4()),
         episode_id="policy-check",
-        statement=raw,
+        statement=fact_text,
         candidate_type=inferred.candidate_type,
         metadata=meta,
     )
 
-    if is_owner_scoped_auto_trust_candidate(candidate, raw):
+    if is_owner_scoped_auto_trust_candidate(candidate, fact_text):
         return MemoryPolicyDecision(
             MemoryPolicyRoute.ACTIVE_MEMORY,
             candidate_type=inferred.candidate_type,

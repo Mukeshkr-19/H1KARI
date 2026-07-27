@@ -148,6 +148,8 @@ class EpisodeStore:
             )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
+        if not self.readonly:
+            conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _init_db(self) -> None:
@@ -695,6 +697,21 @@ class EpisodeStore:
                 conn.rollback()
                 raise
         return retired_old, replacement
+
+    def atomic_accept_source_linked(self, candidate_id: str, linked, *, candidate_metadata=None):
+        with self._connect() as conn:
+            try:
+                conn.execute('BEGIN IMMEDIATE')
+                row=conn.execute('SELECT candidate_id FROM memory_candidates WHERE candidate_id=?',(candidate_id,)).fetchone()
+                if not row: raise KeyError('candidate_missing')
+                conn.execute('UPDATE memory_candidates SET review_status=? WHERE candidate_id=?',(MemoryCandidateStatus.ACCEPTED.value,candidate_id))
+                if candidate_metadata is not None:
+                    conn.execute('UPDATE memory_candidates SET metadata=? WHERE candidate_id=?',(dumps_json(candidate_metadata),candidate_id))
+                self._persist_source_linked_conn(conn, linked)
+                conn.commit()
+            except Exception:
+                conn.rollback(); raise
+        return linked
 
     def get_source_linked_memory(self, memory_id: str) -> Optional[SourceLinkedMemory]:
         """Resolve by full id or unique prefix."""
