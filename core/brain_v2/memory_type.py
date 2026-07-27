@@ -21,6 +21,7 @@ _RELATION_ALIASES = (
     "mother",
     "sister",
     "brother",
+    "friend",
     "gf",
     "girlfriend",
     "partner",
@@ -201,7 +202,16 @@ def _is_plan_or_event(low: str, text: str) -> bool:
         r"\b(?:tomorrow|today|tonight|next\s+(?:week|month|year|monday|tuesday|"
         r"wednesday|thursday|friday|saturday|sunday))\b",
         low,
-    ) and re.search(r"\b(?:meeting|meet|lunch|dinner|appointment|plans?)\b", low):
+    ) and re.search(r"\b(?:meeting|meet|lunch|dinner|appointment|plans?|call|email|text)\b", low):
+        return True
+    if re.search(
+        r"\b(?:i\s+will|i'll|need\s+to)\s+(?:call|email|text|meet)\b",
+        low,
+    ) and re.search(
+        r"\b(?:tomorrow|today|tonight|next\s+(?:week|month|year|monday|tuesday|"
+        r"wednesday|thursday|friday|saturday|sunday))\b",
+        low,
+    ):
         return True
     if re.search(
         rf"\b(?:on\s+)?(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b",
@@ -355,7 +365,7 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
         meta["relation"] = rel
 
     name_declaration = re.search(
-        r"\bmy\s+(?P<relation>girlfriend|gf|partner|sister|brother|wife|husband|boyfriend)"
+        r"\bmy\s+(?P<relation>girlfriend|gf|partner|sister|brother|friend|wife|husband|boyfriend)"
         r"(?:'s)?\s+(?:full\s+)?name(?:d)?\s+is\s+"
         r"(?P<person>[A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})"
         r"(?=\s*(?:[,.;!?]|$))",
@@ -369,7 +379,7 @@ def _extract_relation_metadata(text: str, low: str) -> Dict[str, object]:
         return meta
 
     m2 = re.search(
-        r"\bmy\s+(?:girlfriend|gf|partner|sister|brother|wife|husband|boyfriend)\s+"
+        r"\bmy\s+(?:girlfriend|gf|partner|sister|brother|friend|wife|husband|boyfriend)\s+"
         r"(?!(?:name|named|is)\b)([A-Z][a-z]{2,})",
         text,
         re.I,

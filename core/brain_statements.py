@@ -79,7 +79,19 @@ def is_declarative_memory_statement(text: str) -> bool:
             return False
     except ImportError:
         pass
-    if is_task_or_action_statement(raw):
+    try:
+        from core.brain_v2.owner_auto_trust import (
+            is_explicit_remember_command,
+            strip_explicit_memory_command,
+        )
+
+        if is_explicit_remember_command(text):
+            body = (strip_explicit_memory_command(text) or "").strip()
+            return bool(body) and not _looks_like_question_text(body.lower())
+        declarative_probe = raw
+    except ImportError:
+        declarative_probe = raw
+    if is_task_or_action_statement(declarative_probe):
         return False
     try:
         from core.brain_v2.location_phrases import is_meta_or_deferred_location_phrase

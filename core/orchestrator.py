@@ -847,23 +847,38 @@ class HIKARI_Orchestrator:
                     metadata={"skip_candidate_extraction": True, "task_action": True},
                 )
 
-        if self._brain_v2_authority_enabled() and is_task_or_action_statement(user_input):
-            task_meta = {"skip_candidate_extraction": True, "task_action": True}
-            agent_response = self._route_to_agent(lowered)
-            if agent_response:
+        if self._brain_v2_authority_enabled():
+            from core.brain_v2.owner_auto_trust import (
+                is_explicit_remember_command,
+                strip_explicit_memory_command,
+            )
+            import re as _re_task
+
+            treat_as_task = is_task_or_action_statement(brain_memory_text)
+            if treat_as_task and is_explicit_remember_command(brain_memory_text):
+                body = strip_explicit_memory_command(brain_memory_text)
+                # Keep pure reminder imperatives as tasks; declarative plans go to memory.
+                treat_as_task = bool(
+                    is_task_or_action_statement(body)
+                    and _re_task.search(r"\bremind\s+me\b", body or "", _re_task.I)
+                )
+            if treat_as_task:
+                task_meta = {"skip_candidate_extraction": True, "task_action": True}
+                agent_response = self._route_to_agent(lowered)
+                if agent_response:
+                    return self._reply_and_record_brain_v2_turn(
+                        user_input,
+                        agent_response,
+                        source,
+                        metadata=task_meta,
+                    )
+                self._record_task_intent(user_input, source_channel=source)
                 return self._reply_and_record_brain_v2_turn(
                     user_input,
-                    agent_response,
+                    self._task_action_no_memory_reply(user_input),
                     source,
                     metadata=task_meta,
                 )
-            self._record_task_intent(user_input, source_channel=source)
-            return self._reply_and_record_brain_v2_turn(
-                user_input,
-                self._task_action_no_memory_reply(user_input),
-                source,
-                metadata=task_meta,
-            )
 
         # Memory policy router: silent bucket selection for owner utterances.
         if self._brain_v2_authority_enabled() and not skip_owner_identity:

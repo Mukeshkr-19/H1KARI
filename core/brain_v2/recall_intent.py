@@ -54,6 +54,7 @@ PERSONAL_RECALL_INTENTS: FrozenSet[str] = frozenset(
 _FAMILY_RELATIONS = (
     "sister",
     "brother",
+    "friend",
     "mom",
     "mother",
     "dad",
@@ -223,6 +224,7 @@ _ALIAS_TO_CANONICAL = {
     "partner": "partner",
     "sister": "sister",
     "brother": "brother",
+    "friend": "friend",
     "wife": "wife",
     "husband": "husband",
     "boyfriend": "boyfriend",
@@ -624,7 +626,7 @@ def _matches_education_query(q: str) -> bool:
 def _matches_relationship(q: str) -> bool:
     return bool(
         re.search(
-            r"\bwhat\s+does\s+my\s+(?:gf|girlfriend|partner|boyfriend|wife|husband)\s+",
+            r"\bwhat\s+does\s+my\s+(?:gf|girlfriend|partner|boyfriend|wife|husband|friend)\s+",
             q,
         )
         or re.search(

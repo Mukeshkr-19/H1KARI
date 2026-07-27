@@ -9,6 +9,9 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 
+def _content_free_repr(name, **kw):
+    return name+"("+", ".join(f"{k}={v!r}" for k,v in kw.items())+")"
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -35,8 +38,10 @@ class MemoryLayer(str, Enum):
     CONSOLIDATION = "consolidation"
 
 
-@dataclass
+@dataclass(repr=False)
 class TranscriptSegment:
+    def __repr__(self):
+        return _content_free_repr("TranscriptSegment", segment_id=self.segment_id, episode_id=self.episode_id, chars=len(self.text or ""))
     """One utterance or chat turn inside a raw episode (verbatim evidence)."""
 
     segment_id: str
@@ -57,7 +62,7 @@ class TranscriptSegment:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
-@dataclass
+@dataclass(repr=False)
 class StructuredEpisode:
     """Consolidated view of an episode — separate from raw transcript segments."""
 
@@ -81,8 +86,10 @@ class StructuredEpisode:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
-@dataclass
+@dataclass(repr=False)
 class MemoryCandidate:
+    def __repr__(self):
+        return _content_free_repr("MemoryCandidate", candidate_id=self.candidate_id, chars=len(self.statement or ""))
     """Extracted memory proposal — not durable until reviewed."""
 
     candidate_id: str
@@ -104,8 +111,10 @@ class MemoryCandidate:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
-@dataclass
+@dataclass(repr=False)
 class SourceLinkedMemory:
+    def __repr__(self):
+        return _content_free_repr("SourceLinkedMemory", memory_id=self.memory_id, chars=len(self.statement or ""))
     """Accepted memory with evidence links back to episode segments."""
 
     memory_id: str
