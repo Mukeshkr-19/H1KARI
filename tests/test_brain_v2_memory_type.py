@@ -370,7 +370,7 @@ def test_hikari_decision_memory_answers_decision_query(episode_db):
 )
 def test_user_study_statement_pending_education(episode_db, raw):
     episode_id = episode_db.create_episode("user-edu")
-    episode_db.add_turn(episode_id, raw, is_user=True)
+    episode_db.add_turn(episode_id, f"Remember this: {raw}", is_user=True)
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     assert candidates
     cand = candidates[0]

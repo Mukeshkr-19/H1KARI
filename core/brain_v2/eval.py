@@ -231,17 +231,17 @@ def _case_pending_rejected_not_truth(
     episode_id = store.create_episode("rej-pend")
     store.add_turn(
         episode_id,
-        f"My dad lives in rejected-{CITY_B}.",
+        f"Remember this: My dad lives in rejected-{CITY_B}.",
         is_user=True,
     )
     store.add_turn(
         episode_id,
-        f"My mom lives in accepted-{CITY_A}.",
+        f"Remember this: My mom lives in accepted-{CITY_A}.",
         is_user=True,
     )
     store.add_turn(
         episode_id,
-        f"I am visiting pending-{CITY_B} next week.",
+        f"Remember this: I am visiting pending-{CITY_B} next week.",
         is_user=True,
     )
     candidates = EpisodeConsolidationPipeline(store).process_episode(episode_id)[1]

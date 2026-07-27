@@ -219,7 +219,8 @@ def test_verified_owner_can_interrupt_speech_immediately(monkeypatch):
 
     assert completed is False
     assert process.terminated is True
-    assert daemon.hikari_state == daemon.HikariState.ACTIVE
+    assert daemon.hikari_state == daemon.HikariState.LISTENING
+    assert daemon._get_streaming_runtime().is_wake_listening is True
     verify.assert_called_once()
 
 

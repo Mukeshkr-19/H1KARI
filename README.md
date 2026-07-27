@@ -1,18 +1,28 @@
 # H1KARI
 
-H1KARI is a local-first personal AI assistant for macOS. The runtime assistant and CLI still answer to HIKARI / `hikari`; this repository uses H1KARI as the public project identity. The public repo holds code, tests, docs, scripts, and an optional Next.js frontend. Private runtime state stays outside Git.
+Local-first personal AI for macOS.
 
-## What it is
+H1KARI is the public project identity for this repository. The runtime assistant and CLI still answer to **HIKARI** / `hikari`. The public tree holds code, tests, docs, scripts, and an optional Next.js frontend. Private runtime state stays outside Git.
 
-- **Local-first assistant** — text CLI, local HTTP server, and an always-on voice wake daemon.
-- **Brain v2** — reviewed, source-linked personal memory is the authority for durable personal facts. Guest sessions stay isolated from owner memory.
-- **Voice** — wake-word daemon with speaker verification; stop/goodbye phrases return to wake-only listening.
-- **Tasks** — productivity and document workflows are separate from Brain memory. A chat transcript is context, not accepted truth.
-- **Privacy** — secrets, conversation DBs, voice enrollment artifacts, and live brain data are not committed.
+---
+
+## Highlights
+
+| Area | What you get |
+| --- | --- |
+| **Local-first** | Text CLI, local HTTP server, always-on voice wake daemon |
+| **Brain v2** | Durable personal facts only after an explicit remember/save; guest sessions stay isolated |
+| **Voice** | Owner speaker verification; `stop` / `hikari stop` / goodbye return to wake-only sleep |
+| **Tasks** | Productivity and documents stay separate from Brain memory |
+| **Privacy** | Secrets, conversation DBs, enrollment artifacts, and live brain data are never committed |
+
+A chat transcript is context, not accepted truth.
+
+---
 
 ## Quick start
 
-Use Python 3.12. On macOS arm64, install PortAudio and the verified lock:
+Python **3.12**. On macOS arm64, install PortAudio and the verified lockfile:
 
 ```bash
 cd path/to/H1KARI
@@ -25,9 +35,9 @@ cp .env.example .env
 bash scripts/install-hikari-cli.sh
 ```
 
-Edit the ignored local `.env` with at least one provider key (for example `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`). Never commit credentials.
+Copy the example environment file (command above), then edit the ignored local environment file with at least one provider key such as `GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`. Never commit credentials.
 
-### Run
+### Commands
 
 ```bash
 hikari --help
@@ -49,7 +59,7 @@ Repo-local equivalents:
 .venv/bin/python hikari.py --daemon
 ```
 
-`hikari --text` resumes the latest local-owner chat by default. Use `hikari --new` for a clean text session. The voice daemon starts its own conversation session so voice turns do not inherit an unrelated prior text thread; Brain v2 remains the authority for personal facts.
+`hikari --text` resumes the latest local-owner chat by default. Use `hikari --new` for a clean text session. The voice daemon starts its own conversation session so voice turns do not inherit an unrelated text thread; Brain v2 remains the authority for personal facts.
 
 ### npm shortcuts
 
@@ -61,44 +71,55 @@ npm run enroll     # voice enrollment
 npm run server     # local server
 ```
 
-## Layout
+---
+
+## Repository layout
 
 ```text
 H1KARI/
-├── agents/             # Agent implementations
-├── bin/                # Launchers
-├── core/               # Orchestrator, Brain v2, voice, router, policy
-├── docs/               # Public project docs
-├── hikari-frontend/    # Optional Next.js frontend
-├── scripts/            # Install and doctor helpers
-├── security/           # Auth helpers
-├── services/           # Voice daemon and tray entrypoints
-├── skills/             # Built-in skills
-├── tests/              # Pytest suite
-├── hikari.py           # Main CLI entrypoint
+├── agents/             Agent implementations
+├── bin/                Launchers
+├── core/               Orchestrator, Brain v2, voice, router, policy
+├── docs/               Public project docs
+├── hikari-frontend/    Optional Next.js frontend
+├── scripts/            Install and doctor helpers
+├── security/           Auth helpers
+├── services/           Voice daemon and tray entrypoints
+├── skills/             Built-in skills
+├── tests/              Pytest suite
+├── hikari.py           Main CLI entrypoint
 └── README.md
 ```
+
+---
 
 ## Privacy
 
 Keep outside Git (and never stage):
 
-- local `.env` and API keys
+- local environment files and API keys
 - conversation logs and session databases
 - Brain v2 / neural SQLite stores and live-brain trees
 - voice enrollment and speaker-auth artifacts
 - private operating notes
 
-Brain v2 stores reviewed, source-linked memories separately from raw chat evidence and blocks legacy personal-memory fallback during normal chat when authority is enabled.
+Brain v2 stores reviewed, source-linked memories separately from raw chat evidence and blocks legacy personal-memory fallback during normal chat when authority is enabled. Casual owner statements stay episode-only until you explicitly ask to remember them.
+
+---
 
 ## Docs
 
-- `docs/QUICKSTART.md` — setup and first-run commands
-- `docs/ARCHITECTURE.md` — layout and operating model
-- `docs/VOICE_COMPANION.md` — voice behavior and controls
-- `docs/PROVIDER_PROVENANCE.md` — hosted providers and data flows
-- `docs/LOCAL_ROUTER_GATEWAYS.md` — optional OmniRoute / 9Router
-- `SECURITY.md`, `CONTRIBUTING.md`, `GOVERNANCE.md`
+| Doc | Topic |
+| --- | --- |
+| `docs/QUICKSTART.md` | Setup and first-run commands |
+| `docs/ARCHITECTURE.md` | Layout and operating model |
+| `docs/VOICE_COMPANION.md` | Voice behavior and controls |
+| `docs/BRAIN_V2.md` | Brain v2 remember / review model |
+| `docs/PROVIDER_PROVENANCE.md` | Hosted providers and data flows |
+| `docs/LOCAL_ROUTER_GATEWAYS.md` | Optional OmniRoute / 9Router |
+| `SECURITY.md` · `CONTRIBUTING.md` · `GOVERNANCE.md` | Project policy |
+
+---
 
 ## Verify
 

@@ -115,7 +115,7 @@ def test_brain_v2_accept_with_promote_calls_promoter(episode_db, capsys):
 
     coord = BrainV2Coordinator(store=episode_db)
     episode_id = episode_db.create_episode("cli-p")
-    episode_db.add_turn(episode_id, "My name is Alex and I live in City B.")
+    episode_db.add_turn(episode_id, "Remember this: My name is Alex and I live in City B.")
     candidates = EpisodeConsolidationPipeline(episode_db).process_episode(episode_id)[1]
     cand_id = candidates[0].candidate_id
 

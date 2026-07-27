@@ -377,7 +377,7 @@ def test_frame_stream_barge_requests_before_physical_confirmation(monkeypatch):
 
     assert pending is not None
     mode, interruption_id = pending
-    assert mode == "stop"
+    assert mode == "goodbye"
     assert interruption_id.startswith("barge_in_")
     assert runtime.state == VoiceStreamState.INTERRUPTING
     assert runtime.confirm_interruption(interruption_id, is_confirmed=True)

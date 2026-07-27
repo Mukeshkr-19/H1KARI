@@ -33,7 +33,7 @@ def test_full_omi_style_pipeline_smoke(coordinator: BrainV2Coordinator):
     )
     coordinator.record_turn(
         session,
-        "My sister Maya studies at North Valley University.",
+        "Remember this: My sister Maya studies at North Valley University.",
         "Noted.",
     )
 

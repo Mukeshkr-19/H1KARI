@@ -157,6 +157,19 @@ def test_cancel_is_soft_interrupt_not_stop_command():
     assert speech_interrupt_mode("cancel") == "cancel"
 
 
+@pytest.mark.parametrize(
+    "phrase",
+    ["hickory stop", "hey hikari stop", "hey hickory stop", "Hickory done"],
+)
+def test_whisper_wake_variants_are_goodbye_interrupts(phrase: str):
+    assert speech_interrupt_mode(phrase) == "goodbye"
+
+
+def test_bare_done_is_stop_but_not_speech_interrupt():
+    assert is_stop_command("done") is True
+    assert speech_interrupt_mode("done") is None
+
+
 def test_hikari_stop_while_active_returns_to_wake_listening():
     runtime = VoiceStreamingRuntime("stream_1")
     runtime.start_active_listening()

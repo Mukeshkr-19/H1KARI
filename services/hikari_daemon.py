@@ -406,15 +406,17 @@ def _resolve_capture_mode(runtime) -> str:
                         stream_id=runtime.stream_id,
                         backend=backend,
                     )
+                    # Short barge windows: TTS echo often prevents silence hangover,
+                    # so cap utterance length and re-STT frequently for stop phrases.
                     _barge_endpoint_gate = UtteranceEndpointGate(
                         stream_id=runtime.stream_id,
                         backend=create_vad_backend(
                             model_path=model_path,
                             allow_energy_fallback=allow_energy,
                         ),
-                        pre_roll_ms=120.0,
-                        hangover_ms=220.0,
-                        max_utterance_bytes=128_000,
+                        pre_roll_ms=80.0,
+                        hangover_ms=160.0,
+                        max_utterance_bytes=40_000,
                     )
                 except Exception:
                     _frame_endpoint_gate = None
@@ -747,6 +749,7 @@ def _wait_for_frame_stream_owner_interrupt(process) -> tuple[str, str] | None:
         process.wait()
         return None
     gate.reset()
+    barge_speech_ns = 0
     while daemon_running and process.poll() is None:
         pulled = loop.pull()
         if not pulled.accepted or pulled.frame is None:
@@ -759,7 +762,9 @@ def _wait_for_frame_stream_owner_interrupt(process) -> tuple[str, str] | None:
                 break
             continue
         frame = pulled.frame
-        runtime.ingest_live_frame(frame)
+        observed = runtime.ingest_live_frame(frame)
+        if observed.get("barge_observed"):
+            barge_speech_ns = frame.monotonic_ns
         tick = gate.process_frame(
             frame.pcm,
             monotonic_ns=frame.monotonic_ns,
@@ -771,13 +776,33 @@ def _wait_for_frame_stream_owner_interrupt(process) -> tuple[str, str] | None:
         utterance_id = _next_utterance_id("barge")
         text = _transcribe_pcm_utterance(pcm, short_utterance=True)
         mode = _speech_interrupt_mode(text)
-        if mode is None or not _verify_speaker_pcm(pcm, utterance_id=utterance_id):
+        chars = len(text or "")
+        if mode is None:
+            print(
+                f"[DAEMON] Barge candidate ignored (chars={chars}, interrupt=False)",
+                flush=True,
+            )
             gate.reset()
             continue
+        speaker_ok = _verify_speaker_pcm(pcm, utterance_id=utterance_id)
+        print(
+            f"[DAEMON] Barge candidate (chars={chars}, interrupt=True, "
+            f"speaker={speaker_ok})",
+            flush=True,
+        )
+        if not speaker_ok:
+            gate.reset()
+            continue
+        # Prefer speech observed during this barge window; fall back to finalize ts.
+        speech_ns = barge_speech_ns if barge_speech_ns > 0 else frame.monotonic_ns
+        # Refresh runtime barge VAD marker so the evidence gate cannot deny a
+        # verified explicit stop solely because hangover silence aged the marker.
+        runtime.note_barge_speech(speech_ns)
         interruption_id = _request_verified_interruption(
-            speech_observed_ns=frame.monotonic_ns,
+            speech_observed_ns=speech_ns,
         )
         gate.reset()
+        barge_speech_ns = 0
         if interruption_id is not None:
             return mode, interruption_id
     process.wait()

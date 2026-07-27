@@ -20,8 +20,15 @@ from core.path_literals import EPISODES_DB
 
 
 def _accept_statement(store: EpisodeStore, statement: str, episode_key: str = "ep") -> str:
+    from core.brain_v2.owner_auto_trust import is_explicit_remember_command
+
+    text = (
+        statement
+        if is_explicit_remember_command(statement)
+        else f"Remember this: {statement}"
+    )
     episode_id = store.create_episode(episode_key)
-    store.add_turn(episode_id, statement, is_user=True)
+    store.add_turn(episode_id, text, is_user=True)
     candidates = EpisodeConsolidationPipeline(store).process_episode(episode_id)[1]
     assert candidates
     linked = MemoryReviewGate(store).accept(candidates[0].candidate_id)

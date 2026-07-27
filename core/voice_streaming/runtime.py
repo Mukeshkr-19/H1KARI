@@ -125,7 +125,10 @@ GOODBYE_INTERRUPT_WORDS = {
     "be quiet",
     "hikari stop",
     "hikari done",
+    "hickory stop",
+    "hickory done",
     "stop hikari",
+    "stop hickory",
     "goodbye",
     "good bye",
     "go to sleep",
@@ -136,7 +139,7 @@ GOODBYE_INTERRUPT_WORDS = {
     "that's all",
     "that's it",
     "nothing else",
-    "done",
+    # Bare "done" stays an active-listen sleep word only (too easy to false-trigger).
     "thank you",
     "thanks",
     "okay goodbye",
@@ -183,10 +186,18 @@ def is_stop_command(text: str) -> bool:
 
 def is_speech_interrupt_command(text: str) -> bool:
     """Classify only explicit stop commands during playback (exact phrase)."""
-    if not isinstance(text, str):
-        return False
+    return speech_interrupt_mode(text) is not None
+
+
+def _normalize_interrupt_phrase(text: str) -> str:
+    """Normalize interrupt text; map reviewed Whisper wake misspellings to hikari."""
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in SPEECH_INTERRUPT_WORDS or normalized in GOODBYE_INTERRUPT_WORDS
+    # Keep wake spelling aligned with extract_wake_command acceptance.
+    tokens = [
+        "hikari" if tok == "hickory" else tok
+        for tok in normalized.split()
+    ]
+    return " ".join(tokens)
 
 
 def speech_interrupt_mode(text: str) -> str | None:
@@ -194,14 +205,24 @@ def speech_interrupt_mode(text: str) -> str | None:
 
     Stop and goodbye phrases return ``goodbye`` (wake-only sleep).
     ``cancel`` remains a soft interrupt that stays in active listening.
+    Wake-prefixed forms ("hikari stop", "hey hickory stop") resolve via the
+    trailing command after the accepted wake prefix.
     """
     if not isinstance(text, str):
         return None
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    normalized = _normalize_interrupt_phrase(text)
     if normalized == "cancel":
         return "cancel"
     if normalized in GOODBYE_INTERRUPT_WORDS:
         return "goodbye"
+    # Exact wake + interrupt: "hey hikari stop" -> trailing "stop"
+    trailing = extract_wake_command(text)
+    if trailing:
+        trailing_norm = _normalize_interrupt_phrase(trailing)
+        if trailing_norm == "cancel":
+            return "cancel"
+        if trailing_norm in GOODBYE_INTERRUPT_WORDS:
+            return "goodbye"
     return None
 
 
@@ -652,6 +673,22 @@ class VoiceStreamingRuntime:
             role="assistant",
         )
         return self.state_machine.add_assistant_segment(final_tx)
+
+    def note_barge_speech(self, speech_observed_ns: int) -> None:
+        """Refresh barge-in speech marker from a verified playback utterance.
+
+        Frame-stream barge endpointing may finalize after a short hangover of
+        silence; keep the speech marker fresh enough for the evidence gate when
+        the caller already transcribed an explicit interrupt phrase.
+        """
+        try:
+            ts = int(speech_observed_ns)
+        except (TypeError, ValueError):
+            return
+        if ts <= 0:
+            return
+        if self._playback_started_ns > 0 and ts > self._playback_started_ns:
+            self._barge_speech_ns = max(self._barge_speech_ns, ts)
 
     def request_interruption(
         self,
