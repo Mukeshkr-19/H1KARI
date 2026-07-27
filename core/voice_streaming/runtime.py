@@ -35,11 +35,28 @@ from core.voice_streaming.echo_policy import (
 )
 from core.voice_streaming.frame_pipeline import (
     AudioFrame,
+    AudioFrameMetadata,
     AudioFramePipeline,
     FramePipelineConfig,
     FramePipelineMetrics,
 )
-from core.voice_streaming.frame_pipeline import AudioFrameMetadata
+
+
+def _pcm_peak_probability(pcm: bytes, sample_width: int) -> float:
+    """Return normalized signed little-endian PCM peak without exposing content."""
+    if not pcm or sample_width not in (1, 2, 3, 4) or len(pcm) % sample_width:
+        return 0.0
+    peak = 0
+    for offset in range(0, len(pcm), sample_width):
+        sample = int.from_bytes(
+            pcm[offset : offset + sample_width],
+            byteorder="little",
+            signed=True,
+        )
+        peak = max(peak, abs(sample))
+    return min(1.0, peak / float(1 << (sample_width * 8 - 1)))
+
+
 from core.voice_streaming.live_audio import (
     AudioInputCapability,
     LiveAudioFrame,
@@ -87,24 +104,20 @@ def extract_wake_command(text: str) -> Optional[str]:
       - trailing command for same-utterance wake (e.g. "Hey Hikari, what time is it?" -> "what time is it?")
       - None if no wake word match
 
-    The reviewed local Whisper spelling "Hickory" is accepted only as a
-    standalone bare wake alias (no same-utterance command), matching the daemon.
+    The reviewed local Whisper spelling "Hickory" is accepted as the same
+    anchored wake prefix. Speaker verification still runs before activation.
     """
     if not isinstance(text, str):
         return None
     match = re.fullmatch(
-        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hikari\b[\s,.:;!?-]*(.*?)\s*",
+        r"\s*(?:(?:(?:hey|okay|hi)[\s,]+)?(?:hikari|hickory)|"
+        r"(?:hey|okay|hi)[\s,]+(?:kari|carrie|carry))\b[\s,.:;!?-]*(.*?)\s*",
         text,
         flags=re.IGNORECASE | re.DOTALL,
     )
     if match is not None:
         return match.group(1).strip()
-    alias_match = re.fullmatch(
-        r"\s*(?:(?:hey|okay|hi)[\s,]+)?hickory[\s,.:;!?-]*\s*",
-        text,
-        flags=re.IGNORECASE,
-    )
-    return "" if alias_match is not None else None
+    return None
 
 
 def is_wake_phrase(text: str) -> bool:
@@ -121,11 +134,36 @@ def is_stop_command(text: str) -> bool:
 
 
 def is_speech_interrupt_command(text: str) -> bool:
-    """Classify only explicit stop commands during playback."""
+    """Classify only explicit stop commands during playback (exact phrase)."""
     if not isinstance(text, str):
         return False
     normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in {"hikari stop", "hikari done", "stop hikari"}
+    return normalized in {
+        "hikari stop",
+        "hikari done",
+        "stop hikari",
+        "stop",
+        "be quiet",
+        "cancel",
+        "goodbye",
+        "good bye",
+        "go to sleep",
+        "stop listening",
+    }
+
+
+def speech_interrupt_mode(text: str) -> str | None:
+    """Return interrupt mode for an exact playback interrupt phrase."""
+    if not isinstance(text, str):
+        return None
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    if normalized in {"stop", "be quiet", "hikari stop", "hikari done", "stop hikari"}:
+        return "stop"
+    if normalized == "cancel":
+        return "cancel"
+    if normalized in {"goodbye", "good bye", "go to sleep", "stop listening"}:
+        return "goodbye"
+    return None
 
 
 @dataclass(frozen=True)
@@ -959,8 +997,7 @@ class VoiceStreamingRuntime:
             return {"accepted": False, "reason": "cross_stream"}
         if self.state == VoiceStreamState.ASSISTANT_SPEAKING:
             # Observe barge-in speech only; never orchestrate during playback.
-            peak = max(frame.pcm) if frame.pcm else 0
-            speech_p = min(1.0, peak / 128.0) if frame.sample_width == 1 else min(1.0, peak / 255.0)
+            speech_p = _pcm_peak_probability(frame.pcm, frame.sample_width)
             barge_observed = speech_p >= 0.35
             if barge_observed and frame.monotonic_ns > self._playback_started_ns:
                 self._barge_speech_ns = frame.monotonic_ns
@@ -995,8 +1032,7 @@ class VoiceStreamingRuntime:
         if not ok:
             return {"accepted": False, "reason": reason or "pipeline_reject"}
 
-        peak = max(frame.pcm) if frame.pcm else 0
-        speech_p = min(1.0, peak / 128.0) if frame.sample_width == 1 else min(1.0, peak / 255.0)
+        speech_p = _pcm_peak_probability(frame.pcm, frame.sample_width)
         measurement = VADFrameMeasurement(
             sequence_id=frame.sequence,
             monotonic_ns=frame.monotonic_ns,

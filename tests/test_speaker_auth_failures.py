@@ -116,6 +116,25 @@ def test_verification_windows_are_bounded_and_cover_long_utterance(private_paths
     assert [payload[0] for payload in payloads] == [1, 1, 2, 3]
 
 
+def test_pcm_verification_windows_are_bounded(private_paths, monkeypatch):
+    auth = speaker_auth.SpeakerAuth()
+    payloads = []
+
+    def embed(pcm, **_kwargs):
+        payloads.append(bytes(pcm))
+        return [float(pcm[0]), 1.0]
+
+    monkeypatch.setattr(auth, "embedding_from_pcm16_mono", embed)
+    pcm = b"\x01\x00" * 32_000 + b"\x02\x00" * 32_000 + b"\x03\x00" * 32_000
+
+    embeddings = auth.verification_embeddings_from_pcm16_mono(pcm)
+
+    assert len(embeddings) == 4
+    assert len(payloads[0]) == 192_000
+    assert all(len(payload) == 64_000 for payload in payloads[1:])
+    assert [payload[0] for payload in payloads] == [1, 1, 2, 3]
+
+
 def test_default_threshold_matches_speechbrain_verifier_boundary(private_paths):
     auth = speaker_auth.SpeakerAuth()
 

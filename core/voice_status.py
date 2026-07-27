@@ -74,7 +74,12 @@ def collect_voice_status(
         "faster_whisper": _installed("faster_whisper"),
         "speechbrain": _installed("speechbrain"),
         "pyaudio": _installed("pyaudio"),
+        "onnxruntime": _installed("onnxruntime"),
     }
+    from core.voice_capture.capability import probe_macos_coreaudio_capability
+    from core.voice_capture.config import CAPTURE_BACKEND_MACOS_COREAUDIO
+    capture_backend = (env.get("HIKARI_VOICE_CAPTURE_BACKEND") or "auto").strip()
+    capture_cap = probe_macos_coreaudio_capability()
     models = {
         "openai_whisper_base": {
             "sha256": OPENAI_WHISPER_BASE_SHA256,
@@ -105,6 +110,15 @@ def collect_voice_status(
     return {
         "packages": packages,
         "models": models,
+        "capture": {
+            "configured_backend": capture_backend,
+            "macos_coreaudio_available": capture_cap.available,
+            "macos_coreaudio_reason": capture_cap.reason.value,
+            "opens_microphone_on_probe": capture_cap.opens_microphone,
+            "helper_path_present": bool(capture_cap.helper_path),
+            "default_backend": "auto",
+            "production_name": CAPTURE_BACKEND_MACOS_COREAUDIO,
+        },
         "policies": {
             "configured_backend": configured_backend,
             "core_voice": backend_policy(core_backend),
@@ -123,7 +137,10 @@ def format_voice_status(status: dict | None = None) -> str:
     def yes(value: bool) -> str:
         return "yes" if value else "no"
 
+    capture = status.get("capture", {})
     lines = [
+        f"Capture backend: {capture.get('configured_backend', 'auto')} (auto prefers reviewed macOS CoreAudio helper when available)",
+        f"macOS CoreAudio helper: {'available' if capture.get('macos_coreaudio_available') else 'unavailable'} ({capture.get('macos_coreaudio_reason', 'n/a')})",
         "Voice backend status (read-only; no models loaded)",
         "==================================================",
         f"core.voice: {status['policies']['core_voice']}",

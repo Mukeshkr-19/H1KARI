@@ -6,10 +6,10 @@ exceptions, events, or snapshots.
 
 Replay guarantee
 ----------------
-Seen frame IDs are tracked in a bounded deque+set. When capacity is reached,
-further frames are rejected with BOUND_EXCEEDED until the loop is reset/closed
-for a new stream/session. IDs are never silently evicted mid-session, so an
-old frame cannot be replayed within the active security window.
+Seen frame IDs are tracked in a bounded deque+set. Injected/queued ingestion
+fails closed at the bound. The production ``pull`` path rotates only this
+auxiliary window at an empty queue boundary; canonical sequence and timestamp
+monotonicity are never reset, so an old frame still cannot be replayed.
 """
 
 from __future__ import annotations
@@ -333,6 +333,20 @@ def try_create_pyaudio_source(*, stream_id: str) -> AudioFrameSource:
     return UnavailableAudioFrameSource()
 
 
+def try_create_production_frame_source(
+    *,
+    stream_id: str,
+    capture_backend: str = "utterance-only",
+) -> AudioFrameSource:
+    """Select a production frame source. Default remains unavailable/utterance-only."""
+    if capture_backend == "macos-coreaudio":
+        from core.voice_capture.macos_coreaudio import try_create_macos_coreaudio_source
+
+        source = try_create_macos_coreaudio_source(stream_id=stream_id)
+        return source  # type: ignore[return-value]
+    return UnavailableAudioFrameSource()
+
+
 class VoiceAudioLoop:
     """Bounded live-audio controller with deterministic backpressure."""
 
@@ -436,8 +450,17 @@ class VoiceAudioLoop:
             return self._fail(AudioFrameSourceReason.NOT_OPEN, count_drop=False)
 
         now = int(self._clock())
+        # A production source is continuous. Rotate only the auxiliary ID/time
+        # window at an empty queue boundary; canonical sequence and timestamp
+        # monotonicity remain intact, so old frames still cannot be replayed.
+        if not self._queue and len(self._seen_ids) >= self._config.max_seen_frame_ids:
+            self._seen_ids.clear()
+            self._seen_order.clear()
+            self._replay_exhausted = False
         if self._started_ns and (now - self._started_ns) > self._config.max_elapsed_ms * 1_000_000:
-            return self._fail(AudioFrameSourceReason.BOUND_EXCEEDED)
+            if self._queue:
+                return self._fail(AudioFrameSourceReason.BOUND_EXCEEDED)
+            self._started_ns = now
         if self._consecutive_failures >= self._config.max_consecutive_failures:
             return self._fail(AudioFrameSourceReason.HARDWARE_ERROR)
 
@@ -543,4 +566,5 @@ __all__ = [
     "VoiceAudioLoopConfig",
     "VoiceAudioLoopSnapshot",
     "try_create_pyaudio_source",
+    "try_create_production_frame_source",
 ]

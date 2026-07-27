@@ -109,3 +109,53 @@ clean-room code.
 
 No project license has been selected. That decision belongs to the repository
 owner after this provenance record is reviewed.
+
+
+## Adapted Omi audio-engineering portions
+
+Portions of the following tracked paths are selectively adapted from the
+BasedHardware/omi project (MIT):
+
+- `native/macos_audio_capture/**`
+- `core/voice_capture/**`
+
+Upstream repository: https://github.com/BasedHardware/omi
+
+The upstream `main` revision reviewed for this notice was
+`571c5d849fabb0b9e938129161ea5bb24a8e50fe`. The notice below is copied from that
+revision's MIT license text and applies to the adapted portions listed above:
+
+```text
+MIT License
+
+Copyright (c) Based Hardware / Omi contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+See `docs/OMI_DERIVED_VOICE_PIPELINE.md` for the adaptation boundary. H1KARI does
+not vendor Omi as a parallel runtime and does not claim Omi endorsement.
+
+## Silero VAD model asset (dependency-provided, not vendored in Git)
+
+HIKARI may use `silero_vad_v6.onnx` from the pinned `faster-whisper==1.2.1`
+installation, or an explicitly supplied local file. The model binary is not in
+this repository. Installed faster-whisper package metadata reports MIT, but the
+exact model artifact source, digest, and applicable notice must be reviewed and
+recorded before copying that binary into any HIKARI release bundle.

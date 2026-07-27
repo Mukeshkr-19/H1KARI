@@ -89,6 +89,19 @@ classifications.
 
 ## Daemon
 
-Capability-derived capture mode defaults to utterance-only SpeechRecognition.
+Capability-derived capture defaults to `auto`: the reviewed CoreAudio helper is
+preferred when built and probe-ready; otherwise foreground startup uses the
+legacy utterance-only SpeechRecognition path.
 Exactly one capture path; exactly one `process()` per authorized utterance.
 Shutdown cancels audio/VAD/transcript/timing state and resets utterance IDs.
+
+
+## Production capture backend
+
+- Capture backend name: `macos-coreaudio` (not an STT `--voice-backend`).
+- Select explicitly via `HIKARI_VOICE_CAPTURE_BACKEND=macos-coreaudio` or
+  `hikari.py --voice-capture-backend macos-coreaudio`.
+- The login-agent installer builds and pins the helper. Explicit selection fails
+  visibly if helper/VAD capability is unavailable; automatic selection may use
+  the legacy path without claiming frame streaming.
+- See `docs/OMI_DERIVED_VOICE_PIPELINE.md` and `docs/VOICE_REAL_DEVICE_ACCEPTANCE.md`.

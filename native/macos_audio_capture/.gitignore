@@ -1,0 +1,3 @@
+.build/
+*.o
+Package.resolved

@@ -124,3 +124,8 @@ Calling `request_shutdown()`:
 3. **Silent Goodbye**: Say "Goodbye"; verify daemon returns to sleeping mode without speaking a response or writing conversation log entry.
 4. **Speaker Lock**: Have an un-enrolled speaker say "Hikari"; verify voice is rejected and daemon remains sleeping.
 5. **Barge-In**: During long TTS output, say "Hikari stop"; verify TTS stops immediately and daemon remains active.
+
+
+## macOS CoreAudio capture
+
+On macOS, automatic selection prefers the reviewed CoreAudio helper when it is built and ready; otherwise foreground runs use utterance-only capture. The login-agent installer builds the helper and explicitly pins `HIKARI_VOICE_CAPTURE_BACKEND=macos-coreaudio`, so a missing helper fails visibly instead of silently switching paths. See `docs/OMI_DERIVED_VOICE_PIPELINE.md`.

@@ -310,6 +310,7 @@ class FasterWhisperSTTAdapter:
                 condition_on_previous_text=False,
                 without_timestamps=True,
                 vad_filter=True,
+                hotwords="Hikari",
             )
         elif mode == "interrupt":
             # Unlike wake recognition, interruption decoding must not be

@@ -14,6 +14,7 @@ from core.voice_streaming.echo_policy import (
     EchoPolicyContext,
 )
 from core.voice_streaming.frame_pipeline import AudioFrame, AudioFrameMetadata
+from core.voice_streaming.live_audio import AudioInputCapability, LiveAudioFrame
 from core.voice_streaming.runtime import (
     VoiceStreamingRuntime,
     VoiceStreamingRuntimeConfig,
@@ -75,6 +76,9 @@ def test_same_utterance_wake_command_extraction():
     assert extract_wake_command("Hikari, who won the game?") == "who won the game?"
     assert extract_wake_command("Hey Hikari tell me the weather") == "tell me the weather"
     assert extract_wake_command("Hikari") == ""
+    assert extract_wake_command("Hickory, tell me the weather") == "tell me the weather"
+    assert extract_wake_command("Hey, Carrie, tell me the weather") == "tell me the weather"
+    assert extract_wake_command("Carrie, tell me the weather") is None
     assert extract_wake_command("this mentions hikari later") is None
 
 
@@ -265,6 +269,28 @@ def test_assistant_playback_cannot_become_user_speech():
     res = runtime.process_utterance("turn off the lights", is_verified_speaker=True)
     assert res["action"] == "ignore"
     assert res["reason"] == "assistant_playback_active"
+
+
+def test_live_pcm_energy_uses_signed_samples_not_raw_byte_values():
+    runtime = VoiceStreamingRuntime("stream_signed_pcm")
+    runtime.start_active_listening()
+    runtime.set_input_capability(AudioInputCapability.FRAME_STREAM, frame_loop_open=True)
+    runtime.assistant_speaking_start()
+    frame = LiveAudioFrame(
+        stream_id=runtime.stream_id,
+        frame_id="frame-low-positive",
+        sequence=1,
+        monotonic_ns=runtime.now_ns(),
+        sample_rate=16_000,
+        channels=1,
+        sample_width=2,
+        pcm=b"\xff\x00" * 160,
+    )
+
+    result = runtime.ingest_live_frame(frame)
+
+    assert result["reason"] == "assistant_playback_active"
+    assert result["barge_observed"] is False
 
 
 def test_future_interruption_rejected():
