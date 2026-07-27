@@ -330,6 +330,7 @@ def test_faster_whisper_short_utterance_uses_wake_decode_options(monkeypatch):
         "condition_on_previous_text": False,
         "without_timestamps": True,
         "vad_filter": True,
+        "hotwords": "Hikari",
     }
 
 

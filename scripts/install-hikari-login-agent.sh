@@ -33,6 +33,11 @@ if [[ ! -f "$DAEMON" ]]; then
   exit 1
 fi
 
+if ! "$REPO_ROOT/scripts/build_macos_audio_capture.sh"; then
+  echo "Native CoreAudio helper build failed; voice login agent was not installed." >&2
+  exit 1
+fi
+
 if ! "$PY" -E "$DAEMON" --check-enrollment; then
   echo "Owner voice is not enrolled."
   if [[ -t 0 && -t 1 ]]; then
@@ -95,6 +100,8 @@ cat >"$PLIST_DST" <<EOF
     <string>$REPO_ROOT</string>
     <key>HIKARI_QUIET</key>
     <string>1</string>
+    <key>HIKARI_VOICE_CAPTURE_BACKEND</key>
+    <string>macos-coreaudio</string>
   </dict>
   <key>ProgramArguments</key>
   <array>

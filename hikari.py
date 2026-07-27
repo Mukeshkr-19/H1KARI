@@ -816,6 +816,22 @@ def main():
         choices=("openai-whisper", "faster-whisper", "google-speech"),
         help="Required for voice startup; records download and audio-egress disclosure.",
     )
+    parser.add_argument(
+        "--voice-capture-backend",
+        choices=("utterance-only", "macos-coreaudio"),
+        help=(
+            "Optional capture backend (distinct from STT --voice-backend). "
+            "macos-coreaudio uses the native CoreAudio helper; unconfigured startup auto-selects it when ready."
+        ),
+    )
+    parser.add_argument(
+        "--voice-capture-test",
+        action="store_true",
+        help=(
+            "Explicit bounded microphone capture diagnostic. Announces mic use; "
+            "prints only capability/frame counts; never prints transcripts or saves audio."
+        ),
+    )
     session_selection = parser.add_mutually_exclusive_group()
     session_selection.add_argument(
         "--new",
@@ -1238,6 +1254,181 @@ def main():
 
         print(format_voice_status())
         raise SystemExit(0)
+
+    if getattr(args, "voice_capture_test", False):
+        from core.voice_capture.capability import probe_macos_coreaudio_capability
+        from core.voice_capture.endpointing import UtteranceEndpointGate
+        from core.voice_capture.macos_coreaudio import MacOSCoreAudioFrameSource
+        from core.voice_capture.vad_backend import create_vad_backend
+        import time
+
+        print("HIKARI voice capture test")
+        print("This will open the microphone for a bounded duration if capture starts.")
+        print("No audio or transcripts are saved or printed.")
+        cap = probe_macos_coreaudio_capability()
+        print(f"capability_available={cap.available}")
+        print(f"capability_reason={cap.reason.value}")
+        print(f"opens_microphone_on_probe={cap.opens_microphone}")
+        if not cap.available:
+            raise SystemExit(2)
+        source = MacOSCoreAudioFrameSource(stream_id="capture-test")
+        vad = create_vad_backend()
+        gate = UtteranceEndpointGate(stream_id="capture-test", backend=vad)
+        frames = 0
+        errors = 0
+        speech_starts = 0
+        utterances_finalized = 0
+        peak_pcm16 = 0
+        max_speech_probability = 0.0
+        final_pcm_segments = []
+        exit_code = 0
+        try:
+            opened = source.open()
+            if not opened.accepted:
+                print(f"open_accepted=False reason={opened.reason.value}")
+                raise SystemExit(3)
+            print("open_accepted=True")
+            deadline = time.monotonic() + 8.0
+            while time.monotonic() < deadline:
+                result = source.read_frame()
+                if result.accepted and result.frame is not None:
+                    import array
+
+                    frames += 1
+                    samples = array.array("h")
+                    samples.frombytes(result.frame.pcm)
+                    if samples:
+                        frame_peak = max(abs(int(sample)) for sample in samples)
+                        peak_pcm16 = max(peak_pcm16, frame_peak)
+                    tick = gate.process_frame(
+                        result.frame.pcm,
+                        monotonic_ns=result.frame.monotonic_ns,
+                        sample_rate=result.frame.sample_rate,
+                    )
+                    max_speech_probability = max(
+                        max_speech_probability,
+                        float(tick.speech_probability),
+                    )
+                    if tick.event.value == "speech_start":
+                        speech_starts += 1
+                    elif tick.event.value in {"finalized", "max_duration"}:
+                        utterances_finalized += 1
+                        if len(final_pcm_segments) < 3:
+                            final_pcm_segments.append(tick.utterance_pcm)
+                        gate.reset()
+                elif result.reason.value in {"closed", "cancelled", "hardware_error"}:
+                    errors += 1
+                    break
+            if frames == 0 or errors or not vad.available or speech_starts == 0:
+                exit_code = 4
+        finally:
+            source.cancel()
+            source.close()
+        print(f"frames_received={frames}")
+        print(f"terminal_errors={errors}")
+        print(f"vad_available={vad.available}")
+        print(f"speech_starts={speech_starts}")
+        print(f"utterances_finalized={utterances_finalized}")
+        print(f"peak_pcm16={peak_pcm16}")
+        print(f"max_speech_probability={max_speech_probability:.3f}")
+        stt_results = {
+            "faster_whisper": (False, 0, False, -1, -1, -1, -1),
+            "openai_whisper": (False, 0, False, -1, -1, -1, -1),
+        }
+        if final_pcm_segments:
+            from core.speech_adapters import CapturedAudio, build_stt_adapter
+
+            previous_offline = os.environ.get("HF_HUB_OFFLINE")
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            try:
+                from services.hikari_daemon import _extract_wake_command
+                for label, backend in (
+                    ("faster_whisper", "faster-whisper"),
+                    ("openai_whisper", "openai-whisper"),
+                ):
+                    try:
+                        adapter = build_stt_adapter(backend)
+                        def edit_distance(left: str, right: str) -> int:
+                            previous = list(range(len(right) + 1))
+                            for i, left_char in enumerate(left, start=1):
+                                current = [i]
+                                for j, right_char in enumerate(right, start=1):
+                                    current.append(
+                                        min(
+                                            current[-1] + 1,
+                                            previous[j] + 1,
+                                            previous[j - 1] + (left_char != right_char),
+                                        )
+                                    )
+                                previous = current
+                            return previous[-1]
+
+                        best = (True, 0, False, -1, 999, -1, -1)
+                        for pcm_segment in final_pcm_segments:
+                            captured = CapturedAudio(
+                                pcm_bytes=pcm_segment,
+                                sample_rate=16_000,
+                                sample_width=2,
+                                channel_count=1,
+                            )
+                            if label == "faster_whisper":
+                                transcript = adapter.transcribe_short_utterance(captured)
+                            else:
+                                transcript = adapter.transcribe(captured)
+                            normalized_tokens = re.findall(r"[a-z0-9]+", transcript.casefold())
+                            wake_index = next(
+                                (
+                                    index
+                                    for index, token in enumerate(normalized_tokens)
+                                    if token in {"hikari", "hickory"}
+                                ),
+                                -1,
+                            )
+                            candidates = [
+                                (edit_distance(token, target), index, len(token))
+                                for index, token in enumerate(normalized_tokens[:4])
+                                for target in ("hikari", "hickory")
+                            ]
+                            closest = min(candidates) if candidates else (999, -1, -1)
+                            candidate = (
+                                True,
+                                len(transcript),
+                                _extract_wake_command(transcript) is not None,
+                                wake_index,
+                                closest[0],
+                                closest[1],
+                                closest[2],
+                            )
+                            if candidate[2] or candidate[4] < best[4]:
+                                best = candidate
+                            if candidate[2]:
+                                break
+                        stt_results[label] = best
+                    except Exception:
+                        continue
+            finally:
+                final_pcm_segments.clear()
+                if previous_offline is None:
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                else:
+                    os.environ["HF_HUB_OFFLINE"] = previous_offline
+        for label, result in stt_results.items():
+            available, chars, detected, wake_index, distance, closest_index, token_length = result
+            print(f"{label}_available={available}")
+            print(f"{label}_transcript_chars={chars}")
+            print(f"{label}_wake_phrase_detected={detected}")
+            print(f"{label}_wake_token_index={wake_index}")
+            print(f"{label}_closest_wake_edit_distance={distance}")
+            print(f"{label}_closest_wake_token_index={closest_index}")
+            print(f"{label}_closest_wake_token_length={token_length}")
+        if not any(result[0] and result[2] for result in stt_results.values()):
+            exit_code = max(exit_code, 6)
+        print("cleanup=ok")
+
+        raise SystemExit(exit_code)
+
+    if getattr(args, "voice_capture_backend", None):
+        os.environ["HIKARI_VOICE_CAPTURE_BACKEND"] = args.voice_capture_backend
 
     if args.tasks_list:
         from core.tasks.cli import run_tasks_list_cli

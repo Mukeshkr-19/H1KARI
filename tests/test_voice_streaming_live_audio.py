@@ -27,7 +27,7 @@ from core.voice_streaming.contracts import VoiceStreamState
 
 
 def _pcm(n: int = 640) -> bytes:
-    return b"\xff" * n
+    return b"\xff\x7f" * (n // 2)
 
 
 def _frame(stream="s1", fid="f0", seq=0, ns=1000, pcm=None):

@@ -48,3 +48,15 @@ Whisper accuracy varies by language and environment and is not a safety-critical
 authority. Speaker verification is probabilistic biometric processing: it can
 support convenience and guest isolation, but it cannot authorize destructive,
 financial, privileged, or safety-critical actions by itself.
+
+
+## Local Silero VAD asset (dependency-provided, not repository-vendored)
+
+| Runtime use | Exact source | Reviewed identity | License evidence | Size and data boundary | Phase 0 disposition |
+|---|---|---|---|---|---|
+| Local VAD probabilities | `silero_vad_v6.onnx` from pinned `faster-whisper==1.2.1`, or operator override via `HIKARI_SILERO_VAD_PATH` | Asset is outside Git; installed package metadata reports MIT for faster-whisper | Exact model-source license/digest must still be recorded before redistributing the binary | Local ONNX inference only; no cloud VAD | approved for local dependency use; do not copy into the repository/release bundle without artifact review |
+
+If the dependency asset, explicit model, or ONNX Runtime is unavailable,
+explicit CoreAudio mode fails closed. Automatic foreground selection may use the
+reviewed utterance-only path. Energy fallback is explicit degraded/test behavior
+and is never reported as Silero.
