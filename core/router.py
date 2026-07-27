@@ -113,9 +113,14 @@ PROVIDER_CONFIGS = {
         "api_key_env": "GOOGLE_AI_STUDIO_KEY",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "models": {
-            "fast": "gemini-2.5-flash",
-            "balanced": "gemini-2.5-flash",
-            "smart": "gemini-2.5-flash",
+            "fast": "gemini-3.5-flash-lite",
+            "balanced": "gemini-3.6-flash",
+            "smart": "gemini-3.6-flash",
+        },
+        "model_envs": {
+            "fast": "GOOGLE_FAST_MODEL",
+            "balanced": "GOOGLE_BALANCED_MODEL",
+            "smart": "GOOGLE_SMART_MODEL",
         },
         "rate_limit_rpm": 15,
         "max_tokens_per_min": 250000,
@@ -208,14 +213,14 @@ TASK_QUALITY_MAP = {
 
 # Fallback chain order - OLLAMA IS LAST RESORT (local free fallback only when ALL others fail)
 FALLBACK_CHAIN = [
-    "omniroute",  # Local multi-provider gateway
-    "9router",  # Local combo router on a distinct port
-    "groq",  # Fastest
-    "cerebras",  # Fast
-    "google",  # Best quality
-    "openrouter",  # Many models
+    "google",  # Current direct Gemini route
+    "groq",  # Low-latency fallback
+    "cerebras",  # Fast fallback
     "nvidia",  # NVIDIA API
     "cohere",  # Command R
+    "openrouter",  # Aggregated upstreams; privacy policy varies
+    "omniroute",  # Local gateway is an explicit late fallback
+    "9router",  # Local combo gateway on a distinct port
     "ollama",  # LAST - local Gemma 4 fallback when everything else fails
 ]
 
@@ -442,16 +447,9 @@ class AIRouter:
 
     def _classify_task(self, user_input: str) -> str:
         lower = user_input.lower()
-        if any(
-            w in lower
-            for w in [
-                "hi",
-                "hello",
-                "hey",
-                "good morning",
-                "good evening",
-                "good night",
-            ]
+        if re.search(
+            r"\b(?:hi|hello|hey|good\s+morning|good\s+evening|good\s+night)\b",
+            lower,
         ):
             return "greeting"
         if any(w in lower for w in ["time", "date", "day", "today"]):
@@ -509,34 +507,40 @@ class AIRouter:
         if not candidates:
             return None
 
-        # Prefer configured local gateways. They make their own upstream
-        # routing decision; Ollama remains the last local fallback.
+        # Prefer the directly configured Gemini route. Gateways remain late
+        # fallbacks because their selected upstream can change independently.
         if quality == "fast":
             priority = [
-                "omniroute",
-                "9router",
+                "google",
                 "groq",
                 "cerebras",
-                "google",
+                "nvidia",
                 "openrouter",
+                "cohere",
+                "omniroute",
+                "9router",
             ]
         elif quality == "balanced":
             priority = [
-                "omniroute",
-                "9router",
                 "google",
                 "groq",
-                "openrouter",
                 "cerebras",
+                "nvidia",
+                "cohere",
+                "openrouter",
+                "omniroute",
+                "9router",
             ]
         else:  # smart
             priority = [
-                "omniroute",
-                "9router",
                 "google",
-                "openrouter",
                 "nvidia",
                 "cohere",
+                "openrouter",
+                "groq",
+                "cerebras",
+                "omniroute",
+                "9router",
             ]
 
         for p in priority:
@@ -668,9 +672,12 @@ class AIRouter:
             "contents": contents,
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
-                "temperature": temperature,
             },
         }
+        # Gemini 3.x deprecated sampling parameters. Keep the legacy parameter
+        # only for older explicitly configured models.
+        if not model.startswith("gemini-3") and model != "gemini-flash-latest":
+            payload["generationConfig"]["temperature"] = temperature
         if system_instruction:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 

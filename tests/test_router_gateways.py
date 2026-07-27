@@ -80,6 +80,15 @@ def test_gateway_model_overrides_are_bounded(monkeypatch):
 
 def test_configured_omniroute_is_selected_before_9router(monkeypatch):
     _clear_gateway_env(monkeypatch)
+    for name in (
+        "GOOGLE_AI_STUDIO_KEY",
+        "GROQ_API_KEY",
+        "CEREBRAS_API_KEY",
+        "NVIDIA_API_KEY",
+        "COHERE_API_KEY",
+        "OPENROUTER_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("OMNIROUTE_API_KEY", "omni-local-key")
     monkeypatch.setenv("NINEROUTER_API_KEY", "nine-local-key")
     router = AIRouter()
