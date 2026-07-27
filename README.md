@@ -110,8 +110,19 @@ script similarly discovers `python3` from `PATH` and selects the verified lock
 only when the created environment is Python 3.12 on macOS arm64.
 
 Edit the ignored local `.env` file and add at least one provider key, for example
-`GOOGLE_AI_STUDIO_KEY` or `GROQ_API_KEY`. The file is ignored by Git and is
+`GOOGLE_AI_STUDIO_KEY` (or its `GEMINI_API_KEY` alias) or `GROQ_API_KEY`. The file is ignored by Git and is
 loaded automatically at runtime. Keep it local and never commit credentials.
+
+Provider defaults are maintained in `core/router.py` and can be overridden with
+the `*_FAST_MODEL`, `*_BALANCED_MODEL`, and `*_SMART_MODEL` variables in the
+ignored local environment file.
+The current defaults are Gemini 3.5/3.6 Flash, Groq Qwen3 32B and GPT-OSS 120B,
+Cerebras Llama 3.1 8B/GLM 4.7/GPT-OSS 120B, NVIDIA Nemotron 3 Ultra, Cohere
+Command A+, and OpenRouter's `openrouter/free` router. OpenRouter dynamically
+selects a free upstream, so never send private Brain, voice, identity, or
+credential data through it. Provider keys only mark a route as configured; use
+the provider smoke checks in your own environment to verify account access and
+model entitlements.
 
 H1KARI can also route text through separately running local OmniRoute or 9Router
 gateways. See `docs/LOCAL_ROUTER_GATEWAYS.md`. These gateways aggregate upstream
