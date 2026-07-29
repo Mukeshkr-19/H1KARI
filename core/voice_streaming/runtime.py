@@ -171,6 +171,13 @@ def extract_wake_command(text: str) -> Optional[str]:
     return None
 
 
+def _normalize_interrupt_phrase(text: str) -> str:
+    """Normalize interrupt text; map reviewed Whisper wake misspellings to hikari."""
+    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+    tokens = ["hikari" if tok == "hickory" else tok for tok in normalized.split()]
+    return " ".join(tokens)
+
+
 def is_wake_phrase(text: str) -> bool:
     """Return True only if text is a bare HIKARI wake phrase."""
     return extract_wake_command(text) == ""
@@ -180,24 +187,16 @@ def is_stop_command(text: str) -> bool:
     """Return True only for an explicit command to resume wake-word listening."""
     if not isinstance(text, str):
         return False
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    return normalized in STOP_WORDS
+    normalized = _normalize_interrupt_phrase(text)
+    if normalized in STOP_WORDS:
+        return True
+    trailing = extract_wake_command(text)
+    return bool(trailing and _normalize_interrupt_phrase(trailing) in STOP_WORDS)
 
 
 def is_speech_interrupt_command(text: str) -> bool:
     """Classify only explicit stop commands during playback (exact phrase)."""
     return speech_interrupt_mode(text) is not None
-
-
-def _normalize_interrupt_phrase(text: str) -> str:
-    """Normalize interrupt text; map reviewed Whisper wake misspellings to hikari."""
-    normalized = " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
-    # Keep wake spelling aligned with extract_wake_command acceptance.
-    tokens = [
-        "hikari" if tok == "hickory" else tok
-        for tok in normalized.split()
-    ]
-    return " ".join(tokens)
 
 
 def speech_interrupt_mode(text: str) -> str | None:

@@ -162,6 +162,7 @@ def test_cancel_is_soft_interrupt_not_stop_command():
     ["hickory stop", "hey hikari stop", "hey hickory stop", "Hickory done"],
 )
 def test_whisper_wake_variants_are_goodbye_interrupts(phrase: str):
+    assert is_stop_command(phrase) is True
     assert speech_interrupt_mode(phrase) == "goodbye"
 
 
