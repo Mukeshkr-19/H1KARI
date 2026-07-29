@@ -21,7 +21,7 @@ if [ -z "$PYTHON312" ]; then echo "Python 3.12 was not found on PATH." >&2; exit
 "$PYTHON312" --version
 "$PYTHON312" -m venv .venv
 .venv/bin/python -m pip install --upgrade pip wheel setuptools
-.venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
+.venv/bin/python -m pip install -r requirements-macos-arm64-py312.lock
 bash scripts/install-hikari-cli.sh
 ```
 
@@ -165,6 +165,12 @@ npm run build
 ```
 
 ## 8. Health Check Before Work
+
+Contributors running the test suite should install the developer lock once:
+
+```bash
+.venv/bin/python -m pip install -r requirements-dev-macos-arm64-py312.lock
+```
 
 ```bash
 cd path/to/H1KARI
