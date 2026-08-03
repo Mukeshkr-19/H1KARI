@@ -2,7 +2,7 @@
 
 Status: generated audit input; not a final release notice or legal approval
 Source: `hikari-frontend/package-lock.json`
-Lock SHA-256: `e148d1303b14f6e304542bc1396b3b143458da204cc095194fbd5452bdae6ab9`
+Lock SHA-256: `74b68455c7c04354e8f742c98b6736ed3b9930a889e20a63145293fa045e9576`
 Package entries: 406
 
 Regenerate with `python scripts/frontend_third_party.py`. Verify with `python scripts/frontend_third_party.py --check`.
@@ -181,7 +181,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/@typescript-eslint/type-utils` | `@typescript-eslint/type-utils` | 8.39.0 | MIT |
 | `node_modules/@typescript-eslint/types` | `@typescript-eslint/types` | 8.39.0 | MIT |
 | `node_modules/@typescript-eslint/typescript-estree` | `@typescript-eslint/typescript-estree` | 8.39.0 | MIT |
-| `node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion` | `brace-expansion` | 2.1.2 | MIT |
+| `node_modules/@typescript-eslint/typescript-estree/node_modules/brace-expansion` | `brace-expansion` | 2.1.4 | MIT |
 | `node_modules/@typescript-eslint/typescript-estree/node_modules/fast-glob` | `fast-glob` | 3.3.3 | MIT |
 | `node_modules/@typescript-eslint/typescript-estree/node_modules/glob-parent` | `glob-parent` | 5.1.2 | ISC |
 | `node_modules/@typescript-eslint/typescript-estree/node_modules/minimatch` | `minimatch` | 9.0.9 | ISC |
@@ -226,7 +226,7 @@ Upstream evidence: [sharp-libvips](https://github.com/lovell/sharp-libvips), [li
 | `node_modules/axe-core` | `axe-core` | 4.10.3 | MPL-2.0 |
 | `node_modules/axobject-query` | `axobject-query` | 4.1.0 | Apache-2.0 |
 | `node_modules/balanced-match` | `balanced-match` | 1.0.2 | MIT |
-| `node_modules/brace-expansion` | `brace-expansion` | 1.1.16 | MIT |
+| `node_modules/brace-expansion` | `brace-expansion` | 1.1.18 | MIT |
 | `node_modules/braces` | `braces` | 3.0.3 | MIT |
 | `node_modules/call-bind` | `call-bind` | 1.0.8 | MIT |
 | `node_modules/call-bind-apply-helpers` | `call-bind-apply-helpers` | 1.0.2 | MIT |
