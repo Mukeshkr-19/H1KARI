@@ -12,5 +12,6 @@ SpeechRecognition==3.13.0
 websockets>=13.0,<17.0
 openai-whisper>=20231117
 faster-whisper==1.2.1
+local-wake==0.1.2
 torch>=2.0.0
 speechbrain>=1.0.0

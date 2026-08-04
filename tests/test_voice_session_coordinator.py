@@ -47,6 +47,7 @@ class MockPlaybackController(PlaybackControllerProtocol):
     def __init__(self, play_returns: bool = True, play_delay: float = 0.0) -> None:
         self.state = "idle"
         self.played_ids: List[str] = []
+        self.played_audio: List[bytes] = []
         self.play_returns = play_returns
         self.play_delay = play_delay
 
@@ -55,6 +56,7 @@ class MockPlaybackController(PlaybackControllerProtocol):
             await asyncio.sleep(self.play_delay)
         self.state = "playing"
         self.played_ids.append(playback_id)
+        self.played_audio.append(audio_data)
         return self.play_returns
 
     async def pause(self) -> None:
@@ -391,32 +393,39 @@ def test_barge_in_from_idle_fails_with_zero_mutation() -> None:
 
 
 # Reg 2. Barge-in from ASSISTANT_SPEAKING but no active tuple fails closed
-def test_barge_in_without_active_tuple_fails_closed() -> None:
+def test_barge_in_after_completed_response_fails_closed() -> None:
     async def run() -> None:
         event_sink = SlowEventSink()
         clock = MockClock()
+        playback = MockPlaybackController()
 
         coordinator = VoiceSessionCoordinator(
             session_id="sess_no_tuple_barge",
             clock=clock,
             event_sink=event_sink,
+            generator=MockGenerator(["Done."]),
+            tts_renderer=MockTTSRenderer(),
+            playback_controller=playback,
         )
-
-        # Force state without setting _active_response
-        await coordinator._transition_to(VoiceSessionState.ASSISTANT_SPEAKING)
-        event_sink.events.clear()
+        assert await coordinator.process_user_turn("Complete this turn") is True
+        await asyncio.sleep(0.1)
+        assert coordinator.state == VoiceSessionState.LISTENING
+        event_count = len(event_sink.events)
 
         frame = AudioFrame(data=b"\x01\x02", sample_rate=16000, channels=1, monotonic_ns=clock.now_ns())
         res = await coordinator.handle_barge_in_speech(audio_frames=[frame])
 
         assert res is False
-        assert len(event_sink.events) == 0
+        assert len(event_sink.events) == event_count
+        assert playback.state == "playing"
+
+        await coordinator.shutdown()
 
     asyncio.run(run())
 
 
 # Reg 3. Rejected/resume-approved interruption preserves original correlation
-def test_rejected_resume_approved_barge_in_preserves_correlation() -> None:
+def test_rejected_barge_in_terminally_clears_response() -> None:
     async def run() -> None:
         clock = MockClock()
         playback = MockPlaybackController()
@@ -438,15 +447,13 @@ def test_rejected_resume_approved_barge_in_preserves_correlation() -> None:
         await coordinator.process_user_turn("Turn prompt")
         await asyncio.sleep(0.05)
 
-        orig_tuple = coordinator._active_response
-        assert orig_tuple is not None
-
         frame = AudioFrame(data=b"\x01\x02", sample_rate=16000, channels=1, monotonic_ns=clock.now_ns())
         res = await coordinator.handle_barge_in_speech(audio_frames=[frame])
 
         assert res is False
-        assert coordinator._active_response == orig_tuple
-        assert coordinator.state == VoiceSessionState.ASSISTANT_SPEAKING
+        assert coordinator.state == VoiceSessionState.LISTENING
+        assert playback.state == "stopped"
+        assert await coordinator.process_user_turn("Next ordinary turn") is True
 
         await coordinator.shutdown()
 
@@ -480,8 +487,9 @@ def test_rejected_resume_denied_barge_in_clears_active_tuple() -> None:
         res = await coordinator.handle_barge_in_speech(audio_frames=[frame])
 
         assert res is False
-        assert coordinator._active_response is None
         assert coordinator.state == VoiceSessionState.LISTENING
+        assert playback.state == "stopped"
+        assert await coordinator.process_user_turn("Next turn") is True
 
         await coordinator.shutdown()
 
@@ -501,9 +509,8 @@ def test_generation_failure_clears_active_tuple_and_tasks() -> None:
         await coordinator.process_user_turn("Prompt")
         await asyncio.sleep(0.1)
 
-        assert coordinator._active_response is None
-        assert len(coordinator._response_tasks) == 0
         assert coordinator.state == VoiceSessionState.ERROR
+        assert await coordinator.process_user_turn("Recovery prompt") is True
 
         await coordinator.shutdown()
 
@@ -524,9 +531,8 @@ def test_renderer_error_clears_active_tuple_and_tasks() -> None:
         await coordinator.process_user_turn("Prompt")
         await asyncio.sleep(0.1)
 
-        assert coordinator._active_response is None
-        assert len(coordinator._response_tasks) == 0
         assert coordinator.state == VoiceSessionState.ERROR
+        assert await coordinator.process_user_turn("Recovery prompt") is True
 
         await coordinator.shutdown()
 
@@ -547,9 +553,8 @@ def test_invalid_rendered_audio_clears_active_tuple_and_tasks() -> None:
         await coordinator.process_user_turn("Prompt")
         await asyncio.sleep(0.1)
 
-        assert coordinator._active_response is None
-        assert len(coordinator._response_tasks) == 0
         assert coordinator.state == VoiceSessionState.ERROR
+        assert await coordinator.process_user_turn("Recovery prompt") is True
 
         await coordinator.shutdown()
 
@@ -571,9 +576,8 @@ def test_playback_failure_clears_active_tuple_and_tasks() -> None:
         await coordinator.process_user_turn("Prompt")
         await asyncio.sleep(0.1)
 
-        assert coordinator._active_response is None
-        assert len(coordinator._response_tasks) == 0
         assert coordinator.state == VoiceSessionState.DEGRADED_HALF_DUPLEX
+        assert await coordinator.process_user_turn("Recovery prompt") is True
 
         await coordinator.shutdown()
 
@@ -605,8 +609,8 @@ def test_normal_completion_waits_for_playback_completion() -> None:
         await asyncio.sleep(0.3)
 
         assert coordinator.state == VoiceSessionState.LISTENING
-        assert coordinator._active_response is None
-        assert len(coordinator._response_tasks) == 0
+        assert renderer.rendered_texts == ["Single sentence."]
+        assert playback.played_audio == [b"AUDIO(Single sentence.)"]
 
         completed_events = [
             e for e in event_sink.events
@@ -628,13 +632,11 @@ def test_fail_once_sink_never_delivers_seq2_without_seq1() -> None:
             event_sink=fail_sink,
         )
 
-        # First event emission fails -> latches emitter closed
-        res1 = await coordinator._transition_to(VoiceSessionState.LISTENING)
-        assert res1 is None
+        # The first public turn transition fails delivery and latches emission closed.
+        assert await coordinator.process_user_turn("Public turn") is True
 
-        # Second event emission attempt -> latched closed, does NOT deliver seq 2!
-        res2 = await coordinator._transition_to(VoiceSessionState.USER_SPEAKING)
-        assert res2 is None
+        # A later public event source cannot deliver sequence 2 after sequence 1 failed.
+        await coordinator.update_aec_evidence(None, has_echo_reference=False)
 
         # Sink should contain NO events (or seq 1 retry), definitely NOT [2]!
         delivered_seqs = [e.event_sequence for e in fail_sink.events]
@@ -705,7 +707,7 @@ def test_public_state_gated_stale_playback_exact_ids() -> None:
         res1 = await coordinator.process_user_turn("First prompt")
         assert res1 is True
 
-        old_pb_id = coordinator._playback_id
+        old_pb_id = coordinator.get_current_context().playback_id
 
         # Step 2: Attempt public process_user_turn while assistant is active -> MUST BE REJECTED!
         res_rejected = await coordinator.process_user_turn("Attempted overwrite")
@@ -757,6 +759,12 @@ def test_gather_bounded_frames_timeout_returns_safely() -> None:
             max_capture_duration_s=0.1,
         )
 
+        started = time.monotonic()
+        frames = await coordinator._gather_bounded_frames()
+        elapsed = time.monotonic() - started
+        assert frames == []
+        assert elapsed < 0.3
+
     asyncio.run(run())
 
 
@@ -783,39 +791,6 @@ def test_racing_duplicate_finalizers_cause_one_transition() -> None:
         assert coordinator._active_response is None
         assert len(coordinator._response_tasks) == 0
         assert coordinator.state == VoiceSessionState.LISTENING
-
-        await coordinator.shutdown()
-
-    asyncio.run(run())
-
-
-def test_stale_finalizer_cannot_clear_active_response_B() -> None:
-    async def run() -> None:
-        renderer = MockTTSRenderer(render_delay=0.2)
-        coordinator = VoiceSessionCoordinator(
-            session_id="sess_stale_fin",
-            generator=MockGenerator(["Sentence."]),
-            tts_renderer=renderer,
-        )
-        await coordinator.start()
-
-        # Turn A
-        await coordinator.process_user_turn("Turn A")
-        tuple_A = coordinator._active_response
-        assert tuple_A is not None
-
-        # Force state to listening and start Turn B
-        await coordinator._transition_to(VoiceSessionState.LISTENING)
-        await coordinator.process_user_turn("Turn B")
-        tuple_B = coordinator._active_response
-        assert tuple_B is not None
-        assert tuple_A != tuple_B
-
-        # Attempt to finalize with stale tuple A -> MUST BE NO-OP!
-        await coordinator._finalize_response(tuple_A, outcome="completed")
-
-        # Tuple B MUST still be active!
-        assert coordinator._active_response == tuple_B
 
         await coordinator.shutdown()
 
@@ -852,10 +827,8 @@ def test_verified_barge_in_cleans_up_old_response_completely() -> None:
         assert res_turn is True
         await asyncio.sleep(0.05)
 
-        # 2. Retain old ActiveResponseTuple
-        old_tuple = coordinator._active_response
-        assert old_tuple is not None
-        old_gen = old_tuple.cancellation_generation
+        # 2. Retain the public pre-interruption generation.
+        old_gen = coordinator.get_current_context().cancellation_generation
 
         # 3. Perform a verified barge-in under asyncio.wait_for
         frame = AudioFrame(data=b"\x01\x02", sample_rate=16000, channels=1, monotonic_ns=clock.now_ns())
@@ -869,20 +842,290 @@ def test_verified_barge_in_cleans_up_old_response_completely() -> None:
         # 6. Assert cancellation generation advanced
         assert coordinator.cancellation_generation > old_gen
 
-        # 7. Assert _active_response is None
-        assert coordinator._active_response is None
-
-        # 8. Assert _response_tasks is empty after bounded scheduling/join
-        await asyncio.sleep(0.1)
-        assert len(coordinator._response_tasks) == 0
+        # 7. The old response is terminal: a new ordinary turn is accepted.
+        assert coordinator.state == VoiceSessionState.LISTENING
+        assert await coordinator.process_user_turn("Post-interruption turn") is True
 
         # 9. Assert playback stop was requested
         assert playback.state == "stopped"
 
         # 10. Assert verified new turn was submitted exactly once
-        assert len(turn_sink.turns) == 2
+        assert len(turn_sink.turns) == 3
         assert turn_sink.turns[1][0] == "Verified barge in command"
 
         await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_observed_barge_in_identity_must_match_active_response() -> None:
+    async def run() -> None:
+        clock = MockClock()
+        playback = MockPlaybackController()
+        renderer_started = asyncio.Event()
+        release_renderer = asyncio.Event()
+
+        class GatedRenderer(TTSRendererProtocol):
+            async def render(self, text: str) -> bytes:
+                renderer_started.set()
+                await release_renderer.wait()
+                return b"rendered-audio"
+
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_observed_identity",
+            clock=clock,
+            generator=MockGenerator(["Response."]),
+            tts_renderer=GatedRenderer(),
+            playback_controller=playback,
+            owner_verifier=MockOwnerVerifier(is_owner=True),
+            echo_noise_rejector=MockEchoRejector(),
+            transcriber=MockTranscriber("Interrupt"),
+        )
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.wait_for(renderer_started.wait(), timeout=1.0)
+        ctx = coordinator.get_current_context()
+
+        frame = AudioFrame(
+            data=b"\x01", sample_rate=16000, channels=1, monotonic_ns=clock.now_ns()
+        )
+        accepted = await coordinator.handle_barge_in_speech(
+            audio_frames=[frame],
+            observed_session_id="sess_wrong",
+            observed_response_id=ctx.response_id,
+            observed_playback_id=ctx.playback_id,
+        )
+        assert accepted is False
+        assert coordinator.state in (
+            VoiceSessionState.ASSISTANT_GENERATING,
+            VoiceSessionState.ASSISTANT_SPEAKING,
+        )
+        assert playback.state == "idle"
+
+        release_renderer.set()
+        await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_active_playback_gate_requires_exact_public_correlation() -> None:
+    async def run() -> None:
+        event_sink = SlowEventSink()
+        renderer_started = asyncio.Event()
+        release_renderer = asyncio.Event()
+
+        class GatedRenderer(TTSRendererProtocol):
+            async def render(self, text: str) -> bytes:
+                renderer_started.set()
+                await release_renderer.wait()
+                return b"rendered-audio"
+
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_playback_gate",
+            event_sink=event_sink,
+            generator=MockGenerator(["Response."]),
+            tts_renderer=GatedRenderer(),
+            playback_controller=MockPlaybackController(),
+        )
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.wait_for(renderer_started.wait(), timeout=1.0)
+        ctx = coordinator.get_current_context()
+
+        exact = {
+            "session_id": ctx.session_id,
+            "response_id": ctx.response_id,
+            "playback_id": ctx.playback_id,
+            "cancellation_generation": ctx.cancellation_generation,
+        }
+        assert coordinator.is_active_playback(**exact) is True
+        for field, wrong in (
+            ("session_id", "sess_wrong"),
+            ("response_id", "resp_wrong"),
+            ("playback_id", "pb_wrong"),
+            ("cancellation_generation", ctx.cancellation_generation + 1),
+        ):
+            candidate = dict(exact)
+            candidate[field] = wrong
+            assert coordinator.is_active_playback(**candidate) is False
+
+        release_renderer.set()
+        await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_verifier_exception_finalizes_response_and_stops_playback() -> None:
+    async def run() -> None:
+        class RaisingVerifier(OwnerVerifierProtocol):
+            def verify_owner(self, frames: list[AudioFrame]) -> OwnerVerificationResult:
+                raise RuntimeError("synthetic verifier failure")
+
+        clock = MockClock()
+        playback = MockPlaybackController()
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_verifier_error",
+            clock=clock,
+            generator=MockGenerator(["Response."]),
+            tts_renderer=MockTTSRenderer(render_delay=0.2),
+            playback_controller=playback,
+            owner_verifier=RaisingVerifier(),
+            echo_noise_rejector=MockEchoRejector(),
+        )
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.sleep(0.02)
+        frame = AudioFrame(
+            data=b"\x01", sample_rate=16000, channels=1, monotonic_ns=clock.now_ns()
+        )
+
+        assert await coordinator.handle_barge_in_speech(audio_frames=[frame]) is False
+        assert coordinator.state == VoiceSessionState.ERROR
+        assert playback.state == "stopped"
+        assert await coordinator.process_user_turn("Recovery turn") is True
+
+        await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_empty_sentence_stream_sentinel_restores_listening_without_rendering() -> None:
+    async def run() -> None:
+        renderer = MockTTSRenderer()
+        playback = MockPlaybackController()
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_empty_stream",
+            generator=MockGenerator(["unterminated fragment"]),
+            tts_renderer=renderer,
+            playback_controller=playback,
+        )
+
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.sleep(0.1)
+        assert coordinator.state == VoiceSessionState.LISTENING
+        assert renderer.rendered_texts == []
+        assert playback.played_ids == []
+
+        await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_shutdown_cancels_inflight_renderer_and_joins_worker() -> None:
+    async def run() -> None:
+        render_started = asyncio.Event()
+        render_cancelled = asyncio.Event()
+
+        class CancellationAwareRenderer(TTSRendererProtocol):
+            async def render(self, text: str) -> bytes:
+                render_started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    render_cancelled.set()
+                    raise
+
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_shutdown_join",
+            generator=MockGenerator(["Response."]),
+            tts_renderer=CancellationAwareRenderer(),
+            playback_controller=MockPlaybackController(),
+        )
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.wait_for(render_started.wait(), timeout=1.0)
+
+        await asyncio.wait_for(coordinator.shutdown(), timeout=1.0)
+        assert render_cancelled.is_set()
+        assert coordinator.state == VoiceSessionState.STOPPED
+
+    asyncio.run(run())
+
+
+def test_missing_renderer_and_playback_terminally_degrade() -> None:
+    async def run() -> None:
+        without_renderer = VoiceSessionCoordinator(
+            session_id="sess_no_renderer",
+            generator=MockGenerator(["Response."]),
+            playback_controller=MockPlaybackController(),
+        )
+        assert await without_renderer.process_user_turn("Prompt") is True
+        await asyncio.sleep(0.1)
+        assert without_renderer.state == VoiceSessionState.DEGRADED_HALF_DUPLEX
+        assert await without_renderer.process_user_turn("Recovery") is True
+        await without_renderer.shutdown()
+
+        renderer = MockTTSRenderer()
+        without_playback = VoiceSessionCoordinator(
+            session_id="sess_no_playback",
+            generator=MockGenerator(["Response."]),
+            tts_renderer=renderer,
+        )
+        assert await without_playback.process_user_turn("Prompt") is True
+        await asyncio.sleep(0.1)
+        assert without_playback.state == VoiceSessionState.DEGRADED_HALF_DUPLEX
+        assert renderer.rendered_texts == ["Response."]
+        assert await without_playback.process_user_turn("Recovery") is True
+        await without_playback.shutdown()
+
+    asyncio.run(run())
+
+
+def test_playback_exception_terminally_degrades() -> None:
+    async def run() -> None:
+        class RaisingPlayback(MockPlaybackController):
+            async def play(self, audio_data: bytes, playback_id: str) -> bool:
+                raise RuntimeError("synthetic playback failure")
+
+        playback = RaisingPlayback()
+        coordinator = VoiceSessionCoordinator(
+            session_id="sess_playback_exception",
+            generator=MockGenerator(["Response."]),
+            tts_renderer=MockTTSRenderer(),
+            playback_controller=playback,
+        )
+        assert await coordinator.process_user_turn("Prompt") is True
+        await asyncio.sleep(0.1)
+        assert coordinator.state == VoiceSessionState.DEGRADED_HALF_DUPLEX
+        assert playback.state == "stopped"
+        assert await coordinator.process_user_turn("Recovery") is True
+        await coordinator.shutdown()
+
+    asyncio.run(run())
+
+
+def test_turn_sink_error_is_bounded_but_cancellation_propagates() -> None:
+    async def run() -> None:
+        class RaisingTurnSink(TurnSinkProtocol):
+            async def on_turn(
+                self,
+                text: str,
+                session_id: str,
+                utterance_id: str,
+                start_ns: int,
+                end_ns: int,
+            ) -> None:
+                raise RuntimeError("synthetic turn sink failure")
+
+        failed = VoiceSessionCoordinator(
+            session_id="sess_turn_sink_error", turn_sink=RaisingTurnSink()
+        )
+        assert await failed.process_user_turn("Prompt") is False
+        assert failed.state == VoiceSessionState.ERROR
+        await failed.shutdown()
+
+        class CancellingTurnSink(TurnSinkProtocol):
+            async def on_turn(
+                self,
+                text: str,
+                session_id: str,
+                utterance_id: str,
+                start_ns: int,
+                end_ns: int,
+            ) -> None:
+                raise asyncio.CancelledError
+
+        cancelled = VoiceSessionCoordinator(
+            session_id="sess_turn_sink_cancel", turn_sink=CancellingTurnSink()
+        )
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled.process_user_turn("Prompt")
+        await cancelled.shutdown()
 
     asyncio.run(run())

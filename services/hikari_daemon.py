@@ -186,6 +186,12 @@ _interruption_seq = 0
 _time_sense_coordinator = None
 _active_last_activity_ns = 0
 _post_interrupt_ignore_until_ns = 0
+_voice_authority_activation = None
+_local_wake_load = None
+_local_wake_gate = None
+_local_wake_last_vad_ns = 0
+
+_COORDINATOR_ACTIVATION_ENV = "HIKARI_VOICE_SESSION_COORDINATOR"
 
 _DEFAULT_ACTIVE_IDLE_SECONDS = 120.0
 _MIN_ACTIVE_IDLE_SECONDS = 30.0
@@ -224,6 +230,92 @@ def _post_interrupt_ignore_ns() -> int:
         _MAX_POST_INTERRUPT_IGNORE_MS,
     )
     return int(ms * 1_000_000)
+
+
+def get_voice_authority_activation(
+    *,
+    daemon_loaded: bool = False,
+    wake_evidence=None,
+    coordinator_factory=None,
+    legacy_authority_active: bool = True,
+    aec_acceptance=None,
+    now_ns=None,
+):
+    """Single inert boundary between the legacy runtime and coordinator.
+
+    Only the exact value ``1`` requests coordinator mode.  The core boundary
+    still refuses activation without calibrated wake evidence and a valid
+    factory, so an environment flag alone can never create dual authority.
+    """
+    from core.voice_session.activation import activate_voice_session_authority
+
+    requested = os.getenv(_COORDINATOR_ACTIVATION_ENV, "0").strip() == "1"
+    return activate_voice_session_authority(
+        coordinator_enabled=requested,
+        daemon_loaded=daemon_loaded,
+        wake_evidence=wake_evidence,
+        coordinator_factory=coordinator_factory,
+        legacy_authority_active=legacy_authority_active,
+        aec_acceptance=aec_acceptance,
+        now_ns=now_ns,
+    )
+
+
+def get_voice_authority_health(*, daemon_loaded: bool = False) -> dict:
+    """Return content-free authority/AEC health without starting any capability."""
+    activation = _voice_authority_activation
+    if activation is None or activation.health.daemon.value != (
+        "loaded" if daemon_loaded else "unloaded"
+    ):
+        activation = get_voice_authority_activation(daemon_loaded=daemon_loaded)
+    return activation.health.to_dict()
+
+
+def _local_wake_requested() -> bool:
+    from core.voice_session.local_wake_backend import local_wake_opted_in
+
+    return local_wake_opted_in()
+
+
+def _load_local_wake(*, enabled: bool):
+    """Load only explicit private references; returns content-free failure status."""
+    from core.voice_session.local_wake_backend import (
+        LocalWakeBackendLoad,
+        LocalWakeStatus,
+        LocalWakeStatusCode,
+        load_local_wake_backend,
+        resolve_local_wake_reference_root,
+    )
+
+    try:
+        root = resolve_local_wake_reference_root()
+    except Exception:
+        return LocalWakeBackendLoad(
+            LocalWakeStatus(LocalWakeStatusCode.REFERENCES_MISSING)
+        )
+    return load_local_wake_backend(root, enabled=enabled)
+
+
+def _get_local_wake_backend():
+    global _local_wake_load, _local_wake_gate
+    if not _local_wake_requested():
+        return None
+    if _local_wake_load is None:
+        _local_wake_load = _load_local_wake(enabled=True)
+        if _local_wake_load.backend is not None:
+            _local_wake_gate = _local_wake_load.backend.build_wake_gate(
+                clock=time.monotonic_ns
+            )
+    return _local_wake_load.backend
+
+
+def get_local_wake_status() -> dict:
+    """Content-free package/reference/calibration/activation status."""
+    global _local_wake_load
+    enabled = _local_wake_requested()
+    if _local_wake_load is None or _local_wake_load.status.enabled != enabled:
+        _local_wake_load = _load_local_wake(enabled=enabled)
+    return _local_wake_load.status.to_dict()
 
 
 def _arm_post_interrupt_ignore(runtime) -> None:
@@ -1009,6 +1101,14 @@ def _listen_for_wake_word() -> None:
     runtime = _get_streaming_runtime()
     if not runtime.is_wake_listening:
         return
+    # Explicit local-wake mode is frame-fed only. Never fall back to a second
+    # SpeechRecognition wake detector or create a separate microphone stream.
+    if _local_wake_requested():
+        # If CoreAudio frame capture is unavailable, remain silent without
+        # turning the daemon loop into a busy spin.  The operator can inspect
+        # content-free capture and local-wake status separately.
+        time.sleep(0.05)
+        return
     print("💤 ", end="\r", flush=True)
     with sr.Microphone() as source:
         r.adjust_for_ambient_noise(source, duration=0.5)
@@ -1161,6 +1261,7 @@ def _verify_speaker_pcm(pcm: bytes, *, utterance_id: str, wake_activation: bool 
 def _listen_frame_stream_cycle() -> None:
     """One wake/active cycle using CoreAudio frames + local VAD endpointing."""
     global hikari_state, daemon_running, _capture_mode, _active_last_activity_ns
+    global _local_wake_last_vad_ns, _local_wake_gate
     runtime = _get_streaming_runtime()
     loop = _voice_audio_loop
     gate = _frame_endpoint_gate
@@ -1201,6 +1302,8 @@ def _listen_frame_stream_cycle() -> None:
             monotonic_ns=frame.monotonic_ns,
             sample_rate=frame.sample_rate,
         )
+        if tick.available and float(tick.speech_probability) >= 0.5:
+            _local_wake_last_vad_ns = frame.monotonic_ns
         if diagnostics:
             diagnostic_frames += 1
             diagnostic_max_probability = max(
@@ -1225,6 +1328,67 @@ def _listen_frame_stream_cycle() -> None:
         )
         utterance_id = _next_utterance_id("frame")
         short = runtime.is_wake_listening
+        if short and _local_wake_requested():
+            backend = _get_local_wake_backend()
+            if backend is None or _local_wake_gate is None:
+                gate.reset()
+                _local_wake_last_vad_ns = 0
+                continue
+            evidence = backend.evaluate_pcm16(
+                pcm,
+                observed_monotonic_ns=frame.monotonic_ns,
+                vad_observed_monotonic_ns=_local_wake_last_vad_ns,
+                vad_has_speech=_local_wake_last_vad_ns > 0,
+            )
+            _local_wake_last_vad_ns = 0
+            if evidence is None:
+                gate.reset()
+                continue
+            speaker_ok = _verify_speaker_pcm(
+                pcm,
+                utterance_id=utterance_id,
+                wake_activation=True,
+            )
+            from core.speech_adapters import LocalTranscriptionResult
+            from core.voice_safety.contracts import OwnerVerification, PlaybackState
+            from core.voice_session.wake_admission import admit_local_wake
+
+            playback = PlaybackState.idle()
+            if _playback_controller is not None and getattr(
+                _playback_controller, "state", None
+            ) is not None:
+                state_value = str(getattr(_playback_controller.state, "value", ""))
+                if state_value in {"playing", "paused", "stopping"}:
+                    playback = PlaybackState.playing()
+            admission = admit_local_wake(
+                gate=_local_wake_gate,
+                transcription=LocalTranscriptionResult("", evidence),
+                detected_wake_name="Hikari",
+                session_id=runtime.stream_id,
+                event_id=utterance_id,
+                owner_verification=(
+                    OwnerVerification.verified()
+                    if speaker_ok
+                    else OwnerVerification.rejected()
+                ),
+                playback=playback,
+                now_ns=runtime.now_ns(),
+            )
+            if not admission.admitted:
+                gate.reset()
+                continue
+            result = runtime.process_utterance(
+                "hikari",
+                is_verified_speaker=True,
+                is_short=True,
+                utterance_id=utterance_id,
+            )
+            _sync_hikari_state_from_runtime(runtime)
+            _mark_active_voice_activity(runtime)
+            if result.get("action") == "acknowledge":
+                speak("Yes?", allow_interrupt=False)
+            gate.reset()
+            return
         text = _transcribe_pcm_utterance(pcm, short_utterance=short)
         if not text:
             print("[DAEMON] Frame STT returned no text", flush=True)
@@ -1271,6 +1435,20 @@ def _listen_frame_stream_cycle() -> None:
         if not speaker_ok:
             gate.reset()
             continue
+        if _local_wake_requested():
+            if _local_wake_gate is None:
+                runtime.reset_to_wake_listening(runtime.now_ns())
+                _sync_hikari_state_from_runtime(runtime)
+                gate.reset()
+                return
+            command_confirmation = _local_wake_gate.confirm_command(
+                now_ns=runtime.now_ns()
+            )
+            if not command_confirmation.accepted:
+                runtime.reset_to_wake_listening(runtime.now_ns())
+                _sync_hikari_state_from_runtime(runtime)
+                gate.reset()
+                return
         result = runtime.process_utterance(
             text,
             is_verified_speaker=True,
@@ -1337,6 +1515,8 @@ def request_shutdown(_signum=None, _frame=None) -> None:
     global _capture_backend, _frame_endpoint_gate, _barge_endpoint_gate
     global _playback_controller, _interruption_seq, _active_last_activity_ns
     global _post_interrupt_ignore_until_ns
+    global _voice_authority_activation
+    global _local_wake_load, _local_wake_gate, _local_wake_last_vad_ns
 
     daemon_running = False
     if _voice_audio_loop is not None:
@@ -1379,10 +1559,14 @@ def request_shutdown(_signum=None, _frame=None) -> None:
         except Exception:
             pass
         _playback_controller = None
+    _voice_authority_activation = None
+    _local_wake_load = None
+    _local_wake_gate = None
+    _local_wake_last_vad_ns = 0
 
 
 def main() -> int:
-    global daemon_running, hikari_state
+    global daemon_running, hikari_state, _voice_authority_activation
 
     # Load private runtime choices only when the daemon is explicitly started.
     # Importing this module remains free of configuration and model side effects.
@@ -1421,6 +1605,9 @@ def main() -> int:
 
     daemon_running = True
     hikari_state = HikariState.LISTENING
+    # Selection is intentionally inert today: main supplies neither calibrated
+    # wake evidence nor a coordinator factory, so legacy remains sole authority.
+    _voice_authority_activation = get_voice_authority_activation(daemon_loaded=True)
     signal.signal(signal.SIGINT, request_shutdown)
     signal.signal(signal.SIGTERM, request_shutdown)
     listen_always()

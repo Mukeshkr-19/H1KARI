@@ -1,7 +1,8 @@
-"""Unwired, synthetic VoiceSessionCoordinator foundation.
+"""Prospective single-authority VoiceSessionCoordinator.
 
 Coordinates speech capture, VAD, transcription, owner verification, echo/noise rejection,
-LLM generation, sentence-bounded TTS rendering/playback, barge-in, and AEC policy.
+LLM generation, sentence-bounded TTS rendering/playback, barge-in, and AEC policy through
+explicit injected adapters. Production daemon activation remains intentionally opt-in.
 """
 
 from __future__ import annotations
@@ -343,6 +344,10 @@ class VoiceSessionCoordinator:
         if sibling_tasks:
             await asyncio.gather(*sibling_tasks, return_exceptions=True)
 
+    def _discard_response_task(self, task: asyncio.Task) -> None:
+        with self._lock:
+            self._response_tasks.discard(task)
+
     def _is_response_active_locked(self, tuple_item: Optional[ActiveResponseTuple]) -> bool:
         """Check if tuple is active while caller already holds self._lock."""
         if tuple_item is None:
@@ -350,6 +355,13 @@ class VoiceSessionCoordinator:
         if self._is_shutdown:
             return False
         if self._active_response != tuple_item:
+            return False
+        if (
+            tuple_item.session_id != self._session_id
+            or tuple_item.utterance_id != self._utterance_id
+            or tuple_item.response_id != self._response_id
+            or tuple_item.playback_id != self._playback_id
+        ):
             return False
         if self._cancellation_tracker.is_stale(tuple_item.cancellation_generation):
             return False
@@ -369,6 +381,29 @@ class VoiceSessionCoordinator:
         with self._lock:
             return self._is_response_active_locked(tuple_item)
 
+    def is_active_playback(
+        self,
+        *,
+        session_id: object,
+        response_id: object,
+        playback_id: object,
+        cancellation_generation: object,
+    ) -> bool:
+        """Fail-closed identity gate for asynchronous playback callbacks/adapters."""
+        with self._lock:
+            active = self._active_response
+            if not self._is_response_active_locked(active):
+                return False
+            return (
+                isinstance(cancellation_generation, int)
+                and not isinstance(cancellation_generation, bool)
+                and active is not None
+                and session_id == active.session_id
+                and response_id == active.response_id
+                and playback_id == active.playback_id
+                and cancellation_generation == active.cancellation_generation
+            )
+
     async def _finalize_response(
         self, active_tuple: ActiveResponseTuple, outcome: str
     ) -> None:
@@ -381,12 +416,6 @@ class VoiceSessionCoordinator:
             sibling_tasks = [t for t in self._response_tasks if t != curr_task and not t.done()]
             self._response_tasks.difference_update(sibling_tasks)
 
-        if self._playback_controller is not None and outcome not in ("completed", "shutdown"):
-            try:
-                await self._playback_controller.stop()
-            except Exception:
-                pass
-
         self._tts_pipeline.clear()
 
         for t in sibling_tasks:
@@ -395,13 +424,26 @@ class VoiceSessionCoordinator:
         if sibling_tasks:
             await asyncio.gather(*sibling_tasks, return_exceptions=True)
 
+        if self._playback_controller is not None and outcome not in ("completed", "shutdown"):
+            try:
+                await self._playback_controller.stop()
+            except Exception:
+                pass
+
         if outcome == "completed":
             await self._transition_to(VoiceSessionState.LISTENING, reason="response_completed")
         elif outcome == "interrupted":
             await self._transition_to(VoiceSessionState.INTERRUPTED, reason="barge_in_verified")
         elif outcome in ("renderer_unavailable", "playback_unavailable", "playback_failed"):
             await self._transition_to(VoiceSessionState.DEGRADED_HALF_DUPLEX, reason=outcome)
-        elif outcome in ("generation_error", "renderer_error", "invalid_audio"):
+        elif outcome in (
+            "barge_verification_error",
+            "consumer_error",
+            "generation_error",
+            "invalid_audio",
+            "renderer_error",
+            "transcript_error",
+        ):
             await self._transition_to(VoiceSessionState.ERROR, reason=outcome)
         elif outcome == "shutdown":
             await self._transition_to(VoiceSessionState.STOPPED, reason="shutdown")
@@ -465,6 +507,10 @@ class VoiceSessionCoordinator:
         self,
         audio_frames: Optional[list[AudioFrame]] = None,
         raw_transcript: Optional[str] = None,
+        *,
+        observed_session_id: Optional[str] = None,
+        observed_response_id: Optional[str] = None,
+        observed_playback_id: Optional[str] = None,
     ) -> bool:
         """Handle detected user speech observation during assistant playback.
 
@@ -476,9 +522,20 @@ class VoiceSessionCoordinator:
                 return False
             if self._state not in (VoiceSessionState.ASSISTANT_GENERATING, VoiceSessionState.ASSISTANT_SPEAKING):
                 return False
-            if self._active_response is None:
-                return False
             active_tuple = self._active_response
+            if not self._is_response_active_locked(active_tuple):
+                return False
+            observed_ids = (
+                observed_session_id,
+                observed_response_id,
+                observed_playback_id,
+            )
+            if any(value is not None for value in observed_ids) and observed_ids != (
+                active_tuple.session_id,
+                active_tuple.response_id,
+                active_tuple.playback_id,
+            ):
+                return False
 
         # Provisional utterance ID
         prov_utt_id = self._alloc_utt_id()
@@ -514,13 +571,20 @@ class VoiceSessionCoordinator:
             )
 
         # Step 3: Owner verification & Echo/noise evaluation
-        owner_res = self._owner_verifier.verify_owner(audio_frames)
+        try:
+            owner_res = self._owner_verifier.verify_owner(audio_frames)
+            echo_res = self._echo_noise_rejector.evaluate_echo_noise(audio_frames)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._finalize_response(active_tuple, outcome="barge_verification_error")
+            return False
+
         if not owner_res.is_owner:
             return await self._handle_rejected_barge_in(
                 reason=f"unverified_speaker_{owner_res.reason}", ctx=ctx, active_tuple=active_tuple
             )
 
-        echo_res = self._echo_noise_rejector.evaluate_echo_noise(audio_frames)
         if echo_res.is_echo:
             return await self._handle_rejected_barge_in(
                 reason="echo_detected", ctx=ctx, active_tuple=active_tuple
@@ -533,7 +597,13 @@ class VoiceSessionCoordinator:
         # Transcribe
         text = raw_transcript
         if not text and self._transcriber is not None:
-            text = await self._transcriber.transcribe_final(audio_frames)
+            try:
+                text = await self._transcriber.transcribe_final(audio_frames)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                await self._finalize_response(active_tuple, outcome="transcript_error")
+                return False
 
         if not text:
             return await self._handle_rejected_barge_in(
@@ -589,9 +659,17 @@ class VoiceSessionCoordinator:
 
         # Step 5: Submit verified final transcript under new cancellation epoch exactly once
         barge_ctx = self.get_current_context()
-        success = await self._transcript_pipeline.process_final(
-            final=final, ctx=barge_ctx, audio_frames=audio_frames
-        )
+        try:
+            # Owner and echo/noise evidence was already verified above. Avoid invoking
+            # stateful verifier adapters twice for the same barge-in observation.
+            success = await self._transcript_pipeline.process_final(
+                final=final, ctx=barge_ctx, audio_frames=None
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._transition_to(VoiceSessionState.ERROR, reason="transcript_error")
+            return False
 
         if success:
             await self._transition_to(VoiceSessionState.LISTENING, reason="turn_submitted")
@@ -602,7 +680,7 @@ class VoiceSessionCoordinator:
     async def _handle_rejected_barge_in(
         self, reason: str, ctx: SessionContext, active_tuple: ActiveResponseTuple
     ) -> bool:
-        """Handle rejected speech observation. Query resume policy."""
+        """Reject probable speech and terminally abandon the paused response."""
         await self._emitter.emit(
             lambda seq: BargeInEvent(
                 session_id=ctx.session_id,
@@ -617,20 +695,8 @@ class VoiceSessionCoordinator:
             )
         )
 
-        # Resume if resume policy permits and epoch is still current
-        if (
-            self.is_response_active(active_tuple)
-            and self._resume_policy.should_resume(ctx.response_id, reason)
-        ):
-            if self._playback_controller is not None:
-                try:
-                    await self._playback_controller.resume()
-                except Exception:
-                    pass
-            await self._transition_to(VoiceSessionState.ASSISTANT_SPEAKING, reason="resumed_after_rejection")
-            return False
-
-        # Resume denied -> Finalize response as rejected_abandon and move to listening
+        # Do not resume content after an unverified interruption. A rejected barge-in
+        # terminally clears generation/render/playback consumers and returns to listening.
         await self._finalize_response(active_tuple, outcome="rejected_abandon")
         return False
 
@@ -672,9 +738,15 @@ class VoiceSessionCoordinator:
 
         await self._transition_to(VoiceSessionState.PROCESSING_FINAL, reason="user_turn")
 
-        success = await self._transcript_pipeline.process_final(
-            final=final, ctx=ctx, audio_frames=audio_frames
-        )
+        try:
+            success = await self._transcript_pipeline.process_final(
+                final=final, ctx=ctx, audio_frames=audio_frames
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self._transition_to(VoiceSessionState.ERROR, reason="transcript_error")
+            return False
         if not success:
             await self._transition_to(VoiceSessionState.ERROR, reason="transcript_rejected")
             return False
@@ -710,8 +782,10 @@ class VoiceSessionCoordinator:
             with self._lock:
                 self._response_tasks.add(g_task)
                 self._response_tasks.add(p_task)
-            g_task.add_done_callback(lambda t: self._response_tasks.discard(t))
-            p_task.add_done_callback(lambda t: self._response_tasks.discard(t))
+            g_task.add_done_callback(self._discard_response_task)
+            p_task.add_done_callback(self._discard_response_task)
+        else:
+            await self._transition_to(VoiceSessionState.LISTENING, reason="turn_submitted")
 
         return True
 
@@ -769,7 +843,12 @@ class VoiceSessionCoordinator:
 
                 if not self.is_response_active(active_tuple):
                     break
-                if chunk.response_id != active_tuple.response_id or chunk.playback_id != active_tuple.playback_id:
+                if not self.is_active_playback(
+                    session_id=chunk.session_id,
+                    response_id=chunk.response_id,
+                    playback_id=chunk.playback_id,
+                    cancellation_generation=chunk.cancellation_generation,
+                ):
                     continue
 
                 # Check TTS renderer existence
@@ -860,6 +939,8 @@ class VoiceSessionCoordinator:
                 except Exception:
                     pass
             raise
+        except Exception:
+            await self._finalize_response(active_tuple, outcome="consumer_error")
 
     async def _vad_worker_loop(self) -> None:
         """Background VAD observation and bounded frame endpointing loop."""
@@ -881,8 +962,19 @@ class VoiceSessionCoordinator:
                     st = self._state
 
                 if is_speech and st in (VoiceSessionState.ASSISTANT_SPEAKING, VoiceSessionState.ASSISTANT_GENERATING):
+                    with self._lock:
+                        observed = self._active_response
+                        if not self._is_response_active_locked(observed):
+                            observed = None
+                    if observed is None:
+                        continue
                     frames = await self._gather_bounded_frames()
-                    await self.handle_barge_in_speech(audio_frames=frames)
+                    await self.handle_barge_in_speech(
+                        audio_frames=frames,
+                        observed_session_id=observed.session_id,
+                        observed_response_id=observed.response_id,
+                        observed_playback_id=observed.playback_id,
+                    )
 
                 await asyncio.sleep(0.01)
         except asyncio.CancelledError:
@@ -901,16 +993,15 @@ class VoiceSessionCoordinator:
         if self._frame_source is None:
             return frames
 
-        start_ns = self._clock.now_ns()
-        deadline_ns = start_ns + int(self._max_capture_duration_s * 1e9)
+        loop = asyncio.get_running_loop()
+        deadline_s = loop.time() + self._max_capture_duration_s
 
         for _ in range(self._max_capture_frames):
             with self._lock:
                 if self._is_shutdown:
                     break
 
-            now_ns = self._clock.now_ns()
-            remaining_s = (deadline_ns - now_ns) / 1e9
+            remaining_s = deadline_s - loop.time()
             if remaining_s <= 0.0:
                 break
 

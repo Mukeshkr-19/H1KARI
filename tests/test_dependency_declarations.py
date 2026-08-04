@@ -37,6 +37,17 @@ def test_voice_backends_have_unambiguous_distribution_names():
     assert "whisper" not in names
     assert names.count("openai-whisper") == 1
     assert names.count("faster-whisper") == 1
+    assert names.count("local-wake") == 1
+
+
+def test_local_wake_is_exactly_pinned_in_manifest_and_platform_locks():
+    manifest = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    runtime = RUNTIME_LOCK.read_text(encoding="utf-8").splitlines()
+    development = DEV_LOCK.read_text(encoding="utf-8").splitlines()
+
+    assert manifest.count("local-wake==0.1.2") == 1
+    assert runtime.count("local-wake==0.1.2") == 1
+    assert development.count("local-wake==0.1.2") == 1
 
 
 def test_supported_tray_dependency_is_declared():

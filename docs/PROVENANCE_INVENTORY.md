@@ -57,6 +57,7 @@ redistribution.
 | `websockets>=12.0` | pairing server | BSD-3-Clause | direct dependency; exact supported version is in the platform lock |
 | `openai-whisper>=20231117` | local speech recognition | MIT | direct dependency; distribution name is protected by a regression check |
 | `faster-whisper==1.2.1` | optional local speech recognition in daemon services | MIT metadata | direct optional dependency; now explicitly declared |
+| `local-wake==0.1.2` | optional frame-fed local wake scoring; HIKARI never calls its microphone listener | installed package metadata and source license report MIT | exact package pinned; bundled speech-embedding model has incomplete upstream artifact provenance, so model redistribution and release-readiness claims remain blocked |
 
 `cohere` is reached through the HTTP router, not the Cohere Python package.
 Environment-specific `pip freeze` output is not a release manifest; the supported
@@ -64,7 +65,7 @@ macOS arm64/Python 3.12 graph is the reviewed platform lock.
 
 ### Declaration problems
 
-`requirements.txt` has 16 direct runtime dependencies, one of which is Darwin-only.
+`requirements.txt` has 17 direct runtime dependencies, one of which is Darwin-only.
 Resolver-owned transitive packages are represented by the exact supported platform
 lock rather than duplicated as direct requirements.
 
@@ -104,6 +105,7 @@ Registry license fields are evidence pointers, not a substitute for reviewing th
 | OpenAI Whisper `base` | `core/voice.py` | no; downloaded at runtime | reviewed hash, MIT evidence, cache, size, egress, and disable behavior are in `docs/MODEL_PROVENANCE.md` |
 | faster-whisper `base` | daemon service | no; downloaded at runtime | runtime is pinned to the reviewed model revision; record is in `docs/MODEL_PROVENANCE.md` |
 | `speechbrain/spkrec-ecapa-voxceleb` | `core/speaker_auth.py` | no; downloaded at runtime | runtime is pinned to the reviewed revision; license, training-data, biometric, cache, and authorization limits are in `docs/MODEL_PROVENANCE.md` |
+| local-wake speech embedding | installed `local-wake==0.1.2` package | no repository copy; dependency installation contains an ONNX asset | package code reports MIT; exact installed asset digest is recorded, but the embedded model's separate source/license/conversion provenance is not confirmed, so it must not be copied into a HIKARI release |
 | Ollama models | `core/router.py` | no | local tags and per-model upstream-license caveat are in `docs/PROVIDER_PROVENANCE.md` |
 | Google, Groq, OpenRouter, Cerebras, NVIDIA, Cohere | `core/router.py` | no | model ids, egress, retention evidence, and disable paths are in `docs/PROVIDER_PROVENANCE.md` |
 | DuckDuckGo, BBC feeds, OpenWeather | `agents/research.py` | no | data sent, credential use, HTTPS transport, and bounded failure/disable paths are in `docs/PROVIDER_PROVENANCE.md` |

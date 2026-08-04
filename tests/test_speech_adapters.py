@@ -16,14 +16,17 @@ from core.speech_adapters import (
     FasterWhisperSTTAdapter,
     GoogleSpeechRecognitionSTTAdapter,
     InvalidAudioError,
+    LocalTranscriptionResult,
     MacOSSayTTSAdapter,
     prepare_spoken_text,
     OpenAIWhisperSTTAdapter,
     SpeechBackendUnavailable,
     SynthesisError,
     TranscriptionError,
+    WakeTranscriptionEvidence,
     build_stt_adapter,
     build_tts_adapter,
+    transcribe_local_result,
 )
 
 
@@ -60,6 +63,32 @@ class FakeTTS:
 
     def synthesize(self, text: str) -> None:
         self.calls.append(text)
+
+
+def test_local_transcription_result_never_invents_wake_evidence() -> None:
+    audio = CapturedAudio(
+        pcm_bytes=b"\x00\x00", sample_rate=16000, sample_width=2, channel_count=1
+    )
+    result = transcribe_local_result(FakeSTT("hikari"), audio, short_utterance=True)
+    assert result.text == "hikari"
+    assert result.has_wake_evidence is False
+    assert "hikari" not in repr(result)
+
+
+def test_wake_transcription_evidence_is_bounded_and_content_free() -> None:
+    evidence = WakeTranscriptionEvidence(
+        calibrated_score=0.81,
+        observed_monotonic_ns=1_000,
+        vad_observed_monotonic_ns=950,
+        vad_has_speech=True,
+    )
+    result = LocalTranscriptionResult(text="hikari stop", wake_evidence=evidence)
+    assert evidence.is_vad_fresh(now_ns=1_100, max_age_ns=200) is True
+    assert evidence.is_vad_fresh(now_ns=1_200, max_age_ns=200) is False
+    assert result.has_wake_evidence is True
+    assert "stop" not in repr(result)
+    with pytest.raises(ValueError):
+        WakeTranscriptionEvidence(1.1, 1, 1, True)
 
 
 def test_captured_audio_stores_metadata():

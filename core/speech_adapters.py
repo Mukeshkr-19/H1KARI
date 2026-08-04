@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import math
 import os
 import re
 import subprocess
@@ -155,6 +156,76 @@ class CapturedAudio:
         )
 
 
+@dataclasses.dataclass(frozen=True, repr=False)
+class WakeTranscriptionEvidence:
+    """Content-free calibrated evidence accompanying a wake transcription."""
+
+    calibrated_score: float
+    observed_monotonic_ns: int
+    vad_observed_monotonic_ns: int
+    vad_has_speech: bool
+
+    def __post_init__(self) -> None:
+        if isinstance(self.calibrated_score, bool) or not isinstance(
+            self.calibrated_score, (int, float)
+        ):
+            raise TypeError("calibrated_score must be a number")
+        score = float(self.calibrated_score)
+        if not math.isfinite(score) or not 0.0 <= score <= 1.0:
+            raise ValueError("calibrated_score must be within [0.0, 1.0]")
+        object.__setattr__(self, "calibrated_score", score)
+        for name in ("observed_monotonic_ns", "vad_observed_monotonic_ns"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if not isinstance(self.vad_has_speech, bool):
+            raise TypeError("vad_has_speech must be a boolean")
+
+    def is_vad_fresh(self, *, now_ns: int, max_age_ns: int) -> bool:
+        if any(
+            isinstance(value, bool) or not isinstance(value, int) or value < 0
+            for value in (now_ns, max_age_ns)
+        ):
+            return False
+        return (
+            self.vad_has_speech
+            and self.vad_observed_monotonic_ns <= now_ns
+            and now_ns - self.vad_observed_monotonic_ns <= max_age_ns
+        )
+
+    def __repr__(self) -> str:
+        return (
+            "<WakeTranscriptionEvidence "
+            f"score={self.calibrated_score:.3f} vad={self.vad_has_speech}>"
+        )
+
+
+@dataclasses.dataclass(frozen=True, repr=False)
+class LocalTranscriptionResult:
+    """Local STT text plus optional non-content wake evidence."""
+
+    text: str
+    wake_evidence: Optional[WakeTranscriptionEvidence] = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.text, str):
+            raise TypeError("text must be a string")
+        if self.wake_evidence is not None and not isinstance(
+            self.wake_evidence, WakeTranscriptionEvidence
+        ):
+            raise TypeError("wake_evidence must be WakeTranscriptionEvidence or None")
+
+    @property
+    def has_wake_evidence(self) -> bool:
+        return self.wake_evidence is not None
+
+    def __repr__(self) -> str:
+        return (
+            f"<LocalTranscriptionResult len={len(self.text)} "
+            f"has_wake_evidence={self.has_wake_evidence}>"
+        )
+
+
 @runtime_checkable
 class STTAdapter(Protocol):
     """Protocol for speech-to-text adapters."""
@@ -168,22 +239,40 @@ class STTAdapter(Protocol):
         ...
 
     def prepare(self) -> None:
-        """Eagerly load any heavy resources (model, cache, etc.).
-
-        This is optional; callers may call it to warm up the backend before
-        the first transcription. It must remain a no-op if called repeatedly.
-        """
+        """Eagerly load heavy resources; repeated calls must be safe."""
         ...
 
     def transcribe(self, audio: CapturedAudio) -> str:
-        """Return the transcription of the captured audio.
-
-        Raises:
-            SpeechBackendUnavailable: if the backend cannot be used.
-            TranscriptionError: if transcription fails.
-            InvalidAudioError: if the audio payload is unusable.
-        """
+        """Return text or raise a bounded speech-adapter exception."""
         ...
+
+
+@runtime_checkable
+class EvidenceSTTAdapter(Protocol):
+    """Optional local-STT extension returning genuine calibrated wake evidence."""
+
+    def transcribe_result(
+        self, audio: CapturedAudio, *, short_utterance: bool = False
+    ) -> LocalTranscriptionResult: ...
+
+
+def transcribe_local_result(
+    adapter: STTAdapter,
+    audio: CapturedAudio,
+    *,
+    short_utterance: bool = False,
+) -> LocalTranscriptionResult:
+    """Use evidence-aware STT when available, else explicit text-only fallback."""
+    method = getattr(adapter, "transcribe_result", None)
+    if callable(method):
+        result = method(audio, short_utterance=short_utterance)
+        if not isinstance(result, LocalTranscriptionResult):
+            raise TranscriptionError("evidence STT returned invalid result")
+        return result
+    text = adapter.transcribe(audio)
+    if not isinstance(text, str):
+        raise TranscriptionError("legacy STT returned non-string result")
+    return LocalTranscriptionResult(text=text, wake_evidence=None)
 
 
 @runtime_checkable
@@ -251,6 +340,13 @@ class OpenAIWhisperSTTAdapter:
         if not text:
             raise TranscriptionError("Whisper returned empty transcription")
         return text
+
+    def transcribe_result(
+        self, audio: CapturedAudio, *, short_utterance: bool = False
+    ) -> LocalTranscriptionResult:
+        del short_utterance
+        # Whisper decoder output is not a calibrated wake-classifier score.
+        return LocalTranscriptionResult(text=self.transcribe(audio), wake_evidence=None)
 
 
 class FasterWhisperSTTAdapter:
@@ -338,6 +434,17 @@ class FasterWhisperSTTAdapter:
         """Decode an interruption without target-word prompting."""
 
         return self._transcribe(audio, mode="interrupt")
+
+    def transcribe_result(
+        self, audio: CapturedAudio, *, short_utterance: bool = False
+    ) -> LocalTranscriptionResult:
+        text = (
+            self.transcribe_short_utterance(audio)
+            if short_utterance
+            else self.transcribe(audio)
+        )
+        # Segment likelihoods are not calibrated wake confidence.
+        return LocalTranscriptionResult(text=text, wake_evidence=None)
 
 
 class GoogleSpeechRecognitionSTTAdapter:

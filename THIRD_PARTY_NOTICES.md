@@ -16,6 +16,16 @@ Package licenses remain available in each installed distribution's metadata.
 Native PortAudio is installed separately and remains subject to its upstream
 license. Other platforms are not represented as reproducible Phase 0 targets.
 
+`local-wake==0.1.2` is pinned for the optional frame-fed wake detector. Its
+installed package metadata and source license report MIT for the package code.
+The installed distribution also contains `lwake/models/speech-embedding.onnx`.
+This offline review did not confirm a separate authoritative license, original
+artifact identity, or conversion provenance for that embedded model. HIKARI
+therefore permits local dependency use only: the ONNX asset must not be copied
+into the repository or a release bundle, and no redistributable/release-ready
+claim may be made until that artifact review is complete. Exact observed digest
+and size evidence are recorded in `docs/MODEL_PROVENANCE.md`.
+
 ## Frontend environment
 
 The exact npm graph is `hikari-frontend/package-lock.json`. The deterministic

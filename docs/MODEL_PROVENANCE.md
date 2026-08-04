@@ -60,3 +60,13 @@ If the dependency asset, explicit model, or ONNX Runtime is unavailable,
 explicit CoreAudio mode fails closed. Automatic foreground selection may use the
 reviewed utterance-only path. Energy fallback is explicit degraded/test behavior
 and is never reported as Silero.
+
+## local-wake speech embedding asset (dependency-provided, not repository-vendored)
+
+| Runtime use | Exact source | Locally observed identity | License evidence | Data boundary | Disposition |
+|---|---|---|---|---|---|
+| Optional Hikari wake similarity scoring | `lwake/models/speech-embedding.onnx` installed by `local-wake==0.1.2` | 2,435,104 bytes; SHA-256 `0140c2b1455c016783f9b859e16f47b5187c69079503cd053f406b86f9094560` | installed package metadata and package source license report MIT for local-wake code; package README describes a conversion of a pretrained Google speech-embedding model, but a separate authoritative model license, original artifact identity, and conversion recipe were not confirmed in this offline review | HIKARI passes existing 16 kHz PCM frames to local scoring; it does not call local-wake microphone helpers, download a model, persist audio, or ship reference samples | approved only for explicit local use from the installed dependency; do not vendor or redistribute the ONNX asset, and do not claim release readiness, until model provenance and redistribution rights are independently verified |
+
+Private positive and negative calibration WAVs live under the operator's HIKARI
+runtime home and are never repository assets. Missing, malformed, insufficient,
+or non-separating samples leave the detector silent and inactive.
