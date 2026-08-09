@@ -129,6 +129,17 @@ def test_same_utterance_wake_command_activation():
     assert runtime.state == VoiceStreamState.THINKING
 
 
+@pytest.mark.parametrize("phrase", ["Hikari goodbye", "Hey Hikari, stop"])
+def test_same_utterance_wake_goodbye_is_silent(phrase: str):
+    runtime = VoiceStreamingRuntime("stream_1")
+    runtime.start_wake_listening()
+
+    res = runtime.process_utterance(phrase, is_verified_speaker=True)
+
+    assert res["action"] == "silent_goodbye"
+    assert runtime.is_wake_listening
+
+
 def test_goodbye_is_silent_and_returns_to_wake_listening():
     """Verify goodbye command in active mode resets to passive wake listening silently."""
     runtime = VoiceStreamingRuntime("stream_1")

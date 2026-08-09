@@ -524,6 +524,14 @@ class VoiceStreamingRuntime:
             # Command-path speech must not authorize later barge-in.
             self._last_vad_speech_ns = t1
 
+            if wake_cmd and is_stop_command(wake_cmd):
+                # A verified wake-prefixed goodbye is a request to stay asleep,
+                # not a normal Brain turn.  Preserve the same silent-goodbye
+                # behavior as an active-session goodbye.
+                self.reset_to_wake_listening(t1)
+                self._emit_event("silent_goodbye", {}, t1)
+                return {"action": "silent_goodbye", "reason": "stop_command"}
+
             if wake_cmd:
                 t2 = self.now_ns()
                 self.state_machine.transition_to(

@@ -1377,15 +1377,33 @@ def _listen_frame_stream_cycle() -> None:
             if not admission.admitted:
                 gate.reset()
                 continue
+            # The local detector proves the wake phrase, while local STT can
+            # recover an optional command spoken in the same utterance.  Only
+            # an explicit wake-prefixed command is forwarded; anything else is
+            # handled as a bare wake and remains fail-closed.
+            text = _transcribe_pcm_utterance(pcm, short_utterance=True)
+            command = _extract_wake_command(text) if text else None
+            if command:
+                command_confirmation = _local_wake_gate.confirm_command(
+                    now_ns=runtime.now_ns()
+                )
+                if not command_confirmation.accepted:
+                    gate.reset()
+                    continue
             result = runtime.process_utterance(
-                "hikari",
+                text if command else "hikari",
                 is_verified_speaker=True,
                 is_short=True,
                 utterance_id=utterance_id,
             )
             _sync_hikari_state_from_runtime(runtime)
-            _mark_active_voice_activity(runtime)
-            if result.get("action") == "acknowledge":
+            action = result.get("action")
+            if action == "process_command":
+                response = process(result.get("command") or command)
+                if response:
+                    speak(response)
+            elif action == "acknowledge":
+                _mark_active_voice_activity(runtime)
                 speak("Yes?", allow_interrupt=False)
             gate.reset()
             return
