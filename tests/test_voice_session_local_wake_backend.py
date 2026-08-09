@@ -63,6 +63,17 @@ def _reference_tree(root: Path, *, overlapping_negative: bool = False) -> None:
         _write_wav(root / "negative" / f"n{index}.wav", value)
 
 
+def test_local_cosine_dtw_distance_is_finite_and_symmetric() -> None:
+    np = pytest.importorskip("numpy")
+    first = np.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=np.float32)
+    second = np.asarray([[1.0, 1.0], [0.0, 0.0]], dtype=np.float32)
+    forward = module._cosine_dtw_normalized_distance(first, second)
+    backward = module._cosine_dtw_normalized_distance(second, first)
+    assert math.isfinite(forward)
+    assert math.isclose(forward, backward)
+    assert module._cosine_dtw_normalized_distance(first, first) == 0.0
+
+
 def test_package_unavailable_and_missing_references_are_distinct(tmp_path: Path) -> None:
     unavailable = load_local_wake_backend(
         tmp_path,

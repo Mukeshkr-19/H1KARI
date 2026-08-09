@@ -103,15 +103,14 @@ class LwakeFeatureDetector:
     """Lazy score-only bridge; never imports or calls local-wake stream helpers."""
 
     def __init__(self) -> None:
-        # Import only scoring symbols. Package __init__ imports sounddevice but
-        # no stream is created; this adapter never calls InputStream/listen/record.
-        from lwake.features import (
-            dtw_cosine_normalized_distance,
-            extract_embedding_features,
-        )
+        # Import only feature extraction.  ``local-wake`` delegates its DTW
+        # distance function to librosa, whose Numba cache setup can fail during
+        # import on some packaged Python runtimes.  Keep scoring local and
+        # deterministic so that a dependency import issue cannot masquerade as
+        # a bad calibration sample.
+        from lwake.features import extract_embedding_features
 
         self._extract = extract_embedding_features
-        self._distance = dtw_cosine_normalized_distance
 
     def extract(self, normalized_audio: Sequence[float], *, sample_rate: int) -> object:
         import numpy as np
@@ -120,7 +119,42 @@ class LwakeFeatureDetector:
         return self._extract(y=samples, sample_rate=sample_rate)
 
     def distance(self, candidate: object, reference: object) -> float:
-        return float(self._distance(candidate, reference))
+        return _cosine_dtw_normalized_distance(candidate, reference)
+
+
+def _cosine_dtw_normalized_distance(candidate: object, reference: object) -> float:
+    """Return local-wake-compatible cosine DTW distance without librosa I/O."""
+    import numpy as np
+
+    first = np.asarray(candidate, dtype=np.float32)
+    second = np.asarray(reference, dtype=np.float32)
+    if first.ndim != 2 or second.ndim != 2 or first.shape[0] != second.shape[0]:
+        raise ValueError("invalid_feature_shape")
+    if first.shape[1] < 1 or second.shape[1] < 1:
+        raise ValueError("empty_feature_sequence")
+
+    first_norms = np.linalg.norm(first, axis=0)
+    second_norms = np.linalg.norm(second, axis=0)
+    if not np.all(np.isfinite(first_norms)) or not np.all(np.isfinite(second_norms)):
+        raise ValueError("nonfinite_feature")
+    if np.any(first_norms <= 0.0) or np.any(second_norms <= 0.0):
+        raise ValueError("zero_feature_norm")
+
+    similarity = (first.T @ second) / np.outer(first_norms, second_norms)
+    costs = 1.0 - np.clip(similarity, -1.0, 1.0)
+    if not np.all(np.isfinite(costs)):
+        raise ValueError("nonfinite_feature")
+    rows, columns = costs.shape
+    cumulative = np.full((rows + 1, columns + 1), np.inf, dtype=np.float64)
+    cumulative[0, 0] = 0.0
+    for row in range(1, rows + 1):
+        for column in range(1, columns + 1):
+            cumulative[row, column] = float(costs[row - 1, column - 1]) + min(
+                cumulative[row - 1, column],
+                cumulative[row, column - 1],
+                cumulative[row - 1, column - 1],
+            )
+    return float(cumulative[rows, columns] / (rows + columns))
 
 
 def _pcm16_to_normalized(pcm: bytes) -> tuple[float, ...]:
